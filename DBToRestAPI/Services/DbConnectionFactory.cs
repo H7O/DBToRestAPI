@@ -36,7 +36,29 @@ public class DbConnectionFactory
         DbProviderFactories.RegisterFactory(
             "Oracle.ManagedDataAccess.Core",
             Oracle.ManagedDataAccess.Client.OracleClientFactory.Instance);
+
+        // DB2 - Register based on current OS (only one package is included per platform)
+        RegisterDb2Provider();
+
     }
+
+    private static void RegisterDb2Provider()
+    {
+        try
+        {
+            // The IBM.Data.Db2 namespace and factory class name is the same across all platform packages
+            // Only one package will be present based on the build target OS
+            DbProviderFactories.RegisterFactory(
+                "Net.IBM.Data.Db2",
+                IBM.Data.Db2.DB2Factory.Instance);
+        }
+        catch 
+        {
+            // DB2 provider not available on this platform or not included - that's OK
+            // Users who don't need DB2 won't have the package
+        }
+    }
+
 
     public DbConnection Create(string connectionStringName = "default")
     {
@@ -84,6 +106,12 @@ public class DbConnectionFactory
         // SQLite
         if (cs.Contains(".db") || cs.Contains(".sqlite") || cs.Contains(":memory:"))
             return "Microsoft.Data.Sqlite";
+
+        // DB2 - detect by typical DB2 connection string patterns
+        if ((cs.Contains("database=") && cs.Contains("server=") &&
+            (cs.Contains(":50000") || cs.Contains("protocol=tcpip"))) ||
+            (cs.Contains("database=") && cs.Contains("uid=") && cs.Contains("pwd=")))
+            return "Net.IBM.Data.Db2";
 
         // SQL Server (most common)
         if (cs.Contains("initial catalog=") || cs.Contains("integrated security=") ||

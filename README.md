@@ -8,7 +8,7 @@ It's designed to support a range of use cases out of the box: public APIs, B2B A
 
 If you value the DB-First approach, this solution offers a straightforward path to a production-ready REST API—without intermediary ORM layers, complex abstractions, proprietary query languages, or unnecessary GUI tooling.
 
-Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, and Oracle—with automatic provider detection or explicit configuration.
+Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, and IBM DB2—with automatic provider detection or explicit configuration. DB2 is supported on Windows, Linux, and macOS.
 
 Retain your SQL expertise and leverage it directly to build APIs in pure SQL.
 
@@ -19,7 +19,7 @@ Retain your SQL expertise and leverage it directly to build APIs in pure SQL.
 
 1. Create a sample database and name it `test`, then run the SQL script below to create a sample `contacts` table within the `test` database that you just created.
 
-> **Note**: Download and install either SQL Server Developer Edition or SQL Server Express if you don't have SQL Server installed on your machine. Other databases (PostgreSQL, MySQL, SQLite, Oracle) are also supported—see the [Supported Databases](#supported-databases) section for configuration details.
+> **Note**: Download and install either SQL Server Developer Edition or SQL Server Express if you don't have SQL Server installed on your machine. Other databases (PostgreSQL, MySQL, SQLite, Oracle, DB2) are also supported—see the [Supported Databases](#supported-databases) section for configuration details.
 
 ```sql
 CREATE TABLE [dbo].[contacts] (
@@ -133,6 +133,9 @@ Define your connection strings in `/config/settings.xml` under the `ConnectionSt
 
   <!-- Oracle (simplified EZ Connect format) -->
   <oracle_ez provider="Oracle.ManagedDataAccess.Core"><![CDATA[Data Source=localhost:1521/ORCL;User Id=myuser;Password=mypass;]]></oracle_ez>
+
+  <!-- IBM DB2 (supported on Windows, Linux, and macOS) -->
+  <db2 provider="Net.IBM.Data.Db2"><![CDATA[Server=localhost:50000;Database=mydb;UID=db2admin;PWD=mypass;]]></db2>
 </ConnectionStrings>
 ```
 
@@ -145,6 +148,9 @@ Define your connection strings in `/config/settings.xml` under the `ConnectionSt
 | MySQL / MariaDB | `MySqlConnector` | ✅ Yes |
 | SQLite | `Microsoft.Data.Sqlite` | ✅ Yes |
 | Oracle | `Oracle.ManagedDataAccess.Core` | ✅ Yes |
+| IBM DB2 | `Net.IBM.Data.Db2` | ✅ Yes |
+
+> **Note**: IBM DB2 is supported on Windows, Linux, and macOS. The appropriate platform-specific NuGet package is automatically selected at build time.
 
 > **Recommendation**: While auto-detection works reliably for most connection strings, explicitly specifying the `provider` attribute is recommended for production environments to ensure deterministic behavior and avoid any edge cases in detection.
 
@@ -188,6 +194,7 @@ This enables powerful hybrid architectures where you can:
 - Pull analytics from a data warehouse (PostgreSQL)
 - Read local settings from an embedded database (SQLite)
 - Integrate with legacy systems (Oracle)
+- Connect to enterprise mainframe data (IBM DB2)
 
 
 ## Phonebook API examples

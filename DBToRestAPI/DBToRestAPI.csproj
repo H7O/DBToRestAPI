@@ -10,9 +10,6 @@
     <Compile Remove="Services\RoutingGateway.cs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Remove="C:\Users\hussein\.nuget\packages\com.h\9.0.0.6\contentFiles\any\net9.0\128x128.ico" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.17.1" />
@@ -28,6 +25,34 @@
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.0" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.1" />
+
+    <!-- DB2 - Platform-specific (only the matching package is included in build output) -->
+    <!-- ExcludeAssets prevents the package's .targets from adding TestConn files to the project -->
+    <PackageReference Include="Net.IBM.Data.Db2" Version="*" Condition="$([MSBuild]::IsOSPlatform('Windows'))" ExcludeAssets="build;buildTransitive" />
+    <PackageReference Include="Net.IBM.Data.Db2-lnx" Version="*" Condition="$([MSBuild]::IsOSPlatform('Linux'))" ExcludeAssets="build;buildTransitive" />
+    <PackageReference Include="Net.IBM.Data.Db2-osx" Version="*" Condition="$([MSBuild]::IsOSPlatform('OSX'))" ExcludeAssets="build;buildTransitive" />
+
+
+  </ItemGroup>
+
+  <!-- Manually include DB2 CLI driver (required for connectivity) since we excluded the package's build assets -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <None Include="$(NuGetPackageRoot)net.ibm.data.db2\*\buildTransitive\clidriver\**" Link="clidriver\%(RecursiveDir)%(FileName)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <None Include="$(NuGetPackageRoot)net.ibm.data.db2-lnx\*\buildTransitive\clidriver\**" Link="clidriver\%(RecursiveDir)%(FileName)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <None Include="$(NuGetPackageRoot)net.ibm.data.db2-osx\*\buildTransitive\clidriver\**" Link="clidriver\%(RecursiveDir)%(FileName)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
