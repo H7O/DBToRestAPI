@@ -134,7 +134,7 @@ Define your connection strings in `/config/settings.xml` under the `ConnectionSt
   <!-- Oracle (simplified EZ Connect format) -->
   <oracle_ez provider="Oracle.ManagedDataAccess.Core"><![CDATA[Data Source=localhost:1521/ORCL;User Id=myuser;Password=mypass;]]></oracle_ez>
 
-  <!-- IBM DB2 (supported on Windows, Linux, and macOS) -->
+  <!-- IBM DB2 -->
   <db2 provider="Net.IBM.Data.Db2"><![CDATA[Server=localhost:50000;Database=mydb;UID=db2admin;PWD=mypass;]]></db2>
 </ConnectionStrings>
 ```
