@@ -150,7 +150,7 @@ Define your connection strings in `/config/settings.xml` under the `ConnectionSt
 | Oracle | `Oracle.ManagedDataAccess.Core` | ✅ Yes |
 | IBM DB2 | `Net.IBM.Data.Db2` | ✅ Yes |
 
-> **Note**: IBM DB2 is supported on Windows, Linux, and macOS. The appropriate platform-specific NuGet package is automatically selected at build time.
+> **Note**: All database providers work cross-platform (Windows, Linux, macOS). IBM DB2 uses platform-specific NuGet packages that are automatically selected at build time.
 
 > **Recommendation**: While auto-detection works reliably for most connection strings, explicitly specifying the `provider` attribute is recommended for production environments to ensure deterministic behavior and avoid any edge cases in detection.
 
