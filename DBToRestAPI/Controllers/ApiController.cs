@@ -4,6 +4,7 @@ using Com.H.Data.Common;
 using Com.H.IO;
 using DBToRestAPI.Cache;
 using DBToRestAPI.Services;
+using DBToRestAPI.Services.QueryParser;
 using DBToRestAPI.Settings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
@@ -42,11 +43,14 @@ namespace DBToRestAPI.Controllers
         IEncryptedConfiguration configuration,
         DbConnectionFactory dbConnectionFactory,
         SettingsService settingsService,
+        IQueryConfigurationParser queryConfigurationParser,
         ILogger<ApiController> logger
             ) : ControllerBase
     {
         private readonly IEncryptedConfiguration _configuration = configuration;
         private readonly DbConnectionFactory _dbConnectionFactory = dbConnectionFactory;
+
+        private readonly IQueryConfigurationParser _queryConfigurationParser = queryConfigurationParser;
 
         private readonly ILogger<ApiController> _logger = logger;
 
@@ -132,6 +136,15 @@ namespace DBToRestAPI.Controllers
 
             #region check if the query is empty, return 500 
 
+            // todo: use query configuration parser to get the query (or multiple queries)
+            // if it's a single query, then use it directly
+            // if multiple queries, execute them in sequence and add the result
+            // of the first query as parameters in the second query and so on
+            // the last query result will be returned as the response.
+
+            // this means that `GetResultFromDbAsync` shouldn't take a single query string
+            // or connection only, but rather a list of queries and connections
+            // which is what the `IQueryConfigurationParser` will provide
             var query = section.GetValue<string>("query");
 
             if (string.IsNullOrWhiteSpace(query))

@@ -2,6 +2,7 @@ using Com.H.Cache;
 using DBToRestAPI.Cache;
 using DBToRestAPI.Middlewares;
 using DBToRestAPI.Services;
+using DBToRestAPI.Services.QueryParser;
 using DBToRestAPI.Settings;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -57,6 +58,8 @@ builder.Services.AddSingleton<QueryRouteResolver>();
 builder.Services.AddSingleton<ParametersBuilder>();
 
 builder.Services.AddSingleton<ApiKeysService>();
+
+builder.Services.AddSingleton<IQueryConfigurationParser, QueryConfigurationParser>();
 
 
 
