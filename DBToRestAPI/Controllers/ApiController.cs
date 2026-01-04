@@ -94,8 +94,7 @@ namespace DBToRestAPI.Controllers
         [HttpDelete]
         [HttpPut]
         [Route("{*route}")]
-        public async Task<IActionResult> Index(
-            )
+        public async Task<IActionResult> Index()
         {
             #region log the time and the method name
             this._logger.LogDebug("{time}: in ApiController.Index method",
