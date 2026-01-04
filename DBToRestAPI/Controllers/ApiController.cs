@@ -143,8 +143,43 @@ namespace DBToRestAPI.Controllers
             // the last query result will be returned as the response.
 
             // this means that `GetResultFromDbAsync` shouldn't take a single query string
-            // or connection only, but rather a list of queries and connections
+            // or connection only, but rather a list of QueryDefinition and a connection factory
             // which is what the `IQueryConfigurationParser` will provide
+            // the QueryDefinition object will have the query string name
+            // and other settings related to that query only.
+            // from the connection string name in QueryDefinintion, the DbConnectionFactory
+            // will be used to create the connection for that particular query.
+            // the goal behind this multi-query execution is to support scenarios
+            // where the result of one query is needed to execute the next query
+            // this helps eliminate the need for linked servers when one query
+            // is dependent on data from another database server that forces
+            // users to use openquery, which limits the supported databases to only
+            // those that support linked servers. And also makes it 
+            // very difficult to protect against sql injection attacks when
+            // building the query strings dynamically using string concatenation
+            // to satisfy openquery requirements.
+            // The idea with multi-query execution is to allow users to execute
+            // their queries in sequence and pass data between them using parameters.
+            // This is much more secure and flexible than using linked servers and openquery. 
+            // How to achieve that is via adding another DBQueryParams object to
+            // the list of DbQueryParams that we get from `var qParams = HttpContext.Items["parameters"] as List<DbQueryParams>;`
+            // the initial list of DbQueryParams has the parameters from the request
+            // like query string, body, headers, and route, authentication, etc.
+            // when the engine encounteres multi-query defintion, it will execute the first query
+            // passing it the initial list of DbQueryParams.
+            // The result from the first query will be used to create a new DbQueryParams object
+            // If the result is only a single row, then the new DbQueryParams object will have
+            // the columns from that row as parameters, something like so:
+            // qParams.Add(new DbQueryParams() { DataModel = singleRowResult, QueryParamsRegex = DefaultPreviousQueryVariablesPattern });
+            // If the result is multiple rows, then the new DbQueryParams object will have
+            // a DataModel that is a collection of rows in json format, something like so:
+            // qParams.Add(new DbQueryParams() { DataModel = "{\"json\":" + multiRowResultAsJson + "}", QueryParamsRegex = DefaultPreviousQueryVariablesPattern });
+            // then the qParams list will be passed to the second query for execution.
+            // And the result from that second query will be added as another DbQueryParams object
+            // to the qParams list for the third query and so on.
+            // The final query result will be returned as the response to the API request.
+
+
             var query = section.GetValue<string>("query");
 
             if (string.IsNullOrWhiteSpace(query))
