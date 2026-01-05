@@ -1225,6 +1225,77 @@
         ]]>
       </query>
     </hello_world_auth>
+    
+    
+    
+    <!-- multi-query concept -->
+    <!-- Example of chaining queries where the result of one query passed as parameters to the next -->
+    <hello_world_multi_query>
+      <!-- if a query doesn't have `connection_string_name` attribute, then it'll fallback on this one
+      node below, and if the node below is not defined, it'll fall back on the connection_string_name "default" -->
+      <connection_string_name>server2</connection_string_name>
+
+      <!-- the below query is expected to use `server2` connection string name
+      since it doesn't have its own `connection_string_name` attribute
+      -->
+      <query>
+        <![CDATA[select 'new role' as role_from_query1, 'new user' as user_from_query1;]]>
+      </query>
+      <!-- the below query is expected to use `server3` connection string name-->
+      <!-- 
+        the output of the above query is fed as SQL parameterization to the below query.
+        The parameter name is any of the column names of the previous query result 
+        if the previous query returned a single row.
+        We'll discuss how the parameterization works when the previous query returns multiple rows in the next query.
+      -->
+      <query connection_string_name="server3">
+        <![CDATA[
+              declare @role_from_query1 nvarchar(100) = {{role_from_query1}};
+                    SELECT * FROM (VALUES
+                        ('Developer', 'Developer'),
+                        ('Administrator', 'Administrator'),
+                        ('Insiders Admin', 'Insiders Admin'),
+                        ('Insiders Maker', 'Insiders Maker'),
+                        ('Insiders Checker', 'Insiders Checker')
+                        @role_from_query1
+                ) AS t ([value], [label]);
+        ]]>
+      </query>
+      <!-- the below query is expected to use `server2` connection string name as it doesn't have a `connection_string_name` of its own -->
+      <!-- 
+      Just like the output of the first query was fed into the second query above as SQL parameterization, the output of the previous query (i.e., the second query)
+      is fed as SQL parameterization to the below query (the 3rd query).
+      however, this time, the result of the above query (i.e., second query) is multiple rows (i.e., not a single row like the case between query 1 and 2),
+      which makes it impossible to pass the paramter of query 2 to this query 3 as individual parameters.
+      So in this case the entire result of the previous query is passed as a json array string under 
+      the default parameter name `{{json}}`.
+      This `json` parameter can then be parsed in the query to extract the individual rows/columns as needed.
+      Also, to change the default parameter name from `json` to something else, you can use the attribute `json_var`
+      on the query node below, e.g., <query json_var="roles_json">...</query>
+      For now, we'll keep it as default `json` parameter name so that we don't have to specify it below.
+      But if we want to change it, we can do so by adding the attribute as mentioned above.
+      -->
+      <query>
+        <![CDATA[
+              -- expecting @previous_query_input to be a json array of roles
+              declare @roles_json nvarchar(max) = {{json}};
+              
+              -- parse the json array and return each role
+              select 
+                  JSON_VALUE(value, '$.value') as role_value,
+                  JSON_VALUE(value, '$.label') as role_label
+              from OPENJSON(@roles_json);
+        ]]>
+      </query>
+      
+      <!-- 
+      Chaining of `count_query` to be implemented later-on, and it's likely to be exactly as how chaining `query`
+      works above.
+      for the time being, let's assume only one `count_query` per api endpoint is allowed.
+      Once we're done implementing multi-query for `query`, we can focus on implementing it for `count_query` as well.
+      -->
+      
+    </hello_world_multi_query>
 
 
   </queries>

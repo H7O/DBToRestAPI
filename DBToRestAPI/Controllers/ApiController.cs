@@ -159,25 +159,38 @@ namespace DBToRestAPI.Controllers
             // building the query strings dynamically using string concatenation
             // to satisfy openquery requirements.
             // The idea with multi-query execution is to allow users to execute
-            // their queries in sequence and pass data between them using parameters.
+            // their queries in sequence and pass data between them using sql parameterization.
             // This is much more secure and flexible than using linked servers and openquery. 
             // How to achieve that is via adding another DBQueryParams object to
             // the list of DbQueryParams that we get from `var qParams = HttpContext.Items["parameters"] as List<DbQueryParams>;`
             // the initial list of DbQueryParams has the parameters from the request
             // like query string, body, headers, and route, authentication, etc.
             // when the engine encounteres multi-query defintion, it will execute the first query
-            // passing it the initial list of DbQueryParams.
-            // The result from the first query will be used to create a new DbQueryParams object
+            // passing it the initial list of DbQueryParams `qParams`.
+
+            // The result from the first query will then be used to create a new DbQueryParams object to be added
+            // to the list of DbQueryParams `qParams` for the second query execution.
             // If the result is only a single row, then the new DbQueryParams object will have
-            // the columns from that row as parameters, something like so:
-            // qParams.Add(new DbQueryParams() { DataModel = singleRowResult, QueryParamsRegex = DefaultPreviousQueryVariablesPattern });
-            // If the result is multiple rows, then the new DbQueryParams object will have
-            // a DataModel that is a collection of rows in json format, something like so:
+            // its DataModel being an instance of a single dynamic object (first row), something like so:
+            // qParams.Add(new DbQueryParams() { DataModel = singleRowResultObject, QueryParamsRegex = DefaultPreviousQueryVariablesPattern });
+
+            // the `singleRowResultObject` would be a dynamic object having properites like `name`, `age`, etc.
+
+            // And if the result of the first query is multiple rows, then the new DbQueryParams object will have
+            // a list of dynamic objects in json string format as its DataModel, something like so:
             // qParams.Add(new DbQueryParams() { DataModel = "{\"json\":" + multiRowResultAsJson + "}", QueryParamsRegex = DefaultPreviousQueryVariablesPattern });
+
+            // the `multiRowResultAsJson` would be a json string representing an array of objects returned from the first query.
+            // The `DefaultPreviousQueryVariablesPattern` is a regex pattern that matches the variable names
+            // which by default it's `{{json}}` for multi-row results and `{{name}}`, `{{age}}`, etc. for single-row results.
             // then the qParams list will be passed to the second query for execution.
             // And the result from that second query will be added as another DbQueryParams object
             // to the qParams list for the third query and so on.
             // The final query result will be returned as the response to the API request.
+
+            // also the default name `{{json}}` for multi-row results can be changed and the QueryDefinition
+            // already has a property for that called `JsonVariableName` which can be used to
+            // customize the variable name used to pass multi-row results between queries.
 
 
             var query = section.GetValue<string>("query");

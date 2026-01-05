@@ -8,10 +8,10 @@ namespace DBToRestAPI.Services.QueryParser
         private readonly IConfiguration _configuration;
 
         private const string DefaultConnectionStringName = "default";
-        private const string DefaultArrayVariableName = "json";
+        private const string DefaultJsonVariableName = "json";
         private const string QueryKey = "query";
         private const string ConnectionStringNameKey = "connection_string_name";
-        private const string PreviousQueryInputModeKey = "previous_query_input_mode";
+        private const string JsonVarKey = "json_var";
 
         public QueryConfigurationParser(IConfiguration configuration)
         {
@@ -31,7 +31,9 @@ namespace DBToRestAPI.Services.QueryParser
             var result = new List<QueryDefinition>();
 
             if (section == null || !section.Exists())
+            {
                 return result;
+            }
 
             // Get the fallback connection string name from the section level
             var fallbackConnectionStringName = section[ConnectionStringNameKey]?.Trim();
@@ -44,7 +46,9 @@ namespace DBToRestAPI.Services.QueryParser
             var querySection = section.GetSection(QueryKey);
 
             if (!querySection.Exists())
+            {
                 return result;
+            }
 
             // Check if it's a single query (has a value) or multiple queries (has children)
             var queryValue = querySection.Value;
@@ -82,50 +86,18 @@ namespace DBToRestAPI.Services.QueryParser
                 connectionStringName = fallbackConnectionStringName;
             }
 
-            // Parse previous_query_input_mode
-            var (inputMode, arrayVariableName) = ParseInputMode(queryNode[PreviousQueryInputModeKey]);
+            // Get json variable name: attribute on query → default "json"
+            var jsonVariableName = queryNode[JsonVarKey]?.Trim();
+            if (string.IsNullOrEmpty(jsonVariableName))
+            {
+                jsonVariableName = DefaultJsonVariableName;
+            }
 
             return new QueryDefinition
             {
                 QueryText = queryText,
                 ConnectionStringName = connectionStringName,
-                InputMode = inputMode,
-                ArrayVariableName = arrayVariableName
-            };
-        }
-
-        /// <summary>
-        /// Parses the previous_query_input_mode attribute value.
-        /// </summary>
-        /// <param name="modeValue">The raw attribute value (e.g., "auto", "single", "array", "array=custom_var").</param>
-        /// <returns>A tuple containing the parsed <see cref="QueryInputMode"/> and the array variable name.</returns>
-        private static (QueryInputMode Mode, string ArrayVariableName) ParseInputMode(string? modeValue)
-        {
-            if (string.IsNullOrWhiteSpace(modeValue))
-            {
-                return (QueryInputMode.Auto, DefaultArrayVariableName);
-            }
-
-            var trimmedValue = modeValue.Trim().ToLowerInvariant();
-
-            // Check for "array=variable_name" pattern
-            if (trimmedValue.StartsWith("array="))
-            {
-                var variableName = modeValue.Trim().Substring("array=".Length).Trim();
-                if (string.IsNullOrEmpty(variableName))
-                {
-                    variableName = DefaultArrayVariableName;
-                }
-                return (QueryInputMode.Array, variableName);
-            }
-
-            // Handle simple values
-            return trimmedValue switch
-            {
-                "auto" => (QueryInputMode.Auto, DefaultArrayVariableName),
-                "single" => (QueryInputMode.Single, DefaultArrayVariableName),
-                "array" => (QueryInputMode.Array, DefaultArrayVariableName),
-                _ => (QueryInputMode.Auto, DefaultArrayVariableName) // Default to Auto for unknown values
+                JsonVariableName = jsonVariableName
             };
         }
     }

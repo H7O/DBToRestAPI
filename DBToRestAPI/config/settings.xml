@@ -9,6 +9,9 @@
     <!-- SQL Server with explicit provider -->
     <server2 provider="Microsoft.Data.SqlClient"><![CDATA[Data Source=.\s22;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></server2>
 
+    <!-- SQL Server with explicit provider - just simulating different servers -->
+    <server3 provider="Microsoft.Data.SqlClient"><![CDATA[Data Source=.\s22;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></server3>
+
     <!-- PostgreSQL -->
     <postgres provider="Npgsql"><![CDATA[Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypass;]]></postgres>
 

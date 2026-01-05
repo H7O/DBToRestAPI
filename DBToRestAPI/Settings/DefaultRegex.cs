@@ -16,7 +16,7 @@ namespace DBToRestAPI.Settings
         public static readonly string DefaultDateVariablesPattern = @"(?<open_marker>\{date\{)(?<param>.*?)?(?<close_marker>\}\})";
         public static readonly string DefaultAuthVariablesPattern = @"(?<open_marker>\{auth\{)(?<param>.*?)?(?<close_marker>\}\})";
 
-        public static readonly string DefaultPreviousQueryVariablesPattern = @"(?<open_marker>\{pq\{)(?<param>.*?)?(?<close_marker>\}\})";
+        public static readonly string DefaultPreviousQueryVariablesPattern = @"(?<open_marker>\{\{|\{pq\{)(?<param>.*?)?(?<close_marker>\}\})";
 
 
         public static readonly Regex DefaultRouteVariablesCompiledRegex = new Regex(DefaultRouteVariablesPattern, RegexOptions.Compiled);
