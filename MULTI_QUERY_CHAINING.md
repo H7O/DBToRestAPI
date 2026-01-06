@@ -448,6 +448,65 @@ foreach query in queries:
 
 **Note on count_query**: The `count_query` is executed only for the **final query** and is not chained. The existing `GetResultFromDbAsync` logic for `count_query` can be reused. Both the main query and count_query receive the same accumulated `qParams`.
 
+### Connection Management
+
+Each query in the chain gets its own `DbConnection`:
+
+| Query Position | Connection Lifecycle |
+|----------------|---------------------|
+| Intermediate | `using` block → disposed immediately after result materialization |
+| Final | Registered via `HttpContext.Response.RegisterForDispose()` → disposed at request end |
+
+```csharp
+foreach (var query in queries)
+{
+    var connection = _dbConnectionFactory.Create(query.ConnectionStringName);
+    
+    if (!query.IsLastInChain)
+    {
+        // Intermediate: dispose after consuming result
+        try
+        {
+            // execute, materialize, close reader
+        }
+        finally
+        {
+            await connection.DisposeAsync();
+        }
+    }
+    else
+    {
+        // Final: register for disposal at request end (supports streaming)
+        HttpContext.Response.RegisterForDispose(connection);
+        // execute and return
+    }
+}
+```
+
+### Edge Cases
+
+#### Empty Result from Intermediate Query
+
+If an intermediate query returns zero rows:
+- **Detected as single row** (`WasExhausted(2)` = true with 0 items)
+- `FirstOrDefault()` returns `null`
+- Next query receives null parameter values
+- The SQL query should handle nulls gracefully (e.g., `IF @param IS NULL...`)
+
+#### Error Mid-Chain
+
+If any query fails:
+- Previous connections already disposed (via `using`/`finally`)
+- Exception should include query index for debugging:
+  ```csharp
+  throw new InvalidOperationException(
+      $"Query {query.Index + 1} of {queries.Count} failed: {ex.Message}", ex);
+  ```
+
+#### response_structure = "file"
+
+File downloads work with chaining—the final query's result is processed by `ReturnFile()`. Use case: chain queries to resolve file metadata, then download.
+
 ### Parameter Accumulation
 
 The `Com.H.Data.Common` library's `DataModel` accepts multiple formats: anonymous objects, `IDictionary<string, object>`, normal objects, JSON strings, and `JsonElement`. For query chaining, we use:

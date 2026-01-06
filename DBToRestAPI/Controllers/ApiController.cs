@@ -161,6 +161,14 @@ namespace DBToRestAPI.Controllers
             //
             // 6. count_query: executed only for final query, not chained
             //
+            // 7. Connection management:
+            //    - Intermediate queries: dispose connection immediately after materializing result
+            //    - Final query: RegisterForDispose() at request end (supports streaming)
+            //
+            // 8. Edge cases:
+            //    - Empty intermediate result → null DataModel, next query handles nulls
+            //    - Error mid-chain → include query.Index in error message for debugging
+            //
             // See MULTI_QUERY_CHAINING.md for full documentation.
 
 
