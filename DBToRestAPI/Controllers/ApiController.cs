@@ -136,79 +136,28 @@ namespace DBToRestAPI.Controllers
 
             #region check if the query is empty, return 500 
 
-            // todo: support for chaining multiple queries together
-            // use _queryConfigurationParser service to get a list of QueryDefinition from IConfigurationSection section
-            // the list of QueryDefinition (List<QueryDefinition>) will either have a single item or multiple items.
-            // normally, in most scenarios, there will be a single QueryDefinition item.
+            // TODO: Implement multi-query chaining
+            // 
+            // 1. Parse queries using _queryConfigurationParser.Parse(section)
+            //    - Returns List<QueryDefinition> (typically single item, multiple for chained queries)
             //
-            // For a single query definition, the query string will be obtained from
-            // QueryDefinition.QueryText property. And the connection string name
-            // from QueryDefinition.ConnectionStringName property.
-
-            // The changes that needs to be made to accomodate support for this new way of obtaining the query string and connection
-            // string name requires changes to `GetResultFromDbAsync`, where the `GetResultFromDbAsync` should
-            // no longer take a single query string along with DbConnection (like it does now)
-            // , but rather it should take a List<QueryDefinition> and a connection factory
-            // however, instead of modifying the existing `GetResultFromDbAsync` method,
-            // it's best to keep it as is for now and create a new method called `GetResultFromDbMultipleQueriesAsync`
-            // and pass the List<QueryDefinition> to that method along with the connection factory.
-
-            // inside that new method, we will check if the List<QueryDefinition> has a single item or multiple items.
-
-            // if the List<QueryDefinition> has a single item, the execution will be similar to what it is now
-            // (i.e., how `GetResultFromDbAsync` handles it now),
-            // which is creating a DbConnection using the connection factory and the connection string name
-            // and then executing the query string against that connection (while passing it qParams) and returning the result.
-
-            // the difference in the new method is that if the List<QueryDefinition> has multiple items,
-            // in that case, we will execute each query in sequence, each squery could have it's own connection string name
-            // and the result of each query could be executing against a different database server.
-            // the result from the first query will be added to the qParams list as another DbQueryParams object.
-            // and the result from the second query will be added to the qParams list as another DbQueryParams object
-            // and passed to the third query and so on.
-
-            // the goal behind this multi-query execution is to support scenarios
-            // where the result of one query is needed to execute the next query.
-            // With this approach, we can eliminate the need for linked servers when one query
-            // is dependent on data from another database server that forces
-            // users to use openquery, which limits the supported databases to only
-            // those that support linked servers. And also makes it 
-            // very difficult to protect against sql injection attacks when
-            // building the query strings dynamically using string concatenation
-            // to satisfy openquery requirements.
-            // The idea with multi-query execution is to allow users to execute
-            // their queries in sequence and pass data between them using sql parameterization.
-            // This is much more secure and flexible than using linked servers and openquery. 
-            // How to achieve that is via adding the result of the first query
-            // to the inital list of DbQueryParams that we get from `var qParams = HttpContext.Items["parameters"] as List<DbQueryParams>;`
-            // (which the initial list of DbQueryParams has the parameters from the request
-            // like query string, body, headers, and route, authentication, etc.)
-
-            // and pass the qParams list with the added result from the first query to the second query for execution.
-            // and the result of the second query will be added to the qParams list
-            // and passed to the third query for execution and so on.
-
-            // If the result of one query is only a single row, then the new DbQueryParams object will have
-            // its DataModel being an instance of a single dynamic object (first row), something like so:
-            // qParams.Add(new DbQueryParams() { DataModel = singleRowResultObject, QueryParamsRegex = DefaultPreviousQueryVariablesPattern });
-
-            // the `singleRowResultObject` would be a dynamic object having properites like `name`, `age`, etc.
-
-            // And if the result of a query is multiple rows, then the new DbQueryParams object will have
-            // a list of dynamic objects in json string format as its DataModel, something like so:
-            // qParams.Add(new DbQueryParams() { DataModel = "{\"json\":" + multiRowResultAsJson + "}", QueryParamsRegex = DefaultPreviousQueryVariablesPattern });
-
-            // the `multiRowResultAsJson` would be a json string representing an array of objects returned from the first query.
-            // The `DefaultPreviousQueryVariablesPattern` is a regex pattern that matches the variable names
-            // which by default it's `{{json}}` for multi-row results and `{{name}}`, `{{age}}`, etc. for single-row results.
-            // then the qParams list will be passed to the next query for execution.
-            // And the result from the next query will be added as another DbQueryParams object
-            // to the qParams list for the next query and so on.
-            // The final query result will be returned as the response to the API request.
-
-            // also the default name `{{json}}` for multi-row results can be changed and the QueryDefinition
-            // already has a property for that called `JsonVariableName` which can be used to
-            // customize the variable name used to pass multi-row results between queries.
+            // 2. Create new method: GetResultFromDbMultipleQueriesAsync(section, queries, qParams)
+            //    - Single query: behaves like current GetResultFromDbAsync
+            //    - Multiple queries: execute sequentially, passing results between them
+            //
+            // 3. Result passing between queries (using Com.H.Data.Common's flexible DataModel):
+            //    - Single row → DbQueryParams { DataModel = dynamicRowObject }
+            //      The dynamic object's properties become {{column_name}} parameters
+            //    - Multiple rows → DbQueryParams { DataModel = new Dictionary<string, object> { [JsonVariableName] = jsonArray } }
+            //      Next query accesses via {{json}} or custom {{JsonVariableName}}
+            //
+            // 4. Use ToChamberedEnumerableAsync(2) to detect single vs multiple rows
+            //    - WasExhausted(2) == true → single row (or zero)
+            //    - WasExhausted(2) == false → multiple rows
+            //
+            // 5. Only the final query's result (IsLastInChain == true) is returned to the client
+            //
+            // See MULTI_QUERY_CHAINING.md for full documentation.
 
 
             var query = section.GetValue<string>("query");

@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # Add any file named `test_auth_provider.xml` anywhere in the repository
 **/test_auth_provider.xml
+
+# Source from test nuget packages
+source_from_nuget/

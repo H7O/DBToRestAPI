@@ -28,11 +28,15 @@ namespace DBToRestAPI.Services.QueryParser
         /// <inheritdoc />
         public List<QueryDefinition> Parse(IConfigurationSection section)
         {
-            var result = new List<QueryDefinition>();
+            return Parse(section, QueryKey);
+        }
 
+        /// <inheritdoc />
+        public List<QueryDefinition> Parse(IConfigurationSection section, string queryNodeName)
+        {
             if (section == null || !section.Exists())
             {
-                return result;
+                return [];
             }
 
             // Get the fallback connection string name from the section level
@@ -42,12 +46,11 @@ namespace DBToRestAPI.Services.QueryParser
                 fallbackConnectionStringName = DefaultConnectionStringName;
             }
 
-            // Get all query children - they could be indexed as "query" (single) or "query:0", "query:1", etc. (multiple)
-            var querySection = section.GetSection(QueryKey);
+            var querySection = section.GetSection(queryNodeName);
 
             if (!querySection.Exists())
             {
-                return result;
+                return [];
             }
 
             // Check if it's a single query (has a value) or multiple queries (has children)
@@ -55,38 +58,43 @@ namespace DBToRestAPI.Services.QueryParser
 
             if (!string.IsNullOrEmpty(queryValue))
             {
-                // Single query node with direct value
-                var queryDef = ParseQueryNode(querySection, fallbackConnectionStringName);
-                result.Add(queryDef);
-                return result;
+                // Single query - it's both first and last in the chain
+                return
+                [
+                    ParseQueryNode(querySection, fallbackConnectionStringName, index: 0, isLastInChain: true)
+                ];
             }
 
-            // Multiple query nodes - iterate through children
-            foreach (var queryChild in querySection.GetChildren())
-            {
-                var queryDef = ParseQueryNode(queryChild, fallbackConnectionStringName);
-                result.Add(queryDef);
-            }
+            // Multiple query nodes - collect all children first to determine total count
+            var children = querySection.GetChildren().ToList();
+            var totalCount = children.Count;
 
-            return result;
+            return children
+                .Select((child, index) => ParseQueryNode(
+                    child,
+                    fallbackConnectionStringName,
+                    index,
+                    isLastInChain: index == totalCount - 1))
+                .ToList();
         }
 
         /// <summary>
         /// Parses a single query configuration node into a <see cref="QueryDefinition"/>.
         /// </summary>
-        private QueryDefinition ParseQueryNode(IConfigurationSection queryNode, string fallbackConnectionStringName)
+        private static QueryDefinition ParseQueryNode(
+            IConfigurationSection queryNode,
+            string fallbackConnectionStringName,
+            int index,
+            bool isLastInChain)
         {
-            // Get query text
             var queryText = queryNode.Value?.Trim() ?? string.Empty;
 
-            // Get connection string name: attribute on query → fallback → default
             var connectionStringName = queryNode[ConnectionStringNameKey]?.Trim();
             if (string.IsNullOrEmpty(connectionStringName))
             {
                 connectionStringName = fallbackConnectionStringName;
             }
 
-            // Get json variable name: attribute on query → default "json"
             var jsonVariableName = queryNode[JsonVarKey]?.Trim();
             if (string.IsNullOrEmpty(jsonVariableName))
             {
@@ -95,6 +103,8 @@ namespace DBToRestAPI.Services.QueryParser
 
             return new QueryDefinition
             {
+                Index = index,
+                IsLastInChain = isLastInChain,
                 QueryText = queryText,
                 ConnectionStringName = connectionStringName,
                 JsonVariableName = jsonVariableName
