@@ -134,49 +134,12 @@ namespace DBToRestAPI.Controllers
             }
             #endregion
 
-            #region check if the query is empty, return 500 
+            #region parse queries and get parameters
+            
+            // Parse all queries from the configuration section
+            var queries = _queryConfigurationParser.Parse(section);
 
-            // TODO: Implement multi-query chaining
-            // 
-            // 1. Parse queries using _queryConfigurationParser.Parse(section)
-            //    - Returns List<QueryDefinition> (typically single item, multiple for chained queries)
-            //
-            // 2. Create new method: GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDeferredExecution)
-            //    - Single query: behaves like current GetResultFromDbAsync
-            //    - Multiple queries: execute sequentially, passing results between them
-            //
-            // 3. Result passing between queries (using Com.H.Data.Common's flexible DataModel):
-            //    - Single row → DbQueryParams { DataModel = dynamicRowObject }
-            //      The dynamic object's properties become {{column_name}} parameters
-            //    - Multiple rows → DbQueryParams { DataModel = new Dictionary<string, object> { [JsonVariableName] = jsonArray } }
-            //      Next query accesses via {{json}} or custom {{JsonVariableName}}
-            //
-            // 4. Use ToChamberedEnumerableAsync(2) to detect single vs multiple rows
-            //    - WasExhausted(2) == true → single row (or zero)
-            //    - WasExhausted(2) == false → multiple rows
-            //
-            // 5. Caching: disableDeferredExecution applies ONLY to final query (IsLastInChain)
-            //    - Intermediate queries: always materialized (need row count + JSON serialization)
-            //    - Final query: respects disableDeferredExecution (.ToArray() for cache vs streaming)
-            //
-            // 6. count_query: executed only for final query, not chained
-            //
-            // 7. Connection management:
-            //    - Intermediate queries: dispose connection immediately after materializing result
-            //    - Final query: RegisterForDispose() at request end (supports streaming)
-            //
-            // 8. Edge cases:
-            //    - Empty intermediate result → null DataModel, next query handles nulls
-            //    - Error mid-chain → include query.Index in error message for debugging
-            //
-            // 9. Per-query timeout: query.DbCommandTimeout ?? section timeout ?? global config
-            //
-            // See MULTI_QUERY_CHAINING.md for full documentation.
-
-
-            var query = section.GetValue<string>("query");
-
-            if (string.IsNullOrWhiteSpace(query))
+            if (queries == null || queries.Count < 1)
             {
                 return StatusCode(500,
                     new
@@ -186,9 +149,6 @@ namespace DBToRestAPI.Controllers
                     });
             }
 
-            #endregion
-
-            #region get parameters
             var qParams = HttpContext.Items["parameters"] as List<DbQueryParams>;
             // If the parameters are not available, then there is a misconfiguration in the middleware chain
             // as even if the request does not have any parameters, the middleware chain should
@@ -206,28 +166,39 @@ namespace DBToRestAPI.Controllers
             #endregion
 
 
-            #region resolve DbConnection from request scope
-            // See if the section has a connection string name defined, if so, use it to get the connection string from the configuration
-            var connectionStringName = section.GetSection("connection_string_name")?.Value;
-            // If the connection is not provided, use the default connection from the settings
-            DbConnection connection = string.IsNullOrWhiteSpace(connectionStringName)?
-                _dbConnectionFactory.Create() :
-                _dbConnectionFactory.Create(connectionStringName);
-
-
-            #endregion
-
-
             #region get the data from DB and return it
             try
             {
-                var response = await _settings.CacheService
-                    .GetQueryResultAsync<IActionResult>(
-                    section,
-                    qParams,
-                    disableDiffered => GetResultFromDbAsync(section, connection, query, qParams, disableDiffered),
-                    HttpContext.RequestAborted
-                    );
+                IActionResult response;
+
+                if (queries.Count == 1)
+                {
+                    // Single query: use existing GetResultFromDbAsync (backward compatible)
+                    var query = queries[0];
+                    DbConnection connection = string.IsNullOrWhiteSpace(query.ConnectionStringName) ?
+                        _dbConnectionFactory.Create() :
+                        _dbConnectionFactory.Create(query.ConnectionStringName);
+
+                    response = await _settings.CacheService
+                        .GetQueryResultAsync<IActionResult>(
+                        section,
+                        qParams,
+                        disableDiffered => GetResultFromDbAsync(section, connection, query.QueryText, qParams, disableDiffered),
+                        HttpContext.RequestAborted
+                        );
+                }
+                else
+                {
+                    // Multiple queries: use chained query execution
+                    response = await _settings.CacheService
+                        .GetQueryResultAsync<IActionResult>(
+                        section,
+                        qParams,
+                        disableDiffered => GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDiffered),
+                        HttpContext.RequestAborted
+                        );
+                }
+
                 return response;
 
             }
@@ -536,6 +507,301 @@ namespace DBToRestAPI.Controllers
                     count = rowCount,
                     data = await result.ToChamberedEnumerableAsync()
                 });
+        }
+
+        /// <summary>
+        /// Executes a chain of database queries, passing results between them.
+        /// Each query can target a different database via its ConnectionStringName.
+        /// Only the final query's result is returned to the client.
+        /// </summary>
+        /// <param name="serviceQuerySection">The configuration section for the specific service query.</param>
+        /// <param name="queries">List of query definitions to execute in sequence.</param>
+        /// <param name="qParams">Initial query parameters from the HTTP request.</param>
+        /// <param name="disableDeferredExecution">If true, materializes final result for caching.</param>
+        /// <returns>The result of the final query as an IActionResult.</returns>
+        private async Task<IActionResult> GetResultFromDbMultipleQueriesAsync(
+            IConfigurationSection serviceQuerySection,
+            List<QueryDefinition> queries,
+            List<DbQueryParams> qParams,
+            bool disableDeferredExecution = false)
+        {
+            // Fallback timeouts from section and global config
+            int? sectionTimeout = serviceQuerySection.GetValue<int?>("db_command_timeout");
+            int? globalTimeout = _configuration.GetValue<int?>("db_command_timeout");
+
+            foreach (var query in queries)
+            {
+                // Resolve timeout: query → section → global
+                int? commandTimeout = query.DbCommandTimeout ?? sectionTimeout ?? globalTimeout;
+
+                // Create connection for this query
+                var connection = _dbConnectionFactory.Create(query.ConnectionStringName);
+
+                try
+                {
+                    if (query.IsLastInChain)
+                    {
+                        // Final query: register connection for disposal at request end (supports streaming)
+                        HttpContext.Response.RegisterForDispose(connection);
+
+                        // Delegate to existing method for response building
+                        // We pass the accumulated qParams which now includes results from previous queries
+                        return await GetResultFromDbFinalQueryAsync(
+                            serviceQuerySection,
+                            connection,
+                            query.QueryText,
+                            qParams,
+                            commandTimeout,
+                            disableDeferredExecution);
+                    }
+                    else
+                    {
+                        // Intermediate query: execute, materialize, and add result to qParams
+                        var result = await connection.ExecuteQueryAsync(
+                            query.QueryText,
+                            qParams,
+                            commandTimeout: commandTimeout,
+                            cToken: HttpContext.RequestAborted);
+
+                        HttpContext.RequestAborted.ThrowIfCancellationRequested();
+
+                        // Detect single vs multiple rows using chambered enumerable
+                        var chamberedResult = await result.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
+
+                        if (chamberedResult.WasExhausted(2))
+                        {
+                            // Single row (or zero rows): pass as dynamic object
+                            var singleRow = chamberedResult.AsEnumerable().FirstOrDefault();
+
+                            qParams.Add(new DbQueryParams
+                            {
+                                DataModel = singleRow,
+                                QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
+                            });
+                        }
+                        else
+                        {
+                            // Multiple rows: serialize to JSON and wrap in dictionary
+                            var allRows = chamberedResult.AsEnumerable().ToList();
+                            var jsonArray = JsonSerializer.Serialize(allRows);
+
+                            // Get the NEXT query's JsonVariableName for the dictionary key
+                            var nextQuery = queries[query.Index + 1];
+
+                            qParams.Add(new DbQueryParams
+                            {
+                                DataModel = new Dictionary<string, object>
+                                {
+                                    [nextQuery.JsonVariableName] = jsonArray
+                                },
+                                QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
+                            });
+                        }
+
+                        // Close the reader before moving to next query
+                        await result.CloseReaderAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Wrap exception with query index for debugging
+                    throw new InvalidOperationException(
+                        $"Query {query.Index + 1} of {queries.Count} failed: {ex.Message}", ex);
+                }
+                finally
+                {
+                    // Dispose intermediate connections immediately
+                    if (!query.IsLastInChain)
+                    {
+                        await connection.DisposeAsync();
+                    }
+                }
+            }
+
+            // Should never reach here if queries list is non-empty
+            return StatusCode(500, new
+            {
+                success = false,
+                message = $"No queries to execute for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+            });
+        }
+
+        /// <summary>
+        /// Executes the final query in a chain and builds the HTTP response.
+        /// This is a helper method that contains the response-building logic extracted from GetResultFromDbAsync.
+        /// </summary>
+        private async Task<IActionResult> GetResultFromDbFinalQueryAsync(
+            IConfigurationSection serviceQuerySection,
+            DbConnection connection,
+            string query,
+            List<DbQueryParams> qParams,
+            int? commandTimeout,
+            bool disableDeferredExecution)
+        {
+            // Check if count query is defined
+            var countQuery = serviceQuerySection.GetSection("count_query")?.Value;
+
+            var customSuccessStatusCode = serviceQuerySection.GetValue<int?>("success_status_code") ??
+                _configuration.GetValue<int?>("success_status_code") ?? 200;
+
+            string? rootNodeName = serviceQuerySection.GetValue<string?>("root_node")
+                ?? _configuration.GetValue<string?>("root_node") ?? null;
+
+            if (string.IsNullOrWhiteSpace(countQuery))
+            {
+                var responseStructure = serviceQuerySection.GetValue<string>("response_structure")?.ToLower() ??
+                    _configuration.GetValue<string>("response_structure")?.ToLower() ?? "auto";
+
+                if (!_responseStructures.Contains(responseStructure, StringComparer.OrdinalIgnoreCase))
+                {
+                    return StatusCode(500, new
+                    {
+                        success = false,
+                        message = $"Invalid response structure `{responseStructure}` defined for route "
+                        + $"`{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                    });
+                }
+
+                var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
+                if (resultWithNoCount != null)
+                {
+                    HttpContext.Response.RegisterForDisposeAsync(resultWithNoCount);
+                }
+
+                HttpContext.RequestAborted.ThrowIfCancellationRequested();
+
+                if (responseStructure == "array")
+                {
+                    if (disableDeferredExecution)
+                    {
+                        if (!string.IsNullOrWhiteSpace(rootNodeName))
+                        {
+                            var wrappedResult = new ExpandoObject();
+                            wrappedResult.TryAdd(rootNodeName, resultWithNoCount?.AsEnumerable().ToArray());
+                            return StatusCode(customSuccessStatusCode, wrappedResult);
+                        }
+                        return StatusCode(customSuccessStatusCode, resultWithNoCount.AsEnumerable().ToArray());
+                    }
+                    if (!string.IsNullOrWhiteSpace(rootNodeName))
+                    {
+                        var wrappedResult = new ExpandoObject();
+                        wrappedResult.TryAdd(rootNodeName, resultWithNoCount);
+                        return StatusCode(customSuccessStatusCode, wrappedResult);
+                    }
+                    return StatusCode(customSuccessStatusCode, resultWithNoCount);
+                }
+
+                if (responseStructure == "single")
+                {
+                    var singleResult = resultWithNoCount.AsEnumerable().FirstOrDefault();
+                    await resultWithNoCount.CloseReaderAsync();
+                    if (!string.IsNullOrWhiteSpace(rootNodeName))
+                    {
+                        var wrappedResult = new ExpandoObject();
+                        wrappedResult.TryAdd(rootNodeName, (object?)singleResult);
+                        return StatusCode(customSuccessStatusCode, wrappedResult);
+                    }
+                    return StatusCode(customSuccessStatusCode, singleResult);
+                }
+
+                if (responseStructure == "file")
+                {
+                    return await ReturnFile(resultWithNoCount);
+                }
+
+                if (responseStructure == "auto")
+                {
+                    var chamberedResult = await resultWithNoCount.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
+                    HttpContext.RequestAborted.ThrowIfCancellationRequested();
+
+                    if (chamberedResult.WasExhausted(2))
+                    {
+                        var singleResult = chamberedResult.AsEnumerable().FirstOrDefault();
+                        await resultWithNoCount.CloseReaderAsync();
+                        if (!string.IsNullOrWhiteSpace(rootNodeName))
+                        {
+                            var wrappedResult = new ExpandoObject();
+                            wrappedResult.TryAdd(rootNodeName, (object?)singleResult);
+                            return StatusCode(customSuccessStatusCode, wrappedResult);
+                        }
+                        return StatusCode(customSuccessStatusCode, singleResult);
+                    }
+                    else
+                    {
+                        if (!string.IsNullOrWhiteSpace(rootNodeName))
+                        {
+                            var wrappedResult = new ExpandoObject();
+                            wrappedResult.TryAdd(rootNodeName,
+                                disableDeferredExecution ?
+                                chamberedResult.AsEnumerable().ToArray() :
+                                chamberedResult);
+                            return StatusCode(customSuccessStatusCode, wrappedResult);
+                        }
+                        return StatusCode(customSuccessStatusCode,
+                            disableDeferredExecution ?
+                            chamberedResult.AsEnumerable().ToArray() :
+                            chamberedResult);
+                    }
+                }
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = $"Invalid response structure `{responseStructure}` defined for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                });
+            }
+
+            // With count query
+            var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
+            if (resultCount != null)
+            {
+                HttpContext.Response.RegisterForDisposeAsync(resultCount);
+            }
+
+            var rowCount = resultCount.AsEnumerable().FirstOrDefault();
+            HttpContext.RequestAborted.ThrowIfCancellationRequested();
+
+            if (rowCount == null)
+            {
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = $"Count query did not return any records for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                });
+            }
+            await resultCount.CloseReaderAsync();
+
+            var result = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
+            if (result != null)
+            {
+                HttpContext.Response.RegisterForDisposeAsync(result);
+            }
+
+            HttpContext.RequestAborted.ThrowIfCancellationRequested();
+
+            if (disableDeferredExecution)
+            {
+                if (!string.IsNullOrWhiteSpace(rootNodeName))
+                {
+                    var wrappedResult = new ExpandoObject();
+                    wrappedResult.TryAdd(rootNodeName,
+                        new { success = true, count = rowCount, data = result.AsEnumerable().ToArray() });
+                    return StatusCode(customSuccessStatusCode, wrappedResult);
+                }
+                return StatusCode(customSuccessStatusCode,
+                    new { success = true, count = rowCount, data = result.AsEnumerable().ToArray() });
+            }
+
+            if (!string.IsNullOrWhiteSpace(rootNodeName))
+            {
+                var wrappedResult = new ExpandoObject();
+                wrappedResult.TryAdd(rootNodeName,
+                    new { success = true, count = rowCount, data = await result.ToChamberedEnumerableAsync() });
+                return StatusCode(customSuccessStatusCode, wrappedResult);
+            }
+
+            return StatusCode(customSuccessStatusCode,
+                new { success = true, count = rowCount, data = await result.ToChamberedEnumerableAsync() });
         }
 
         private async Task<IActionResult> ReturnFile(
