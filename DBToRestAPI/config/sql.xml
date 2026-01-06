@@ -1251,6 +1251,7 @@
                         (@role_from_query1, @role_from_query1)
                         
                 ) AS t ([value], [label]);
+                
         ]]>
       </query>
       
