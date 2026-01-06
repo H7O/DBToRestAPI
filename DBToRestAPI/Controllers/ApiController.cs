@@ -580,14 +580,34 @@ namespace DBToRestAPI.Controllers
                         // Detect single vs multiple rows using chambered enumerable
                         var chamberedResult = await result.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
 
+                        // Get the NEXT query's JsonVariableName for the dictionary key
+                        var nextQuery = queries[query.Index + 1];
+
                         if (chamberedResult.WasExhausted(2))
                         {
-                            // Single row (or zero rows): pass as dynamic object
+                            // Single row (or zero rows): pass as dynamic object for {{column_name}} access
                             var singleRow = chamberedResult.AsEnumerable().FirstOrDefault();
 
                             qParams.Add(new DbQueryParams
                             {
                                 DataModel = singleRow,
+                                QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
+                            });
+
+                            // Also add as JSON array so {{json}} works consistently regardless of row count.
+                            // This allows query authors to always use {{json}} without checking if result was single/multiple.
+                            // The JSON entry is added AFTER the single row entry, so it takes precedence for {{json}}
+                            // while individual columns remain accessible via {{column_name}}.
+                            var jsonArray = singleRow != null 
+                                ? JsonSerializer.Serialize(new[] { singleRow }) 
+                                : "[]";
+
+                            qParams.Add(new DbQueryParams
+                            {
+                                DataModel = new Dictionary<string, object>
+                                {
+                                    [nextQuery.JsonVariableName] = jsonArray
+                                },
                                 QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
                             });
                         }
@@ -596,9 +616,6 @@ namespace DBToRestAPI.Controllers
                             // Multiple rows: serialize to JSON and wrap in dictionary
                             var allRows = chamberedResult.AsEnumerable().ToList();
                             var jsonArray = JsonSerializer.Serialize(allRows);
-
-                            // Get the NEXT query's JsonVariableName for the dictionary key
-                            var nextQuery = queries[query.Index + 1];
 
                             qParams.Add(new DbQueryParams
                             {
