@@ -197,295 +197,6 @@ This enables powerful hybrid architectures where you can:
 - Connect to enterprise mainframe data (IBM DB2)
 
 
-### Multi-Query Chaining (Cross-Database Workflows)
-
-Multi-Query Chaining allows you to define a sequence of SQL queries within a single API endpoint, where each query's output is automatically passed as input to the next query in the chain. This enables powerful cross-database workflows without requiring client-side orchestration.
-
-```
-┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│   Query 1   │ ──▶  │   Query 2   │ ──▶  │   Query 3   │ ──▶ Response
-│  (SQL Server)│      │    (DB2)    │      │ (SQL Server)│
-└─────────────┘      └─────────────┘      └─────────────┘
-       │                    │                    │
-       ▼                    ▼                    ▼
-   HTTP Params        Query 1 Output       Query 2 Output
-                      as Parameters        as JSON Array
-```
-
-**Key Benefits:**
-- Execute queries across multiple databases in a single API call
-- Chain operations where results from one database feed into another
-- Reduce client-server round trips for complex workflows
-- All queries use parameterized execution — no string concatenation like linked servers
-- Works with databases that don't support linked servers (Azure SQL, cross-vendor scenarios)
-
-#### Basic Configuration
-
-Define multiple `<query>` nodes within an endpoint to create a chain:
-
-```xml
-<validate_and_store_customer>
-  <route>customers/validate</route>
-  <verb>POST</verb>
-  <mandatory_parameters>customer_id</mandatory_parameters>
-  
-  <!-- Query 1: Check user authorization (SQL Server) -->
-  <query><![CDATA[
-    DECLARE @user_email NVARCHAR(255) = {{auth{email}}};
-    DECLARE @customer_id NVARCHAR(50) = {{customer_id}};
-    
-    -- Verify user has permission to validate customers
-    IF NOT EXISTS (SELECT 1 FROM user_roles WHERE email = @user_email AND role = 'validator')
-      THROW 50403, 'User not authorized to validate customers', 1;
-    
-    -- Pass customer_id to next query
-    SELECT @customer_id AS customer_id, @user_email AS validated_by;
-  ]]></query>
-  
-  <!-- Query 2: Validate against external database (DB2) -->
-  <query connection_string_name="db2"><![CDATA[
-    SELECT 
-      CUSTOMER_ID,
-      FULL_NAME,
-      REGISTRATION_DATE,
-      STATUS
-    FROM CUSTOMER_REGISTRY
-    WHERE CUSTOMER_ID = {{customer_id}}
-      AND STATUS = 'ACTIVE'
-  ]]></query>
-  
-  <!-- Query 3: Store validated data (SQL Server) -->
-  <query><![CDATA[
-    DECLARE @customer_id NVARCHAR(50) = {{customer_id}};
-    DECLARE @full_name NVARCHAR(255) = {{full_name}};
-    DECLARE @validated_by NVARCHAR(255) = {{validated_by}};
-    
-    -- Store the validated customer
-    INSERT INTO validated_customers (customer_id, full_name, validated_by, validated_at)
-    VALUES (@customer_id, @full_name, @validated_by, GETDATE());
-    
-    SELECT 'Customer validated successfully' AS message, @customer_id AS customer_id;
-  ]]></query>
-</validate_and_store_customer>
-```
-
-#### Parameter Passing Between Queries
-
-**Single Row Results** → Columns become `{{column_name}}` parameters:
-
-```sql
--- Query 1 returns:
--- | user_id | user_name |
--- |---------|-----------|
--- | 123     | John      |
-
--- Query 2 can use:
-SELECT * FROM orders WHERE user_id = {{user_id}} AND created_by = {{user_name}};
-```
-
-**Multiple Row Results** → Available as JSON array via `{{json}}`:
-
-```sql
--- Query 1 returns multiple rows:
--- | product_id | quantity |
--- |------------|----------|
--- | A1         | 5        |
--- | B2         | 3        |
-
--- Query 2 receives as JSON array:
-SELECT * FROM inventory 
-WHERE product_id IN (
-  SELECT JSON_VALUE(value, '$.product_id') 
-  FROM OPENJSON({{json}})
-);
-```
-
-> **Tip**: Single row results also provide `{{json}}` containing a one-element array, so you can always use `{{json}}` regardless of whether the previous query returned one or many rows.
-
-#### Per-Query Connection Strings and Timeouts
-
-Each query can target a different database and have its own timeout:
-
-```xml
-<cross_database_workflow>
-  <!-- Uses default connection, custom timeout -->
-  <query db_command_timeout="30"><![CDATA[
-    SELECT id, data FROM local_table WHERE id = {{id}};
-  ]]></query>
-  
-  <!-- Uses PostgreSQL with longer timeout for analytics -->
-  <query connection_string_name="postgres" db_command_timeout="120"><![CDATA[
-    SELECT * FROM analytics WHERE record_id = {{id}};
-  ]]></query>
-  
-  <!-- Uses DB2 for mainframe data -->
-  <query connection_string_name="db2"><![CDATA[
-    SELECT * FROM MAINFRAME_DATA WHERE ID = {{id}};
-  ]]></query>
-</cross_database_workflow>
-```
-
-#### Custom JSON Variable Names
-
-For complex chains, use custom variable names to avoid confusion:
-
-```xml
-<multi_source_report>
-  <!-- Query 1 results will be available as {{users_json}} in Query 2 -->
-  <query json_variable_name="users_json"><![CDATA[
-    SELECT id, name FROM users WHERE department = {{department}};
-  ]]></query>
-  
-  <!-- Query 2 results will be available as {{orders_json}} in Query 3 -->
-  <query json_variable_name="orders_json" connection_string_name="orders_db"><![CDATA[
-    SELECT order_id, total FROM orders 
-    WHERE user_id IN (SELECT JSON_VALUE(value, '$.id') FROM OPENJSON({{users_json}}));
-  ]]></query>
-  
-  <!-- Final query combines both datasets -->
-  <query><![CDATA[
-    SELECT 
-      u.value AS user_data,
-      o.value AS order_data
-    FROM OPENJSON({{users_json}}) u
-    CROSS APPLY OPENJSON({{orders_json}}) o;
-  ]]></query>
-</multi_source_report>
-```
-
-#### Real-World Use Case: Emirates ID Validation
-
-This example demonstrates a real production scenario: validating an Emirates ID against a DB2 customer database before storing it in SQL Server:
-
-```xml
-<validate_emirates_id>
-  <route>customers/{{customer_id}}/emirates-id</route>
-  <verb>PUT</verb>
-  <mandatory_parameters>emirates_id</mandatory_parameters>
-  
-  <!-- Query 1: Authorization check (Azure SQL) -->
-  <query><![CDATA[
-    DECLARE @user_email NVARCHAR(255) = {{auth{email}}};
-    DECLARE @emirates_id NVARCHAR(20) = {{emirates_id}};
-    DECLARE @customer_id UNIQUEIDENTIFIER = {{customer_id}};
-    
-    -- Check if user has permission to update customer records
-    IF NOT EXISTS (
-      SELECT 1 FROM user_permissions 
-      WHERE email = @user_email 
-        AND permission = 'UPDATE_CUSTOMER_ID'
-    )
-      THROW 50403, 'Insufficient permissions to update Emirates ID', 1;
-    
-    -- Verify customer exists
-    IF NOT EXISTS (SELECT 1 FROM customers WHERE id = @customer_id)
-      THROW 50404, 'Customer not found', 1;
-    
-    -- Pass to next query for validation
-    SELECT 
-      @emirates_id AS emirates_id,
-      @customer_id AS customer_id,
-      @user_email AS updated_by;
-  ]]></query>
-  
-  <!-- Query 2: Validate Emirates ID against government database (DB2) -->
-  <query connection_string_name="gov_db2" db_command_timeout="60"><![CDATA[
-    SELECT 
-      EMIRATES_ID,
-      FULL_NAME_EN,
-      FULL_NAME_AR,
-      DATE_OF_BIRTH,
-      NATIONALITY,
-      ID_EXPIRY_DATE,
-      CASE WHEN ID_EXPIRY_DATE > CURRENT DATE THEN 'VALID' ELSE 'EXPIRED' END AS STATUS
-    FROM EMIRATES_ID_REGISTRY
-    WHERE EMIRATES_ID = {{emirates_id}}
-  ]]></query>
-  
-  <!-- Query 3: Store validated Emirates ID (Azure SQL) -->
-  <query><![CDATA[
-    DECLARE @customer_id UNIQUEIDENTIFIER = {{customer_id}};
-    DECLARE @emirates_id NVARCHAR(20) = {{emirates_id}};
-    DECLARE @full_name NVARCHAR(255) = {{full_name_en}};
-    DECLARE @expiry_date DATE = {{id_expiry_date}};
-    DECLARE @status NVARCHAR(20) = {{status}};
-    DECLARE @updated_by NVARCHAR(255) = {{updated_by}};
-    
-    -- Reject expired IDs
-    IF @status = 'EXPIRED'
-      THROW 50400, 'Emirates ID has expired', 1;
-    
-    -- Update customer record with validated Emirates ID
-    UPDATE customers
-    SET 
-      emirates_id = @emirates_id,
-      emirates_id_name = @full_name,
-      emirates_id_expiry = @expiry_date,
-      emirates_id_verified = 1,
-      emirates_id_verified_at = GETDATE(),
-      emirates_id_verified_by = @updated_by,
-      updated_at = GETDATE()
-    WHERE id = @customer_id;
-    
-    -- Return success response
-    SELECT 
-      @customer_id AS customer_id,
-      @emirates_id AS emirates_id,
-      @full_name AS verified_name,
-      @expiry_date AS id_expiry_date,
-      'Emirates ID validated and stored successfully' AS message;
-  ]]></query>
-</validate_emirates_id>
-```
-
-**Why this matters:**
-- Azure SQL doesn't support linked servers to DB2
-- All three queries use parameterized execution — **no SQL injection risk**
-- User authorization is enforced before any external calls
-- The Emirates ID is validated against the authoritative source before storage
-- Single API call handles the entire workflow — no client-side orchestration needed
-
-#### Error Handling
-
-Errors in any query stop the chain and return the error to the client:
-
-```sql
--- In any query, use THROW with status codes:
-THROW 50400, 'Invalid input', 1;    -- Returns HTTP 400
-THROW 50403, 'Not authorized', 1;   -- Returns HTTP 403
-THROW 50404, 'Not found', 1;        -- Returns HTTP 404
-THROW 50409, 'Conflict', 1;         -- Returns HTTP 409
-```
-
-Error messages include the query position for debugging:
-```json
-{
-  "success": false,
-  "message": "Query 2 of 3 failed: Emirates ID not found in registry"
-}
-```
-
-#### Caching with Multi-Query Chains
-
-Caching works with chained queries — the entire chain result is cached:
-
-```xml
-<cached_cross_db_lookup>
-  <cache>
-    <duration>300</duration>
-    <invalidators>lookup_id</invalidators>
-  </cache>
-  
-  <query>SELECT * FROM local_data WHERE id = {{lookup_id}};</query>
-  <query connection_string_name="external_db">SELECT * FROM external_data WHERE ref_id = {{id}};</query>
-</cached_cross_db_lookup>
-```
-
-> **Note**: Only the final query's result is cached. Intermediate queries are always executed fresh when the cache expires.
-
-For comprehensive documentation including edge cases and advanced patterns, see [MULTI_QUERY_CHAINING.md](MULTI_QUERY_CHAINING.md).
-
-
 ## Phonebook API examples
 
 ### Example 1 - Adding a contact record
@@ -3960,6 +3671,295 @@ Specify configuration paths in `sections_to_encrypt`:
 | `authorize:providers:azure_b2c:client_secret` | Only the client_secret |
 
 > **📖 Full Documentation**: For complete details on cross-platform setup, Docker/Kubernetes deployment, key management, and migration between encryption methods, see [CONFIGURATION_MANAGEMENT.md](CONFIGURATION_MANAGEMENT.md#settings-encryption).
+
+
+## Multi-Query Chaining (Cross-Database Workflows)
+
+Multi-Query Chaining allows you to define a sequence of SQL queries within a single API endpoint, where each query's output is automatically passed as input to the next query in the chain. This enables powerful cross-database workflows without requiring client-side orchestration.
+
+```
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│   Query 1   │ ──▶  │   Query 2   │ ──▶  │   Query 3   │ ──▶ Response
+│  (SQL Server)│      │    (DB2)    │      │ (SQL Server)│
+└─────────────┘      └─────────────┘      └─────────────┘
+       │                    │                    │
+       ▼                    ▼                    ▼
+   HTTP Params        Query 1 Output       Query 2 Output
+                      as Parameters        as JSON Array
+```
+
+**Key Benefits:**
+- Execute queries across multiple databases in a single API call
+- Chain operations where results from one database feed into another
+- Reduce client-server round trips for complex workflows
+- All queries use parameterized execution — no string concatenation like linked servers
+- Works with databases that don't support linked servers (Azure SQL, cross-vendor scenarios)
+
+### Basic Configuration
+
+Define multiple `<query>` nodes within an endpoint to create a chain:
+
+```xml
+<validate_and_store_customer>
+  <route>customers/validate</route>
+  <verb>POST</verb>
+  <mandatory_parameters>customer_id</mandatory_parameters>
+  
+  <!-- Query 1: Check user authorization (SQL Server) -->
+  <query><![CDATA[
+    DECLARE @user_email NVARCHAR(255) = {{auth{email}}};
+    DECLARE @customer_id NVARCHAR(50) = {{customer_id}};
+    
+    -- Verify user has permission to validate customers
+    IF NOT EXISTS (SELECT 1 FROM user_roles WHERE email = @user_email AND role = 'validator')
+      THROW 50403, 'User not authorized to validate customers', 1;
+    
+    -- Pass customer_id to next query
+    SELECT @customer_id AS customer_id, @user_email AS validated_by;
+  ]]></query>
+  
+  <!-- Query 2: Validate against external database (DB2) -->
+  <query connection_string_name="db2"><![CDATA[
+    SELECT 
+      CUSTOMER_ID,
+      FULL_NAME,
+      REGISTRATION_DATE,
+      STATUS
+    FROM CUSTOMER_REGISTRY
+    WHERE CUSTOMER_ID = {{customer_id}}
+      AND STATUS = 'ACTIVE'
+  ]]></query>
+  
+  <!-- Query 3: Store validated data (SQL Server) -->
+  <query><![CDATA[
+    DECLARE @customer_id NVARCHAR(50) = {{customer_id}};
+    DECLARE @full_name NVARCHAR(255) = {{full_name}};
+    DECLARE @validated_by NVARCHAR(255) = {{validated_by}};
+    
+    -- Store the validated customer
+    INSERT INTO validated_customers (customer_id, full_name, validated_by, validated_at)
+    VALUES (@customer_id, @full_name, @validated_by, GETDATE());
+    
+    SELECT 'Customer validated successfully' AS message, @customer_id AS customer_id;
+  ]]></query>
+</validate_and_store_customer>
+```
+
+### Parameter Passing Between Queries
+
+**Single Row Results** → Columns become `{{column_name}}` parameters:
+
+```sql
+-- Query 1 returns:
+-- | user_id | user_name |
+-- |---------|-----------|
+-- | 123     | John      |
+
+-- Query 2 can use:
+SELECT * FROM orders WHERE user_id = {{user_id}} AND created_by = {{user_name}};
+```
+
+**Multiple Row Results** → Available as JSON array via `{{json}}`:
+
+```sql
+-- Query 1 returns multiple rows:
+-- | product_id | quantity |
+-- |------------|----------|
+-- | A1         | 5        |
+-- | B2         | 3        |
+
+-- Query 2 receives as JSON array:
+SELECT * FROM inventory 
+WHERE product_id IN (
+  SELECT JSON_VALUE(value, '$.product_id') 
+  FROM OPENJSON({{json}})
+);
+```
+
+> **Tip**: Single row results also provide `{{json}}` containing a one-element array, so you can always use `{{json}}` regardless of whether the previous query returned one or many rows.
+
+### Per-Query Connection Strings and Timeouts
+
+Each query can target a different database and have its own timeout:
+
+```xml
+<cross_database_workflow>
+  <!-- Uses default connection, custom timeout -->
+  <query db_command_timeout="30"><![CDATA[
+    SELECT id, data FROM local_table WHERE id = {{id}};
+  ]]></query>
+  
+  <!-- Uses PostgreSQL with longer timeout for analytics -->
+  <query connection_string_name="postgres" db_command_timeout="120"><![CDATA[
+    SELECT * FROM analytics WHERE record_id = {{id}};
+  ]]></query>
+  
+  <!-- Uses DB2 for mainframe data -->
+  <query connection_string_name="db2"><![CDATA[
+    SELECT * FROM MAINFRAME_DATA WHERE ID = {{id}};
+  ]]></query>
+</cross_database_workflow>
+```
+
+### Custom JSON Variable Names
+
+For complex chains, use custom variable names to avoid confusion:
+
+```xml
+<multi_source_report>
+  <!-- Query 1 results will be available as {{users_json}} in Query 2 -->
+  <query json_variable_name="users_json"><![CDATA[
+    SELECT id, name FROM users WHERE department = {{department}};
+  ]]></query>
+  
+  <!-- Query 2 results will be available as {{orders_json}} in Query 3 -->
+  <query json_variable_name="orders_json" connection_string_name="orders_db"><![CDATA[
+    SELECT order_id, total FROM orders 
+    WHERE user_id IN (SELECT JSON_VALUE(value, '$.id') FROM OPENJSON({{users_json}}));
+  ]]></query>
+  
+  <!-- Final query combines both datasets -->
+  <query><![CDATA[
+    SELECT 
+      u.value AS user_data,
+      o.value AS order_data
+    FROM OPENJSON({{users_json}}) u
+    CROSS APPLY OPENJSON({{orders_json}}) o;
+  ]]></query>
+</multi_source_report>
+```
+
+### Real-World Use Case: Emirates ID Validation
+
+This example demonstrates a real production scenario: validating an Emirates ID against a DB2 customer database before storing it in SQL Server:
+
+```xml
+<validate_emirates_id>
+  <route>customers/{{customer_id}}/emirates-id</route>
+  <verb>PUT</verb>
+  <mandatory_parameters>emirates_id</mandatory_parameters>
+  
+  <!-- Query 1: Authorization check (Azure SQL) -->
+  <query><![CDATA[
+    DECLARE @user_email NVARCHAR(255) = {{auth{email}}};
+    DECLARE @emirates_id NVARCHAR(20) = {{emirates_id}};
+    DECLARE @customer_id UNIQUEIDENTIFIER = {{customer_id}};
+    
+    -- Check if user has permission to update customer records
+    IF NOT EXISTS (
+      SELECT 1 FROM user_permissions 
+      WHERE email = @user_email 
+        AND permission = 'UPDATE_CUSTOMER_ID'
+    )
+      THROW 50403, 'Insufficient permissions to update Emirates ID', 1;
+    
+    -- Verify customer exists
+    IF NOT EXISTS (SELECT 1 FROM customers WHERE id = @customer_id)
+      THROW 50404, 'Customer not found', 1;
+    
+    -- Pass to next query for validation
+    SELECT 
+      @emirates_id AS emirates_id,
+      @customer_id AS customer_id,
+      @user_email AS updated_by;
+  ]]></query>
+  
+  <!-- Query 2: Validate Emirates ID against government database (DB2) -->
+  <query connection_string_name="gov_db2" db_command_timeout="60"><![CDATA[
+    SELECT 
+      EMIRATES_ID,
+      FULL_NAME_EN,
+      FULL_NAME_AR,
+      DATE_OF_BIRTH,
+      NATIONALITY,
+      ID_EXPIRY_DATE,
+      CASE WHEN ID_EXPIRY_DATE > CURRENT DATE THEN 'VALID' ELSE 'EXPIRED' END AS STATUS
+    FROM EMIRATES_ID_REGISTRY
+    WHERE EMIRATES_ID = {{emirates_id}}
+  ]]></query>
+  
+  <!-- Query 3: Store validated Emirates ID (Azure SQL) -->
+  <query><![CDATA[
+    DECLARE @customer_id UNIQUEIDENTIFIER = {{customer_id}};
+    DECLARE @emirates_id NVARCHAR(20) = {{emirates_id}};
+    DECLARE @full_name NVARCHAR(255) = {{full_name_en}};
+    DECLARE @expiry_date DATE = {{id_expiry_date}};
+    DECLARE @status NVARCHAR(20) = {{status}};
+    DECLARE @updated_by NVARCHAR(255) = {{updated_by}};
+    
+    -- Reject expired IDs
+    IF @status = 'EXPIRED'
+      THROW 50400, 'Emirates ID has expired', 1;
+    
+    -- Update customer record with validated Emirates ID
+    UPDATE customers
+    SET 
+      emirates_id = @emirates_id,
+      emirates_id_name = @full_name,
+      emirates_id_expiry = @expiry_date,
+      emirates_id_verified = 1,
+      emirates_id_verified_at = GETDATE(),
+      emirates_id_verified_by = @updated_by,
+      updated_at = GETDATE()
+    WHERE id = @customer_id;
+    
+    -- Return success response
+    SELECT 
+      @customer_id AS customer_id,
+      @emirates_id AS emirates_id,
+      @full_name AS verified_name,
+      @expiry_date AS id_expiry_date,
+      'Emirates ID validated and stored successfully' AS message;
+  ]]></query>
+</validate_emirates_id>
+```
+
+**Why this matters:**
+- Azure SQL doesn't support linked servers to DB2
+- All three queries use parameterized execution — **no SQL injection risk**
+- User authorization is enforced before any external calls
+- The Emirates ID is validated against the authoritative source before storage
+- Single API call handles the entire workflow — no client-side orchestration needed
+
+### Error Handling
+
+Errors in any query stop the chain and return the error to the client:
+
+```sql
+-- In any query, use THROW with status codes:
+THROW 50400, 'Invalid input', 1;    -- Returns HTTP 400
+THROW 50403, 'Not authorized', 1;   -- Returns HTTP 403
+THROW 50404, 'Not found', 1;        -- Returns HTTP 404
+THROW 50409, 'Conflict', 1;         -- Returns HTTP 409
+```
+
+Error messages include the query position for debugging:
+```json
+{
+  "success": false,
+  "message": "Query 2 of 3 failed: Emirates ID not found in registry"
+}
+```
+
+### Caching with Multi-Query Chains
+
+Caching works with chained queries — the entire chain result is cached:
+
+```xml
+<cached_cross_db_lookup>
+  <cache>
+    <duration>300</duration>
+    <invalidators>lookup_id</invalidators>
+  </cache>
+  
+  <query>SELECT * FROM local_data WHERE id = {{lookup_id}};</query>
+  <query connection_string_name="external_db">SELECT * FROM external_data WHERE ref_id = {{id}};</query>
+</cached_cross_db_lookup>
+```
+
+> **Note**: Only the final query's result is cached. Intermediate queries are always executed fresh when the cache expires.
+
+For comprehensive documentation including edge cases and advanced patterns, see [MULTI_QUERY_CHAINING.md](MULTI_QUERY_CHAINING.md).
 
 
 **documentation in progress - more examples to be added soon**
