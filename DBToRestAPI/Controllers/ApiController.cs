@@ -529,6 +529,18 @@ namespace DBToRestAPI.Controllers
             int? sectionTimeout = serviceQuerySection.GetValue<int?>("db_command_timeout");
             int? globalTimeout = _configuration.GetValue<int?>("db_command_timeout");
 
+            // Ensure the chained query parameter regex pattern is registered in qParams.
+            // Com.H.Data.Common requires at least one entry with a given regex pattern to recognize
+            // and process variables matching that pattern. Without this, variables like {{column}} 
+            // or {pq{column}} won't be replaced with DbNull when no matching parameter exists.
+            // Adding a null DataModel entry is safe - it just registers the pattern for processing.
+            // This also future-proofs the code if we consolidate to use this method for single queries.
+            qParams.Add(new DbQueryParams
+            {
+                DataModel = null,
+                QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
+            });
+
             foreach (var query in queries)
             {
                 // Resolve timeout: query → section → global
@@ -539,11 +551,6 @@ namespace DBToRestAPI.Controllers
 
                 try
                 {
-                    // helps when executing a query that doesn't have any parameters
-                    // a default parameter for every regex pattern needs to be always present
-                    // when executing queries so that if the query has a variable matching that pattern
-                    // it gets removed properly if no parameters for that specific regex pattern are provided
-                    bool regexAddedForChainedParams = false;
                     if (query.IsLastInChain)
                     {
                         // Final query: register connection for disposal at request end (supports streaming)
@@ -551,28 +558,6 @@ namespace DBToRestAPI.Controllers
 
                         // Delegate to existing method for response building
                         // We pass the accumulated qParams which now includes results from previous queries
-
-                        if (!regexAddedForChainedParams)
-                        {
-                            qParams.Add(new DbQueryParams
-                            {
-                                // the default regex for `DefaultPreviousQueryVariablesPattern` is 
-                                // "(?<open_marker>\{\{|\{pq\{)(?<param>.*?)?(?<close_marker>\}\})"
-                                // which means variables in the query like {{var_name}} or {pq{var_name}}
-                                // are detected and processed accordingly.
-                                // however if we do not add an entry in the qParams list that has this regex pattern
-                                // variables like the one in the line below line will not be processed correctly:
-                                // `declare @name nvarchar(50) = {pq{name}}`
-                                // it should be replaced with DbNull, but since no entry in the qParams list has this regex pattern
-                                // the Com.H.Data.Common library will not know to replace it with DbNull
-                                // so it's best to check if an entry with this regex pattern is already added
-                                // and if not, add it, even if no DataModel is provided (i.e., null)
-                                // this helps Com.H.Data.Common library to identify and replace such variables with DbNull
-                                DataModel = null,
-                                QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
-                            });
-                            regexAddedForChainedParams = true;
-                        }
                         return await GetResultFromDbFinalQueryAsync(
                             serviceQuerySection,
                             connection,
@@ -605,7 +590,6 @@ namespace DBToRestAPI.Controllers
                                 DataModel = singleRow,
                                 QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
                             });
-                            regexAddedForChainedParams = true;
                         }
                         else
                         {
@@ -624,7 +608,6 @@ namespace DBToRestAPI.Controllers
                                 },
                                 QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
                             });
-                            regexAddedForChainedParams = true;
                         }
 
                         // Close the reader before moving to next query
