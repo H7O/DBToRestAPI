@@ -169,6 +169,8 @@ namespace DBToRestAPI.Controllers
             //    - Empty intermediate result → null DataModel, next query handles nulls
             //    - Error mid-chain → include query.Index in error message for debugging
             //
+            // 9. Per-query timeout: query.DbCommandTimeout ?? section timeout ?? global config
+            //
             // See MULTI_QUERY_CHAINING.md for full documentation.
 
 

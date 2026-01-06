@@ -35,6 +35,12 @@ namespace DBToRestAPI.Services.QueryParser
         public string ConnectionStringName { get; init; } = "default";
 
         /// <summary>
+        /// Optional command timeout in seconds for this specific query.
+        /// Resolved from: query attribute → section fallback → global config → null (use provider default).
+        /// </summary>
+        public int? DbCommandTimeout { get; init; }
+
+        /// <summary>
         /// The variable name used to pass previous query results as a JSON array.
         /// Only applicable when the previous query returns multiple rows.
         /// Defaults to "json" unless specified via the "json_var" attribute.

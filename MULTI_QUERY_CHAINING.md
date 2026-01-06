@@ -111,6 +111,31 @@ Use the `json_var` attribute to specify a custom variable name:
 
 ---
 
+## Per-Query Command Timeout
+
+Each query can have its own timeout, resolved in this order:
+
+1. **Query Attribute**: `<query db_command_timeout="60">`
+2. **Endpoint Fallback**: `<db_command_timeout>30</db_command_timeout>`
+3. **Global Config**: `db_command_timeout` in main settings
+4. **Provider Default**: If none specified, uses database provider's default
+
+```xml
+<chained_with_timeouts>
+  <db_command_timeout>30</db_command_timeout> <!-- Fallback for all queries -->
+  
+  <query>
+    <![CDATA[ SELECT * FROM quick_lookup; ]]> <!-- Uses 30s fallback -->
+  </query>
+  
+  <query db_command_timeout="120">
+    <![CDATA[ SELECT * FROM slow_report; ]]> <!-- Uses 120s override -->
+  </query>
+</chained_with_timeouts>
+```
+
+---
+
 ## Connection String Resolution
 
 Each query can target a different database. Connection strings are resolved in this order:
@@ -355,8 +380,7 @@ When processing chained queries programmatically, the following properties are a
 | `IsLastInChain` | `bool` | `true` for the final query (result returned to client) |
 | `QueryText` | `string` | The SQL query content |
 | `ConnectionStringName` | `string` | Resolved connection string name |
-| `JsonVariableName` | `string` | Variable name for JSON array input (default: `"json"`) |
-
+| `JsonVariableName` | `string` | Variable name for JSON array input (default: `"json"`) || `DbCommandTimeout` | `int?` | Optional per-query timeout in seconds |
 ---
 
 ## Implementation Details (Developer Reference)

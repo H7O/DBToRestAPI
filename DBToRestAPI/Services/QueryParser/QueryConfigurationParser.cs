@@ -12,6 +12,7 @@ namespace DBToRestAPI.Services.QueryParser
         private const string QueryKey = "query";
         private const string ConnectionStringNameKey = "connection_string_name";
         private const string JsonVarKey = "json_var";
+        private const string DbCommandTimeoutKey = "db_command_timeout";
 
         public QueryConfigurationParser(IConfiguration configuration)
         {
@@ -101,13 +102,22 @@ namespace DBToRestAPI.Services.QueryParser
                 jsonVariableName = DefaultJsonVariableName;
             }
 
+            // Parse optional db_command_timeout (per-query override)
+            int? dbCommandTimeout = null;
+            var timeoutStr = queryNode[DbCommandTimeoutKey]?.Trim();
+            if (!string.IsNullOrEmpty(timeoutStr) && int.TryParse(timeoutStr, out var timeout))
+            {
+                dbCommandTimeout = timeout;
+            }
+
             return new QueryDefinition
             {
                 Index = index,
                 IsLastInChain = isLastInChain,
                 QueryText = queryText,
                 ConnectionStringName = connectionStringName,
-                JsonVariableName = jsonVariableName
+                JsonVariableName = jsonVariableName,
+                DbCommandTimeout = dbCommandTimeout
             };
         }
     }
