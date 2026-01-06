@@ -141,7 +141,7 @@ namespace DBToRestAPI.Controllers
             // 1. Parse queries using _queryConfigurationParser.Parse(section)
             //    - Returns List<QueryDefinition> (typically single item, multiple for chained queries)
             //
-            // 2. Create new method: GetResultFromDbMultipleQueriesAsync(section, queries, qParams)
+            // 2. Create new method: GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDeferredExecution)
             //    - Single query: behaves like current GetResultFromDbAsync
             //    - Multiple queries: execute sequentially, passing results between them
             //
@@ -155,7 +155,11 @@ namespace DBToRestAPI.Controllers
             //    - WasExhausted(2) == true → single row (or zero)
             //    - WasExhausted(2) == false → multiple rows
             //
-            // 5. Only the final query's result (IsLastInChain == true) is returned to the client
+            // 5. Caching: disableDeferredExecution applies ONLY to final query (IsLastInChain)
+            //    - Intermediate queries: always materialized (need row count + JSON serialization)
+            //    - Final query: respects disableDeferredExecution (.ToArray() for cache vs streaming)
+            //
+            // 6. count_query: executed only for final query, not chained
             //
             // See MULTI_QUERY_CHAINING.md for full documentation.
 

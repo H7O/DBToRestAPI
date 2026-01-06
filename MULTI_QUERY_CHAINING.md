@@ -394,21 +394,59 @@ private async Task<IActionResult> GetResultFromDbMultipleQueriesAsync(
     bool disableDeferredExecution = false)
 ```
 
+### Caching Behavior
+
+The `disableDeferredExecution` parameter controls whether the **final** result is streamed or buffered:
+
+| `disableDeferredExecution` | Behavior | Use Case |
+|---------------------------|----------|----------|
+| `false` | Final query streams via `IAsyncEnumerable` | No caching, direct response |
+| `true` | Final query materialized via `.ToArray()` | Caching enabled, result stored in memory |
+
+**Critical**: Intermediate queries are **always** materialized regardless of this flag, because:
+1. We need to detect single vs multiple rows (`ToChamberedEnumerableAsync`)
+2. We need to serialize multi-row results to JSON for the next query
+3. We need to close the reader before opening a new connection
+
+```csharp
+// Integration with CacheService (same pattern as existing code)
+var response = await _settings.CacheService.GetQueryResultAsync<IActionResult>(
+    section,
+    qParams,
+    disableDeferredExecution => GetResultFromDbMultipleQueriesAsync(
+        section, 
+        queries, 
+        qParams, 
+        disableDeferredExecution),
+    HttpContext.RequestAborted
+);
+```
+
 ### Execution Algorithm
 
 ```
 foreach query in queries:
     1. Create DbConnection using _dbConnectionFactory.Create(query.ConnectionStringName)
+    
     2. Execute query.QueryText with current qParams
+    
     3. If NOT query.IsLastInChain:
+       // ALWAYS materialize intermediate results
        a. Detect row count using ToChamberedEnumerableAsync(2)
        b. Single row → Add result as DbQueryParams { DataModel = dynamicObject }
-       c. Multiple rows → Add as DbQueryParams { DataModel = { [JsonVariableName] = jsonArray } }
+       c. Multiple rows → Serialize to JSON, Add as DbQueryParams { DataModel = Dictionary }
        d. Close reader, dispose connection
+       
     4. If query.IsLastInChain:
-       - Apply response_structure logic (array/single/auto/file)
-       - Return result to client
+       // Respect disableDeferredExecution for final query only
+       a. Apply response_structure logic (array/single/auto/file)
+       b. If disableDeferredExecution: call .ToArray() for caching
+       c. If streaming (!disableDeferredExecution): return IAsyncEnumerable directly
+       d. Execute count_query if configured (same params as final query)
+       e. Return result to client
 ```
+
+**Note on count_query**: The `count_query` is executed only for the **final query** and is not chained. The existing `GetResultFromDbAsync` logic for `count_query` can be reused. Both the main query and count_query receive the same accumulated `qParams`.
 
 ### Parameter Accumulation
 
