@@ -3311,7 +3311,7 @@ HTTP Status: `403 Forbidden`
 </user_profile_endpoint>
 ```
 
-#### Scenario 4: Row-Level Security with JWT Claims
+#### Scenario 4: Security with JWT Claims
 
 ```xml
 <my_orders_endpoint>
