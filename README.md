@@ -3829,20 +3829,21 @@ For complex chains, use custom variable names to avoid confusion:
 </multi_source_report>
 ```
 
-### Real-World Use Case: Emirates ID Validation
+### Real-World Use Case: Government ID Validation
 
-This example demonstrates a real production scenario: validating an Emirates ID against a DB2 customer database before storing it in SQL Server:
+This example demonstrates a real production scenario: validating a government-issued ID (passport, driver's license, national ID, etc.) against an external registry database before storing it in your application database:
 
 ```xml
-<validate_emirates_id>
-  <route>customers/{{customer_id}}/emirates-id</route>
+<validate_government_id>
+  <route>customers/{{customer_id}}/government-id</route>
   <verb>PUT</verb>
-  <mandatory_parameters>emirates_id</mandatory_parameters>
+  <mandatory_parameters>id_number,id_type</mandatory_parameters>
   
   <!-- Query 1: Authorization check (Azure SQL) -->
   <query><![CDATA[
     DECLARE @user_email NVARCHAR(255) = {{auth{email}}};
-    DECLARE @emirates_id NVARCHAR(20) = {{emirates_id}};
+    DECLARE @id_number NVARCHAR(50) = {{id_number}};
+    DECLARE @id_type NVARCHAR(20) = {{id_type}};  -- 'passport', 'drivers_license', 'national_id'
     DECLARE @customer_id UNIQUEIDENTIFIER = {{customer_id}};
     
     -- Check if user has permission to update customer records
@@ -3851,7 +3852,7 @@ This example demonstrates a real production scenario: validating an Emirates ID 
       WHERE email = @user_email 
         AND permission = 'UPDATE_CUSTOMER_ID'
     )
-      THROW 50403, 'Insufficient permissions to update Emirates ID', 1;
+      THROW 50403, 'Insufficient permissions to update ID documents', 1;
     
     -- Verify customer exists
     IF NOT EXISTS (SELECT 1 FROM customers WHERE id = @customer_id)
@@ -3859,66 +3860,71 @@ This example demonstrates a real production scenario: validating an Emirates ID 
     
     -- Pass to next query for validation
     SELECT 
-      @emirates_id AS emirates_id,
+      @id_number AS id_number,
+      @id_type AS id_type,
       @customer_id AS customer_id,
       @user_email AS updated_by;
   ]]></query>
   
-  <!-- Query 2: Validate Emirates ID against government database (DB2) -->
-  <query connection_string_name="gov_db2" db_command_timeout="60"><![CDATA[
+  <!-- Query 2: Validate ID against government registry (DB2 mainframe) -->
+  <query connection_string_name="gov_registry_db2" db_command_timeout="60"><![CDATA[
     SELECT 
-      EMIRATES_ID,
-      FULL_NAME_EN,
-      FULL_NAME_AR,
+      ID_NUMBER,
+      ID_TYPE,
+      FULL_NAME,
       DATE_OF_BIRTH,
       NATIONALITY,
-      ID_EXPIRY_DATE,
-      CASE WHEN ID_EXPIRY_DATE > CURRENT DATE THEN 'VALID' ELSE 'EXPIRED' END AS STATUS
-    FROM EMIRATES_ID_REGISTRY
-    WHERE EMIRATES_ID = {{emirates_id}}
+      EXPIRY_DATE,
+      CASE WHEN EXPIRY_DATE > CURRENT DATE THEN 'VALID' ELSE 'EXPIRED' END AS STATUS
+    FROM GOVERNMENT_ID_REGISTRY
+    WHERE ID_NUMBER = {{id_number}}
+      AND ID_TYPE = {{id_type}}
   ]]></query>
   
-  <!-- Query 3: Store validated Emirates ID (Azure SQL) -->
+  <!-- Query 3: Store validated ID (Azure SQL) -->
   <query><![CDATA[
     DECLARE @customer_id UNIQUEIDENTIFIER = {{customer_id}};
-    DECLARE @emirates_id NVARCHAR(20) = {{emirates_id}};
-    DECLARE @full_name NVARCHAR(255) = {{full_name_en}};
-    DECLARE @expiry_date DATE = {{id_expiry_date}};
+    DECLARE @id_number NVARCHAR(50) = {{id_number}};
+    DECLARE @id_type NVARCHAR(20) = {{id_type}};
+    DECLARE @full_name NVARCHAR(255) = {{full_name}};
+    DECLARE @expiry_date DATE = {{expiry_date}};
     DECLARE @status NVARCHAR(20) = {{status}};
     DECLARE @updated_by NVARCHAR(255) = {{updated_by}};
     
     -- Reject expired IDs
     IF @status = 'EXPIRED'
-      THROW 50400, 'Emirates ID has expired', 1;
+      THROW 50400, 'ID document has expired', 1;
     
-    -- Update customer record with validated Emirates ID
+    -- Update customer record with validated ID
     UPDATE customers
     SET 
-      emirates_id = @emirates_id,
-      emirates_id_name = @full_name,
-      emirates_id_expiry = @expiry_date,
-      emirates_id_verified = 1,
-      emirates_id_verified_at = GETDATE(),
-      emirates_id_verified_by = @updated_by,
+      government_id_number = @id_number,
+      government_id_type = @id_type,
+      government_id_name = @full_name,
+      government_id_expiry = @expiry_date,
+      government_id_verified = 1,
+      government_id_verified_at = GETDATE(),
+      government_id_verified_by = @updated_by,
       updated_at = GETDATE()
     WHERE id = @customer_id;
     
     -- Return success response
     SELECT 
       @customer_id AS customer_id,
-      @emirates_id AS emirates_id,
+      @id_number AS id_number,
+      @id_type AS id_type,
       @full_name AS verified_name,
       @expiry_date AS id_expiry_date,
-      'Emirates ID validated and stored successfully' AS message;
+      'ID document validated and stored successfully' AS message;
   ]]></query>
-</validate_emirates_id>
+</validate_government_id>
 ```
 
 **Why this matters:**
 - Azure SQL doesn't support linked servers to DB2
 - All three queries use parameterized execution — **no SQL injection risk**
 - User authorization is enforced before any external calls
-- The Emirates ID is validated against the authoritative source before storage
+- The ID is validated against the authoritative government registry before storage
 - Single API call handles the entire workflow — no client-side orchestration needed
 
 ### Error Handling
