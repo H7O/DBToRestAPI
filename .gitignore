@@ -367,3 +367,6 @@ FodyWeavers.xsd
 
 # Source from test nuget packages
 source_from_nuget/
+
+# IBM DB2 CLI Driver files
+clidriver/
