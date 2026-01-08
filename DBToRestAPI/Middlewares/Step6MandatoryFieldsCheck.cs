@@ -150,8 +150,19 @@ namespace DBToRestAPI.Middlewares
             #region check if there are any mandatory parameters missing
             var failedMandatoryCheckResponse = this._settings
                 .GetFailedMandatoryParamsCheckIfAny(section, qParams);
-            if (failedMandatoryCheckResponse != null) 
+            if (failedMandatoryCheckResponse != null)
             {
+                // Check if response has already started before writing error response
+                if (context.Response.HasStarted)
+                {
+                    _logger.LogWarning(
+                        "{Time}: Cannot write mandatory fields error response - response has already started. " +
+                        "Route: {Route}, StatusCode attempted: {StatusCode}",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                        context.Items.TryGetValue("route", out var route) ? route : "unknown",
+                        failedMandatoryCheckResponse.StatusCode);
+                    return;
+                }
                 await context.Response.DeferredWriteAsJsonAsync(failedMandatoryCheckResponse);
                 return;
             }
@@ -161,9 +172,56 @@ namespace DBToRestAPI.Middlewares
             {
                 await _next(context);
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
-                _logger.LogError(ex.Message);
+                // Log detailed error information to help diagnose issues
+                var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                var route = context.Items.TryGetValue("route", out var r) ? r?.ToString() : "unknown";
+                var serviceType = context.Items.TryGetValue("service_type", out var st) ? st?.ToString() : "unknown";
+                var hasResponseStarted = context.Response.HasStarted;
+                var currentStatusCode = context.Response.StatusCode;
+
+                _logger.LogError(ex,
+                    "{Time}: Exception in Step6MandatoryFieldsCheck pipeline. " +
+                    "Route: {Route}, ServiceType: {ServiceType}, " +
+                    "ResponseHasStarted: {HasStarted}, CurrentStatusCode: {StatusCode}, " +
+                    "ExceptionType: {ExceptionType}, Message: {Message}",
+                    timestamp, route, serviceType, hasResponseStarted, currentStatusCode,
+                    ex.GetType().Name, ex.Message);
+
+                // Only attempt to write error response if response hasn't started
+                if (!context.Response.HasStarted)
+                {
+                    try
+                    {
+                        await context.Response.DeferredWriteAsJsonAsync(
+                            new ObjectResult(
+                                new
+                                {
+                                    success = false,
+                                    message = "An unexpected error occurred processing your request"
+                                }
+                            )
+                            {
+                                StatusCode = 500
+                            }
+                        );
+                    }
+                    catch (Exception writeEx)
+                    {
+                        _logger.LogError(writeEx,
+                            "{Time}: Failed to write error response in Step6MandatoryFieldsCheck. " +
+                            "Route: {Route}, Original exception: {OriginalMessage}",
+                            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, ex.Message);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "{Time}: Cannot write error response in Step6MandatoryFieldsCheck - response already started. " +
+                        "Route: {Route}, OriginalException: {ExceptionType}",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, ex.GetType().Name);
+                }
             }
 
         }

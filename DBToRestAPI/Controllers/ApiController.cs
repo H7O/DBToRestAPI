@@ -135,7 +135,7 @@ namespace DBToRestAPI.Controllers
             #endregion
 
             #region parse queries and get parameters
-            
+
             // Parse all queries from the configuration section
             var queries = _queryConfigurationParser.Parse(section);
 
@@ -179,6 +179,10 @@ namespace DBToRestAPI.Controllers
                         _dbConnectionFactory.Create() :
                         _dbConnectionFactory.Create(query.ConnectionStringName);
 
+                    // Register connection for disposal when response completes
+                    // This ensures the connection is returned to the pool even if streaming fails
+                    HttpContext.Response.RegisterForDisposeAsync(connection);
+
                     response = await _settings.CacheService
                         .GetQueryResultAsync<IActionResult>(
                         section,
@@ -204,6 +208,24 @@ namespace DBToRestAPI.Controllers
             }
             catch (Exception ex)
             {
+                // Log the exception with timestamp for easier debugging
+                _logger.LogError(ex,
+                    "{Time}: Exception in ApiController.Index. Route: {Route}, ResponseHasStarted: {HasStarted}",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    HttpContext.Items.TryGetValue("route", out var r) ? r : "unknown",
+                    Response.HasStarted);
+
+                // If response has already started, we cannot return any IActionResult
+                // Just log and return an empty result to avoid the "StatusCode cannot be set" exception
+                if (Response.HasStarted)
+                {
+                    _logger.LogWarning(
+                        "{Time}: Cannot send error response - response already started. Route: {Route}",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                        HttpContext.Items.TryGetValue("route", out var route) ? route : "unknown");
+                    return new EmptyResult();
+                }
+
                 if (ex.InnerException != null
                     &&
                     typeof(Microsoft.Data.SqlClient.SqlException).IsAssignableFrom(ex.InnerException.GetType())
@@ -243,6 +265,9 @@ namespace DBToRestAPI.Controllers
                     this.Response.StatusCode = 500;
                     await this.Response.WriteAsync(errorMsg);
                     await this.Response.CompleteAsync();
+                    // IMPORTANT: Return immediately after writing to response to avoid
+                    // the BadRequest below trying to set StatusCode on an already-started response
+                    return new EmptyResult();
                 }
 
                 return BadRequest(new { success = false, message = _settings.GetDefaultGenericErrorMessage() });
@@ -554,7 +579,7 @@ namespace DBToRestAPI.Controllers
                     if (query.IsLastInChain)
                     {
                         // Final query: register connection for disposal at request end (supports streaming)
-                        HttpContext.Response.RegisterForDispose(connection);
+                        HttpContext.Response.RegisterForDisposeAsync(connection);
 
                         // Delegate to existing method for response building
                         // We pass the accumulated qParams which now includes results from previous queries
@@ -598,8 +623,8 @@ namespace DBToRestAPI.Controllers
                             // This allows query authors to always use {{json}} without checking if result was single/multiple.
                             // The JSON entry is added AFTER the single row entry, so it takes precedence for {{json}}
                             // while individual columns remain accessible via {{column_name}}.
-                            var jsonArray = singleRow != null 
-                                ? JsonSerializer.Serialize(new[] { singleRow }) 
+                            var jsonArray = singleRow != null
+                                ? JsonSerializer.Serialize(new[] { singleRow })
                                 : "[]";
 
                             qParams.Add(new DbQueryParams
@@ -926,7 +951,7 @@ namespace DBToRestAPI.Controllers
 
             #region base64 content source handling
 
-            
+
             if (dictResult.ContainsKey("base64_content")
                 && dictResult.TryGetValue("base64_content", out object value) && value is string base64Content
                 && !string.IsNullOrWhiteSpace(base64Content)
@@ -973,7 +998,7 @@ namespace DBToRestAPI.Controllers
                                 message = $"File not found at relative path `{relativePath}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                             });
                         }
-                        
+
                         // Use async file stream with proper buffering
                         var fileStream = new FileStream(relativePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true);
                         return File(fileStream, mimeType, fileName);
@@ -1062,7 +1087,7 @@ namespace DBToRestAPI.Controllers
 
                     });
                 }
-                
+
                 using (HttpClient httpClient = new HttpClient())
                 {
                     var response = await httpClient.GetAsync(httpUrl, HttpCompletionOption.ResponseHeadersRead, HttpContext.RequestAborted);
@@ -1074,7 +1099,7 @@ namespace DBToRestAPI.Controllers
                             message = $"Failed to download file from `{httpUrl}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                         });
                     }
-                    
+
                     // Stream the content instead of loading into memory
                     var stream = await response.Content.ReadAsStreamAsync(HttpContext.RequestAborted);
                     mimeType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
@@ -1090,4 +1115,4 @@ namespace DBToRestAPI.Controllers
     }
 
 }
-        
+
