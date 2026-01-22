@@ -8,7 +8,7 @@ It's designed to support a range of use cases out of the box: public APIs, B2B A
 
 If you value the DB-First approach, this solution offers a straightforward path to a production-ready REST API—without intermediary ORM layers, complex abstractions, proprietary query languages, or unnecessary GUI tooling.
 
-Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, and IBM DB2—with automatic provider detection or explicit configuration. DB2 is supported on Windows, Linux, and macOS.
+Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, and IBM DB2—with automatic provider detection.
 
 Retain your SQL expertise and leverage it directly to build APIs in pure SQL.
 
@@ -294,10 +294,48 @@ The following XML tag in `/config/sql.xml` for `create_contact` illustrates how 
 
 **Error Handling:**
 
-- Throw error codes between `50000-51000` to return HTTP status codes `0-1000`
-  - Example: `throw 50409` → HTTP `409 Conflict`
-  - Example: `throw 50404` → HTTP `404 Not Found`
-- Errors outside this range return HTTP `500` with a generic message to protect sensitive database information
+Custom HTTP error codes can be returned from your SQL queries by throwing specific error codes. The solution maps database-specific error ranges to HTTP status codes `0-1000`.
+
+| Database | Error Range | HTTP Mapping | Example |
+|----------|-------------|--------------|---------|
+| **SQL Server** | `50000-51000` | Error - 50000 | `THROW 50404, 'Not found', 1;` → HTTP 404 |
+| **MySQL/MariaDB** | `50000-51000` | Error - 50000 | `SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';` → HTTP 404 |
+| **Oracle** | `-20000` to `-20999` | (-Error) - 20000 | `RAISE_APPLICATION_ERROR(-20404, 'Not found');` → HTTP 404 |
+| **PostgreSQL** | N/A | Use message pattern | `RAISE EXCEPTION '[50404] Not found';` → HTTP 404 |
+| **SQLite** | N/A | Use message pattern | Embed `[50404]` in error message → HTTP 404 |
+| **DB2** | N/A | Use message pattern | Embed `[50404]` in error message → HTTP 404 |
+
+**Database-Specific Examples:**
+
+```sql
+-- SQL Server
+THROW 50404, 'Record not found', 1;
+THROW 50409, 'Record already exists', 1;
+
+-- MySQL / MariaDB
+SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Record not found';
+SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50409, MESSAGE_TEXT = 'Record already exists';
+
+-- Oracle (uses -20000 to -20999 range - this is an Oracle limitation)
+RAISE_APPLICATION_ERROR(-20404, 'Record not found');
+RAISE_APPLICATION_ERROR(-20409, 'Record already exists');
+
+-- PostgreSQL (embed error code in message using [XXXXX] pattern)
+RAISE EXCEPTION '[50404] Record not found';
+RAISE EXCEPTION '[50409] Record already exists';
+
+-- SQLite (embed error code in message using [XXXXX] pattern)
+-- Use SELECT RAISE(ABORT, '[50404] Record not found');
+
+-- DB2 (embed error code in message using [XXXXX] pattern)
+-- SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Record not found';
+```
+
+> **Note for Oracle users**: Oracle's `RAISE_APPLICATION_ERROR` only accepts error codes between `-20000` and `-20999`. The solution automatically maps this range to HTTP status codes (e.g., `-20404` → HTTP 404).
+
+> **Note for PostgreSQL/SQLite/DB2 users**: These databases don't have native numeric error code support in the 50000 range. Instead, embed the error code in your error message using the `[XXXXX]` pattern (e.g., `[50404]`). The solution will extract the code and remove the pattern from the response message.
+
+- Errors outside these ranges return HTTP `500` with a generic message to protect sensitive database information
 - Customize the generic error message via the `generic_error_message` tag in `/config/settings.xml`
 
 **Debugging SQL Errors:**

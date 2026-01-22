@@ -66,6 +66,122 @@ namespace DBToRestAPI.Controllers
             "file"
         };
 
+        /// <summary>
+        /// Attempts to extract custom error information from a database exception.
+        /// Supports multiple database providers (SQL Server, PostgreSQL, MySQL, Oracle, SQLite, DB2).
+        /// Looks for error codes in the range 50000-51000 which map to HTTP status codes 0-1000.
+        /// </summary>
+        /// <param name="exception">The exception to analyze (checks both the exception and its InnerException)</param>
+        /// <param name="errorNumber">The extracted error number (50000-51000 range)</param>
+        /// <param name="errorMessage">The extracted error message</param>
+        /// <returns>True if a custom error was found in the valid range; otherwise false</returns>
+        private static bool TryGetCustomDbError(Exception exception, out int errorNumber, out string errorMessage)
+        {
+            errorNumber = 0;
+            errorMessage = string.Empty;
+
+            // Check the exception itself first, then its InnerException
+            var exceptionsToCheck = new[] { exception, exception?.InnerException };
+
+            foreach (var ex in exceptionsToCheck)
+            {
+                if (ex == null) continue;
+
+                int? extractedNumber = null;
+                string? extractedMessage = null;
+
+                // SQL Server: Microsoft.Data.SqlClient.SqlException
+                if (ex is Microsoft.Data.SqlClient.SqlException sqlEx)
+                {
+                    extractedNumber = sqlEx.Number;
+                    extractedMessage = sqlEx.Message;
+                }
+                // PostgreSQL: Npgsql.PostgresException - uses SqlState codes (strings like "P0001" for RAISE EXCEPTION)
+                // For PostgreSQL, users should use RAISE EXCEPTION with ERRCODE and we check MessageText
+                // PostgreSQL custom errors: RAISE EXCEPTION 'message' USING ERRCODE = '50404' won't work directly
+                // Instead, we'll check if the exception message contains a pattern like [50xxx]
+                else if (ex.GetType().FullName == "Npgsql.PostgresException")
+                {
+                    // Try to get the error code from the message or use reflection to get properties
+                    extractedMessage = ex.Message;
+                    // PostgresException doesn't have a numeric error code like SQL Server
+                    // Users can embed the error code in the message: RAISE EXCEPTION '[50404] Not found'
+                    var match = System.Text.RegularExpressions.Regex.Match(ex.Message, @"\[(\d{5})\]");
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out int pgCode))
+                    {
+                        extractedNumber = pgCode;
+                        // Remove the error code prefix from the message for cleaner output
+                        extractedMessage = ex.Message.Replace(match.Value, "").Trim();
+                    }
+                }
+                // MySQL: MySqlConnector.MySqlException
+                else if (ex.GetType().FullName == "MySqlConnector.MySqlException")
+                {
+                    // Use reflection to get the Number property to avoid hard dependency
+                    var numberProp = ex.GetType().GetProperty("Number");
+                    if (numberProp?.GetValue(ex) is int mysqlNumber)
+                    {
+                        extractedNumber = mysqlNumber;
+                        extractedMessage = ex.Message;
+                    }
+                }
+                // Oracle: Oracle.ManagedDataAccess.Client.OracleException
+                // Oracle uses RAISE_APPLICATION_ERROR with codes -20000 to -20999
+                // We map these to our 50000-51000 range: -20404 → 50404 (HTTP 404)
+                else if (ex.GetType().FullName == "Oracle.ManagedDataAccess.Client.OracleException")
+                {
+                    var numberProp = ex.GetType().GetProperty("Number");
+                    if (numberProp?.GetValue(ex) is int oracleNumber)
+                    {
+                        // Oracle error codes are negative: -20000 to -20999
+                        // Convert to our range: -20404 → 50404
+                        if (oracleNumber >= -20999 && oracleNumber <= -20000)
+                        {
+                            extractedNumber = 50000 + ((-oracleNumber) - 20000);
+                        }
+                        extractedMessage = ex.Message;
+                    }
+                }
+                // SQLite: Microsoft.Data.Sqlite.SqliteException
+                else if (ex is Microsoft.Data.Sqlite.SqliteException sqliteEx)
+                {
+                    // SQLite uses string error codes; for custom errors, users can use the message pattern
+                    extractedMessage = sqliteEx.Message;
+                    var match = System.Text.RegularExpressions.Regex.Match(ex.Message, @"\[(\d{5})\]");
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out int sqliteCode))
+                    {
+                        extractedNumber = sqliteCode;
+                        extractedMessage = ex.Message.Replace(match.Value, "").Trim();
+                    }
+                }
+                // DB2: IBM.Data.Db2.DB2Exception
+                else if (ex.GetType().FullName == "IBM.Data.Db2.DB2Exception")
+                {
+                    // Try to get error code via reflection
+                    // DB2Exception may have errors collection; check for native error
+                    var messageProp = ex.GetType().GetProperty("Message");
+                    extractedMessage = ex.Message;
+                    // DB2 might embed error codes in message or have separate property
+                    var match = System.Text.RegularExpressions.Regex.Match(ex.Message, @"\[(\d{5})\]");
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out int db2Code))
+                    {
+                        extractedNumber = db2Code;
+                        extractedMessage = ex.Message.Replace(match.Value, "").Trim();
+                    }
+                }
+
+                // Check if we found a valid custom error in the 50000-51000 range
+                if (extractedNumber.HasValue && extractedNumber.Value >= 50000 && extractedNumber.Value < 51000)
+                {
+                    errorNumber = extractedNumber.Value;
+                    errorMessage = extractedMessage ?? ex.Message;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
 
 
         ///// <summary>
@@ -226,25 +342,21 @@ namespace DBToRestAPI.Controllers
                     return new EmptyResult();
                 }
 
-                if (ex.InnerException != null
-                    &&
-                    typeof(Microsoft.Data.SqlClient.SqlException).IsAssignableFrom(ex.InnerException.GetType())
-                    )
+                // Check for custom database errors (50000-51000 range) from any supported database vendor
+                // This handles SQL Server, PostgreSQL, MySQL, Oracle, SQLite, and DB2
+                if (TryGetCustomDbError(ex, out int dbErrorNumber, out string dbErrorMessage))
                 {
-                    Microsoft.Data.SqlClient.SqlException sqlException = (Microsoft.Data.SqlClient.SqlException)ex.InnerException;
-                    if (sqlException.Number >= 50000 && sqlException.Number < 51000)
+                    int httpStatusCode = dbErrorNumber - 50000;
+                    return new ObjectResult(dbErrorMessage)
                     {
-                        return new ObjectResult(sqlException.Message)
+                        StatusCode = httpStatusCode,
+                        Value = new
                         {
-                            StatusCode = sqlException.Number - 50000,
-                            Value = new
-                            {
-                                success = false,
-                                message = sqlException.Message,
-                                error_number = sqlException.Number - 50000
-                            }
-                        };
-                    }
+                            success = false,
+                            message = dbErrorMessage,
+                            error_number = httpStatusCode
+                        }
+                    };
                 }
 
                 // check if user passed `debug-mode` header in 
