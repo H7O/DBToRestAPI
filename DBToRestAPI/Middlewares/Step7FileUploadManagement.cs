@@ -7,6 +7,14 @@ using Com.H.IO;
 
 namespace DBToRestAPI.Middlewares
 {
+    /// <summary>
+    /// Custom exception for file already exists errors during upload.
+    /// Used to distinguish from other errors and return HTTP 409 Conflict.
+    /// </summary>
+    public class FileAlreadyExistsException : Exception
+    {
+        public FileAlreadyExistsException(string message) : base(message) { }
+    }
 
     public class StoreOperationTracker
     {
@@ -210,7 +218,7 @@ namespace DBToRestAPI.Middlewares
                             // Check if file already exists (unless overwrite is enabled)
                             if (!overwriteExistingFiles && File.Exists(destinationPath))
                             {
-                                throw new InvalidOperationException(
+                                throw new FileAlreadyExistsException(
                                     $"File '{file.Value.RelativePath}' already exists in store '{entry.Config.Key}'. " +
                                     "Set 'overwrite_existing_files' to true to allow overwriting.");
                             }
@@ -287,7 +295,7 @@ namespace DBToRestAPI.Middlewares
                                     bool fileExists = await sftpClient.ExistsAsync(destinationPath, context.RequestAborted);
                                     if (fileExists)
                                     {
-                                        throw new InvalidOperationException(
+                                        throw new FileAlreadyExistsException(
                                             $"File '{file.Value.RelativePath}' already exists in SFTP store '{entry.Config.Key}'. " +
                                             "Set 'overwrite_existing_files' to true to allow overwriting.");
                                     }
@@ -435,7 +443,35 @@ namespace DBToRestAPI.Middlewares
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
 
 
-                throw; // Re-throw the exception after logging
+                // Check if this is a "file already exists" error - return 409 Conflict
+                if (ex is FileAlreadyExistsException)
+                {
+                    this._logger.LogWarning("{time}: File already exists error: {message}",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                        ex.Message);
+                    await context.Response.DeferredWriteAsJsonAsync(
+                        new ObjectResult(
+                            new
+                            {
+                                success = false,
+                                // caller friendly message
+                                // tell hte caller another file exists by the same name
+                                // and advise them to rename the file
+                                // don't mention overwrite_existing_files to the caller as it is an internal setting
+                                // only DevOps or service providers should be aware of it, hence why we log it above
+                                // instead of returning it to the caller.
+                                message = "One or more files already exist in the target file store(s). " +
+                                    "Please rename the file(s) and try again."
+                            }
+                        )
+                        {
+                            StatusCode = 409 // Conflict
+                        }
+                    );
+                    return;
+                }
+
+                throw; // Re-throw other exceptions after logging
             }
         }
 
