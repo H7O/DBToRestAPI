@@ -12,8 +12,9 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 
 Retain your SQL expertise and leverage it directly to build APIs in pure SQL.
 
-> Note: For .NET developers looking to extend the solution with custom features, the codebase is fully accessible and ready to customize.
+> **📚 Modular Documentation**: For AI-assisted development, use [llms.txt](llms.txt) instead of this README. It's a lightweight index (~6KB) pointing to focused topic files—letting AI agents fetch only what they need rather than consuming tokens on the entire document. Humans can view the same content formatted nicely in [llms.md](llms.md).
 
+> **Note**: For .NET developers looking to extend the solution with custom features, the codebase is fully accessible and ready to customize.
 
 ## How to use
 
