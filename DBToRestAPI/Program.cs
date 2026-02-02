@@ -22,6 +22,7 @@ builder.Configuration
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
     // Load additional configuration files specified in "additional_configurations:path"
     .AddDynamicConfigurationFiles(builder.Configuration)
+    .AddEnvironmentVariables()
     ;
 
 

@@ -35,25 +35,65 @@
 
   </ItemGroup>
 
-  <!-- Manually include DB2 CLI driver (required for connectivity) since we excluded the package's build assets -->
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <None Include="$(NuGetPackageRoot)net.ibm.data.db2\*\buildTransitive\clidriver\**" Link="clidriver\%(RecursiveDir)%(FileName)%(Extension)">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Visible>false</Visible>
-    </None>
-  </ItemGroup>
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
-    <None Include="$(NuGetPackageRoot)net.ibm.data.db2-lnx\*\buildTransitive\clidriver\**" Link="clidriver\%(RecursiveDir)%(FileName)%(Extension)">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Visible>false</Visible>
-    </None>
-  </ItemGroup>
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <None Include="$(NuGetPackageRoot)net.ibm.data.db2-osx\*\buildTransitive\clidriver\**" Link="clidriver\%(RecursiveDir)%(FileName)%(Extension)">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Visible>false</Visible>
-    </None>
-  </ItemGroup>
+  <!-- 
+    DB2 CLI driver post-build copy:
+    The NuGet package places clidriver files in a versioned subfolder, but the runtime expects them 
+    in the root 'clidriver' folder. This target copies files from the highest version and cleans up.
+  -->
+  <Target Name="CopyDb2CliDriver" AfterTargets="Build">
+    <!-- Windows -->
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+      <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2</Db2PackagePath>
+    </PropertyGroup>
+    <!-- Linux -->
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+      <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2-lnx</Db2PackagePath>
+    </PropertyGroup>
+    <!-- macOS -->
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+      <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2-osx</Db2PackagePath>
+    </PropertyGroup>
+
+    <!-- Find all version folders and pick the highest one (sorted descending, first item) -->
+    <ItemGroup>
+      <Db2VersionFolders Include="$([System.IO.Directory]::GetDirectories('$(Db2PackagePath)'))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <Db2LatestVersion>@(Db2VersionFolders->Reverse()->DirectoryName())</Db2LatestVersion>
+    </PropertyGroup>
+
+    <!-- Get the highest version folder path -->
+    <ItemGroup>
+      <Db2SortedVersions Include="@(Db2VersionFolders)" />
+    </ItemGroup>
+
+    <!-- Copy clidriver contents from the NuGet package to output -->
+    <ItemGroup>
+      <Db2CliDriverFiles Include="$(Db2PackagePath)\**\buildTransitive\clidriver\**\*.*" />
+    </ItemGroup>
+
+    <Message Importance="high" Text="Copying DB2 CLI driver files to $(OutputPath)clidriver\" />
+
+    <!-- Use Robocopy on Windows for reliable folder copy -->
+    <Exec Command="robocopy &quot;$(Db2PackagePath)&quot; &quot;$(OutputPath)clidriver&quot; /S /NFL /NDL /NJH /NJS /NC /NS /NP /XD &quot;$(Db2PackagePath)&quot;" 
+          Condition="$([MSBuild]::IsOSPlatform('Windows'))"
+          IgnoreExitCode="true"
+          ContinueOnError="true" />
+
+    <!-- PowerShell approach: Find highest version, copy clidriver contents, remove versioned folders -->
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$versions = Get-ChildItem -Path '$(Db2PackagePath)' -Directory | Sort-Object { [Version]$_.Name } -Descending; if ($versions) { $latest = $versions[0].FullName; $src = Join-Path $latest 'buildTransitive\clidriver'; if (Test-Path $src) { Copy-Item -Path (Join-Path $src '*') -Destination '$(OutputPath)clidriver' -Recurse -Force } }&quot;"
+          Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    
+    <Exec Command="bash -c &quot;latest=\$(ls -v '$(Db2PackagePath)' | tail -1); src='$(Db2PackagePath)'/\$latest/buildTransitive/clidriver; if [ -d \&quot;\$src\&quot; ]; then cp -r \$src/* '$(OutputPath)clidriver/'; fi&quot;"
+          Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
+
+    <!-- Clean up versioned folders from output (remove folders that look like version numbers) -->
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -Path '$(OutputPath)clidriver' -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue&quot;"
+          Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    
+    <Exec Command="bash -c &quot;find '$(OutputPath)clidriver' -maxdepth 1 -type d -regex '.*/[0-9]+\.[0-9]+\.[0-9]+.*' -exec rm -rf {} + 2>/dev/null || true&quot;"
+          Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
+  </Target>
 
   <ItemGroup>
     <None Update="config\api_keys.xml">
