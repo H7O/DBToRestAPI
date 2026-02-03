@@ -2,6 +2,7 @@ using Com.H.Cache;
 using DBToRestAPI.Cache;
 using DBToRestAPI.Middlewares;
 using DBToRestAPI.Services;
+using DBToRestAPI.Services.HttpExecutor.Extensions;
 using DBToRestAPI.Services.QueryParser;
 using DBToRestAPI.Settings;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -84,6 +85,12 @@ builder.Services.AddHttpClient("ignoreCertificateErrors", c =>
     };
 });
 
+// HTTP Request Executor service - curl-like HTTP client with JSON configuration
+builder.Services.AddHttpRequestExecutor(options =>
+{
+    options.DefaultTimeoutSeconds = 30;
+    options.EnableRequestLogging = true;
+});
 
 
 builder.Services.AddControllers();
@@ -93,7 +100,7 @@ var maxFileSize = builder.Configuration.GetValue<long?>("max_payload_size_in_byt
     ?? (300 * 1024 * 1024); // Default to 300MB if not found
 
 
-// In Program.cs
+// Set maximum request body size for Kestrel and form options
 builder.Services.Configure<KestrelServerOptions>(options =>
 {
     options.Limits.MaxRequestBodySize = maxFileSize;
