@@ -19,7 +19,7 @@
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.17.1" />
     <PackageReference Include="Com.H" Version="10.0.0" />
-    <PackageReference Include="Com.H.Data.Common" Version="10.0.0.3" />
+    <PackageReference Include="Com.H.Data.Common" Version="10.1.0.1" />
     <PackageReference Include="Com.H.Net.Ssh" Version="10.0.0.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
@@ -64,7 +64,7 @@
       <Db2VersionFolders Include="$([System.IO.Directory]::GetDirectories('$(Db2PackagePath)'))" />
     </ItemGroup>
     <PropertyGroup>
-      <Db2LatestVersion>@(Db2VersionFolders->Reverse()->DirectoryName())</Db2LatestVersion>
+      <Db2LatestVersion>@(Db2VersionFolders-&gt;Reverse()-&gt;DirectoryName())</Db2LatestVersion>
     </PropertyGroup>
 
     <!-- Get the highest version folder path -->
@@ -80,24 +80,17 @@
     <Message Importance="high" Text="Copying DB2 CLI driver files to $(OutputPath)clidriver\" />
 
     <!-- Use Robocopy on Windows for reliable folder copy -->
-    <Exec Command="robocopy &quot;$(Db2PackagePath)&quot; &quot;$(OutputPath)clidriver&quot; /S /NFL /NDL /NJH /NJS /NC /NS /NP /XD &quot;$(Db2PackagePath)&quot;" 
-          Condition="$([MSBuild]::IsOSPlatform('Windows'))"
-          IgnoreExitCode="true"
-          ContinueOnError="true" />
+    <Exec Command="robocopy &quot;$(Db2PackagePath)&quot; &quot;$(OutputPath)clidriver&quot; /S /NFL /NDL /NJH /NJS /NC /NS /NP /XD &quot;$(Db2PackagePath)&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" IgnoreExitCode="true" ContinueOnError="true" />
 
     <!-- PowerShell approach: Find highest version, copy clidriver contents, remove versioned folders -->
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$versions = Get-ChildItem -Path '$(Db2PackagePath)' -Directory | Sort-Object { [Version]$_.Name } -Descending; if ($versions) { $latest = $versions[0].FullName; $src = Join-Path $latest 'buildTransitive\clidriver'; if (Test-Path $src) { Copy-Item -Path (Join-Path $src '*') -Destination '$(OutputPath)clidriver' -Recurse -Force } }&quot;"
-          Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$versions = Get-ChildItem -Path '$(Db2PackagePath)' -Directory | Sort-Object { [Version]$_.Name } -Descending; if ($versions) { $latest = $versions[0].FullName; $src = Join-Path $latest 'buildTransitive\clidriver'; if (Test-Path $src) { Copy-Item -Path (Join-Path $src '*') -Destination '$(OutputPath)clidriver' -Recurse -Force } }&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     
-    <Exec Command="bash -c &quot;latest=\$(ls -v '$(Db2PackagePath)' | tail -1); src='$(Db2PackagePath)'/\$latest/buildTransitive/clidriver; if [ -d \&quot;\$src\&quot; ]; then cp -r \$src/* '$(OutputPath)clidriver/'; fi&quot;"
-          Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
+    <Exec Command="bash -c &quot;latest=\$(ls -v '$(Db2PackagePath)' | tail -1); src='$(Db2PackagePath)'/\$latest/buildTransitive/clidriver; if [ -d \&quot;\$src\&quot; ]; then cp -r \$src/* '$(OutputPath)clidriver/'; fi&quot;" Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
 
     <!-- Clean up versioned folders from output (remove folders that look like version numbers) -->
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -Path '$(OutputPath)clidriver' -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue&quot;"
-          Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -Path '$(OutputPath)clidriver' -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     
-    <Exec Command="bash -c &quot;find '$(OutputPath)clidriver' -maxdepth 1 -type d -regex '.*/[0-9]+\.[0-9]+\.[0-9]+.*' -exec rm -rf {} + 2>/dev/null || true&quot;"
-          Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
+    <Exec Command="bash -c &quot;find '$(OutputPath)clidriver' -maxdepth 1 -type d -regex '.*/[0-9]+\.[0-9]+\.[0-9]+.*' -exec rm -rf {} + 2&gt;/dev/null || true&quot;" Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
   </Target>
 
   <ItemGroup>

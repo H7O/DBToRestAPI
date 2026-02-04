@@ -4,6 +4,8 @@ using Com.H.Data.Common;
 using Com.H.IO;
 using DBToRestAPI.Cache;
 using DBToRestAPI.Services;
+using DBToRestAPI.Services.HttpExecutor;
+using DBToRestAPI.Services.HttpExecutor.Models;
 using DBToRestAPI.Services.QueryParser;
 using DBToRestAPI.Settings;
 using Microsoft.AspNetCore.Mvc;
@@ -44,6 +46,7 @@ namespace DBToRestAPI.Controllers
         DbConnectionFactory dbConnectionFactory,
         SettingsService settingsService,
         IQueryConfigurationParser queryConfigurationParser,
+        IHttpRequestExecutor httpRequestExecutor,
         ILogger<ApiController> logger
             ) : ControllerBase
     {
@@ -51,6 +54,7 @@ namespace DBToRestAPI.Controllers
         private readonly DbConnectionFactory _dbConnectionFactory = dbConnectionFactory;
 
         private readonly IQueryConfigurationParser _queryConfigurationParser = queryConfigurationParser;
+        private readonly IHttpRequestExecutor _httpRequestExecutor = httpRequestExecutor;
 
         private readonly ILogger<ApiController> _logger = logger;
 
@@ -373,7 +377,7 @@ namespace DBToRestAPI.Controllers
                         + $"====== stack trace ====={Environment.NewLine}"
                         + $"{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
 
-                    this.Response.ContentType = "text/plain";
+                    this.Response.ContentType = "query/plain";
                     this.Response.StatusCode = 500;
                     await this.Response.WriteAsync(errorMsg);
                     await this.Response.CompleteAsync();
@@ -389,6 +393,93 @@ namespace DBToRestAPI.Controllers
             #endregion
 
         }
+
+        private async Task<string> PrepareEmbeddedHttpCallsParamsIfAny(
+            string query, 
+            List<DbQueryParams> qParams,
+            IConfigurationSection section)
+        {
+            // check if there is an embedded http call within the query to resolve it before executing the main query
+            // look for http regex in `http_variable_pattern` within the section to use for identifying http call variables
+            // if not found, try to get it from the global configuration, and if not found there, use the default pattern
+            // in DefaultRegex.DefaultHttpVariablesPattern
+            var httpVariablePattern = section.GetValue<string?>("http_variable_pattern")
+                ?? this._configuration.GetValue<string?>("http_variable_pattern")
+                ?? Settings.DefaultRegex.DefaultHttpVariablesPattern;
+
+            // extract the `param` content in the regex, e.g., default regex is `(?<open_marker>\{http\{)(?<param>.*?)?(?<close_marker>\}http\})`
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                query,
+                httpVariablePattern);
+
+            
+
+            if (matches.Count < 1)
+            {
+                return query;
+            }
+
+            DbQueryParams dbQueryParams = new DbQueryParams()
+            {
+                DataModel = new Dictionary<string, string>(),
+                QueryParamsRegex = @"(?<open_marker>\{http_internally_replaced\{)(?<param>.*?)?(?<close_marker>\}\})"
+            };
+
+            int count= 0;
+            foreach (var match in matches)
+            {
+                var matched = match as System.Text.RegularExpressions.Match;
+                if (matched != null && matched.Groups["param"] != null)
+                {
+                    var httpRequestDetails = matched.Groups["param"].Value;
+                    if (string.IsNullOrWhiteSpace(httpRequestDetails))
+                    {
+                        continue;
+                    }
+                    // fill any variables within the httpRequestDetails using the existing parameters
+                    httpRequestDetails = httpRequestDetails.Fill(qParams);
+
+                    // use _httpRequestExecutor to execute the http call and get the response
+                    HttpExecutorResponse response = 
+                        await this._httpRequestExecutor.ExecuteAsync(
+                            httpRequestDetails, this.HttpContext.RequestAborted);
+
+                    var responseContent = response.ContentAsString;
+                    if (string.IsNullOrWhiteSpace(responseContent))
+                    {
+                        continue;
+                    }
+                    count++;
+
+                    // add variable to the existing qParams so that it could be used in the main query
+                    // the value should be added as the response content
+                    (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
+                        $"http_response_{count}", 
+                        responseContent);
+
+                    query = query.Replace(matched.Value, $"{{http_internally_replaced{{http_response_{count}}}}}");
+                }
+            }
+            if (count > 0)
+            {
+                qParams.Add(dbQueryParams);
+            }
+            else
+            {
+                // add an empty variable with marker regex to avoid issues in subsequent processing steps
+                // where the Com.H.Data.Common library won't be able to fill markers that don't 
+                // have values with DbNull since it doesn't know how the markers look like (as it won't have regex as a reference to find them)
+                qParams.Add(new DbQueryParams
+                {
+                    DataModel = null,
+                    QueryParamsRegex = httpVariablePattern
+                });
+            }
+
+            return query;
+
+        }
+
 
         /// <summary>
         /// Executes a database query and returns the result as an <see cref="ObjectResult"/>.
@@ -442,6 +533,9 @@ namespace DBToRestAPI.Controllers
                         + $"`{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                     });
                 }
+
+                query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
+
                 var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: dbCommandTimeout, cToken: HttpContext.RequestAborted);
                 // perhaps here is the right place to register for disposal
                 if (resultWithNoCount != null)

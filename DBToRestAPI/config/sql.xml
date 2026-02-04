@@ -1274,7 +1274,34 @@
       
     </hello_world_multi_query>
 
+    
+    <!-- 
+    HTTP call example from within sql.
+    -->
+    <http_call>
+      <query>
+        <![CDATA[
+        
+        declare @json nvarchar(max) = {http{
+        {
+          "url": "https://localhost:5000/hello_world?name={{name}}",
+          "method": "GET",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+        }http};
+        
+        -- do something with @json, e.g., return it to the caller or parse it further, etc..
 
-  </queries>
+
+        
+        
+        ]]>
+      </query>
+    </http_call>
+
+
+    </queries>
 
 </settings>

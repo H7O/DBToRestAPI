@@ -76,6 +76,10 @@
       <![CDATA[(?<open_marker>\{auth\{)(?<param>.*?)?(?<close_marker>\}\})]]>
     </auth_variables_pattern>
 
+    <http_variable_pattern>
+      <![CDATA[(?<open_marker>\{http\{)(?<param>.*?)?(?<close_marker>\}http\})]]>
+    </http_variable_pattern>
+
 
 
     <!--
