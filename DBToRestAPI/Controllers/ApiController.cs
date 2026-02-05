@@ -399,76 +399,113 @@ namespace DBToRestAPI.Controllers
             List<DbQueryParams> qParams,
             IConfigurationSection section)
         {
-            // check if there is an embedded http call within the query to resolve it before executing the main query
-            // look for http regex in `http_variable_pattern` within the section to use for identifying http call variables
-            // if not found, try to get it from the global configuration, and if not found there, use the default pattern
-            // in DefaultRegex.DefaultHttpVariablesPattern
+            // Check if there is an embedded http call within the query to resolve it before executing the main query.
+            // Look for http regex in `http_variable_pattern` within the section to use for identifying http call variables.
+            // If not found, try to get it from the global configuration, and if not found there, use the default pattern.
             var httpVariablePattern = section.GetValue<string?>("http_variable_pattern")
                 ?? this._configuration.GetValue<string?>("http_variable_pattern")
                 ?? Settings.DefaultRegex.DefaultHttpVariablesPattern;
 
-            // extract the `param` content in the regex, e.g., default regex is `(?<open_marker>\{http\{)(?<param>.*?)?(?<close_marker>\}http\})`
+            // Use Singleline mode to allow JSON content to span multiple lines
             var matches = System.Text.RegularExpressions.Regex.Matches(
                 query,
-                httpVariablePattern);
-
-            
+                httpVariablePattern,
+                System.Text.RegularExpressions.RegexOptions.Singleline);
 
             if (matches.Count < 1)
             {
                 return query;
             }
 
-            DbQueryParams dbQueryParams = new DbQueryParams()
+            var dbQueryParams = new DbQueryParams()
             {
                 DataModel = new Dictionary<string, string>(),
                 QueryParamsRegex = @"(?<open_marker>\{http_internally_replaced\{)(?<param>.*?)?(?<close_marker>\}\})"
             };
 
-            int count= 0;
-            foreach (var match in matches)
+            // Cache to avoid executing the same HTTP request multiple times
+            // Key: the filled httpRequestDetails JSON, Value: (responseContent, placeholderName)
+            var httpCallCache = new Dictionary<string, (string? Content, string Placeholder)>();
+
+            int count = 0;
+            foreach (System.Text.RegularExpressions.Match matched in matches)
             {
-                var matched = match as System.Text.RegularExpressions.Match;
-                if (matched != null && matched.Groups["param"] != null)
+                if (matched.Groups["param"] == null)
                 {
-                    var httpRequestDetails = matched.Groups["param"].Value;
-                    if (string.IsNullOrWhiteSpace(httpRequestDetails))
-                    {
-                        continue;
-                    }
-                    // fill any variables within the httpRequestDetails using the existing parameters
-                    httpRequestDetails = httpRequestDetails.Fill(qParams);
-
-                    // use _httpRequestExecutor to execute the http call and get the response
-                    HttpExecutorResponse response = 
-                        await this._httpRequestExecutor.ExecuteAsync(
-                            httpRequestDetails, this.HttpContext.RequestAborted);
-
-                    var responseContent = response.ContentAsString;
-                    if (string.IsNullOrWhiteSpace(responseContent))
-                    {
-                        continue;
-                    }
-                    count++;
-
-                    // add variable to the existing qParams so that it could be used in the main query
-                    // the value should be added as the response content
-                    (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
-                        $"http_response_{count}", 
-                        responseContent);
-
-                    query = query.Replace(matched.Value, $"{{http_internally_replaced{{http_response_{count}}}}}");
+                    continue;
                 }
+
+                var httpRequestDetails = matched.Groups["param"].Value;
+                if (string.IsNullOrWhiteSpace(httpRequestDetails))
+                {
+                    continue;
+                }
+
+                // Fill any variables within the httpRequestDetails using the existing parameters
+                httpRequestDetails = httpRequestDetails.Fill(qParams);
+
+                // Check cache first - if we've already executed this exact request, reuse the result
+                if (httpCallCache.TryGetValue(httpRequestDetails, out var cachedResult))
+                {
+                    _logger.LogDebug("Reusing cached HTTP response for duplicate request");
+                    if (!string.IsNullOrWhiteSpace(cachedResult.Content))
+                    {
+                        query = query.Replace(matched.Value, $"{{http_internally_replaced{{{cachedResult.Placeholder}}}}}");
+                    }
+                    // If cached content was null/empty, leave marker for DbNull replacement
+                    continue;
+                }
+
+                // Execute the HTTP call
+                HttpExecutorResponse response = await this._httpRequestExecutor.ExecuteAsync(
+                    httpRequestDetails, 
+                    this.HttpContext.RequestAborted);
+
+                // Check for HTTP errors and log them
+                if (!response.IsSuccess)
+                {
+                    _logger.LogWarning(
+                        "Embedded HTTP call failed with status {StatusCode}: {ErrorMessage}. " +
+                        "The marker will be replaced with NULL in the SQL query.",
+                        response.StatusCode,
+                        response.ErrorMessage);
+                    
+                    // Cache the failure so duplicate calls also get NULL
+                    httpCallCache[httpRequestDetails] = (null, string.Empty);
+                    continue;
+                }
+
+                var responseContent = response.ContentAsString;
+                if (string.IsNullOrWhiteSpace(responseContent))
+                {
+                    _logger.LogDebug("Embedded HTTP call returned empty content. Marker will be replaced with NULL.");
+                    httpCallCache[httpRequestDetails] = (null, string.Empty);
+                    continue;
+                }
+
+                count++;
+                var placeholderName = $"http_response_{count}";
+
+                // Cache the successful result
+                httpCallCache[httpRequestDetails] = (responseContent, placeholderName);
+
+                // Add variable to the existing qParams so it can be used in the main query
+                (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
+                    placeholderName, 
+                    responseContent);
+
+                query = query.Replace(matched.Value, $"{{http_internally_replaced{{{placeholderName}}}}}");
             }
+
             if (count > 0)
             {
                 qParams.Add(dbQueryParams);
             }
             else
             {
-                // add an empty variable with marker regex to avoid issues in subsequent processing steps
+                // Add an empty variable with marker regex to avoid issues in subsequent processing steps
                 // where the Com.H.Data.Common library won't be able to fill markers that don't 
-                // have values with DbNull since it doesn't know how the markers look like (as it won't have regex as a reference to find them)
+                // have values with DbNull since it doesn't know how the markers look like
                 qParams.Add(new DbQueryParams
                 {
                     DataModel = null,
@@ -477,7 +514,6 @@ namespace DBToRestAPI.Controllers
             }
 
             return query;
-
         }
 
 
