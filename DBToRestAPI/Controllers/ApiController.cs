@@ -406,13 +406,25 @@ namespace DBToRestAPI.Controllers
                 ?? this._configuration.GetValue<string?>("http_variable_pattern")
                 ?? Settings.DefaultRegex.DefaultHttpVariablesPattern;
 
-            // Use Singleline mode to allow JSON content to span multiple lines
+            // Use Singleline mode to allow JSON content to span multiple lines.
+            // Use Distinct to avoid executing the same HTTP request multiple times when the same
+            // marker appears multiple times in the query. String.Replace will naturally replace
+            // all occurrences of the same marker with the result.
             var matches = System.Text.RegularExpressions.Regex.Matches(
                 query,
                 httpVariablePattern,
                 System.Text.RegularExpressions.RegexOptions.Singleline);
 
-            if (matches.Count < 1)
+            // Get distinct matches by their full value (includes markers + param)
+            // This ensures identical HTTP call definitions are only executed once
+            var distinctMatches = matches
+                .Cast<System.Text.RegularExpressions.Match>()
+                .Where(m => m.Groups["param"] != null && !string.IsNullOrWhiteSpace(m.Groups["param"].Value))
+                .GroupBy(m => m.Value)
+                .Select(g => g.First())
+                .ToList();
+
+            if (distinctMatches.Count < 1)
             {
                 return query;
             }
@@ -423,38 +435,13 @@ namespace DBToRestAPI.Controllers
                 QueryParamsRegex = @"(?<open_marker>\{http_internally_replaced\{)(?<param>.*?)?(?<close_marker>\}\})"
             };
 
-            // Cache to avoid executing the same HTTP request multiple times
-            // Key: the filled httpRequestDetails JSON, Value: (responseContent, placeholderName)
-            var httpCallCache = new Dictionary<string, (string? Content, string Placeholder)>();
-
             int count = 0;
-            foreach (System.Text.RegularExpressions.Match matched in matches)
+            foreach (var matched in distinctMatches)
             {
-                if (matched.Groups["param"] == null)
-                {
-                    continue;
-                }
-
                 var httpRequestDetails = matched.Groups["param"].Value;
-                if (string.IsNullOrWhiteSpace(httpRequestDetails))
-                {
-                    continue;
-                }
 
                 // Fill any variables within the httpRequestDetails using the existing parameters
                 httpRequestDetails = httpRequestDetails.Fill(qParams);
-
-                // Check cache first - if we've already executed this exact request, reuse the result
-                if (httpCallCache.TryGetValue(httpRequestDetails, out var cachedResult))
-                {
-                    _logger.LogDebug("Reusing cached HTTP response for duplicate request");
-                    if (!string.IsNullOrWhiteSpace(cachedResult.Content))
-                    {
-                        query = query.Replace(matched.Value, $"{{http_internally_replaced{{{cachedResult.Placeholder}}}}}");
-                    }
-                    // If cached content was null/empty, leave marker for DbNull replacement
-                    continue;
-                }
 
                 // Execute the HTTP call
                 HttpExecutorResponse response = await this._httpRequestExecutor.ExecuteAsync(
@@ -469,9 +456,7 @@ namespace DBToRestAPI.Controllers
                         "The marker will be replaced with NULL in the SQL query.",
                         response.StatusCode,
                         response.ErrorMessage);
-                    
-                    // Cache the failure so duplicate calls also get NULL
-                    httpCallCache[httpRequestDetails] = (null, string.Empty);
+                    // Leave the original marker - it will be replaced with DbNull by Com.H.Data.Common
                     continue;
                 }
 
@@ -479,21 +464,19 @@ namespace DBToRestAPI.Controllers
                 if (string.IsNullOrWhiteSpace(responseContent))
                 {
                     _logger.LogDebug("Embedded HTTP call returned empty content. Marker will be replaced with NULL.");
-                    httpCallCache[httpRequestDetails] = (null, string.Empty);
                     continue;
                 }
 
                 count++;
                 var placeholderName = $"http_response_{count}";
 
-                // Cache the successful result
-                httpCallCache[httpRequestDetails] = (responseContent, placeholderName);
-
                 // Add variable to the existing qParams so it can be used in the main query
                 (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
                     placeholderName, 
                     responseContent);
 
+                // Replace ALL occurrences of this marker in the query
+                // Since we're iterating over distinct matches, duplicates are handled automatically
                 query = query.Replace(matched.Value, $"{{http_internally_replaced{{{placeholderName}}}}}");
             }
 
