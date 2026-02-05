@@ -417,11 +417,12 @@ namespace DBToRestAPI.Controllers
 
             // Get distinct matches by their full value (includes markers + param)
             // This ensures identical HTTP call definitions are only executed once
+            // DistinctBy is more efficient than GroupBy().Select(g => g.First()) as it uses
+            // an internal HashSet without allocating intermediate IGrouping objects
             var distinctMatches = matches
                 .Cast<System.Text.RegularExpressions.Match>()
                 .Where(m => m.Groups["param"] != null && !string.IsNullOrWhiteSpace(m.Groups["param"].Value))
-                .GroupBy(m => m.Value)
-                .Select(g => g.First())
+                .DistinctBy(m => m.Value)
                 .ToList();
 
             if (distinctMatches.Count < 1)
