@@ -675,6 +675,9 @@ namespace DBToRestAPI.Controllers
                 });
             }
 
+            // Prepare embedded HTTP calls for count query (if any)
+            countQuery = await PrepareEmbeddedHttpCallsParamsIfAny(countQuery, qParams, serviceQuerySection);
+
             var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: dbCommandTimeout, cToken: HttpContext.RequestAborted);
             // Register for disposal to ensure DbDataReader is properly cleaned up
             if (resultCount != null)
@@ -696,6 +699,8 @@ namespace DBToRestAPI.Controllers
             // close the reader for the count query
             await resultCount.CloseReaderAsync();
 
+            // Prepare embedded HTTP calls for main query (if any)
+            query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
 
             var result = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: dbCommandTimeout, cToken: HttpContext.RequestAborted);
             // Register for disposal to ensure DbDataReader is properly cleaned up
@@ -819,9 +824,11 @@ namespace DBToRestAPI.Controllers
                     }
                     else
                     {
-                        // Intermediate query: execute, materialize, and add result to qParams
+                        // Intermediate query: prepare embedded HTTP calls (if any), execute, materialize, and add result to qParams
+                        var queryText = await PrepareEmbeddedHttpCallsParamsIfAny(query.QueryText, qParams, serviceQuerySection);
+
                         var result = await connection.ExecuteQueryAsync(
-                            query.QueryText,
+                            queryText,
                             qParams,
                             commandTimeout: commandTimeout,
                             cToken: HttpContext.RequestAborted);
@@ -942,6 +949,9 @@ namespace DBToRestAPI.Controllers
                     });
                 }
 
+                // Prepare embedded HTTP calls for main query (if any)
+                query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
+
                 var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
                 if (resultWithNoCount != null)
                 {
@@ -1031,7 +1041,9 @@ namespace DBToRestAPI.Controllers
                 });
             }
 
-            // With count query
+            // With count query - prepare embedded HTTP calls (if any)
+            countQuery = await PrepareEmbeddedHttpCallsParamsIfAny(countQuery, qParams, serviceQuerySection);
+
             var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
             if (resultCount != null)
             {
@@ -1050,6 +1062,9 @@ namespace DBToRestAPI.Controllers
                 });
             }
             await resultCount.CloseReaderAsync();
+
+            // Prepare embedded HTTP calls for main query (if any)
+            query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
 
             var result = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
             if (result != null)
