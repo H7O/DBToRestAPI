@@ -17,10 +17,7 @@
     before routing
     -->
     <locally_protected_cat_facts>
-      <api_keys>
-        <key>local api key 1</key>
-        <key>local api key 2</key>
-      </api_keys>
+      <api_keys_collections>external_vendors,internal_solutions</api_keys_collections>
 
       <url>https://catfact.ninja/fact</url>
       <excluded_headers>x-api-key,host</excluded_headers>

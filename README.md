@@ -238,7 +238,7 @@ Now, let's try to create a new record in the `contacts` table.
 
 5. To see how the API works, change the `name` and `phone` properties in the request body and send the request again. You should see a different response from the database.
 6. Try adding multiple records with different names and phone numbers.
-8. Try also adding the same name and phone number multiple times. 
+7. Try also adding the same name and phone number multiple times. 
 You should get an error message from the database saying that the record already exists.
 How this error is thrown from the database is up to you. 
 The following XML tag in `/config/sql.xml` for `create_contact` illustrates how to throw an error from the database:
@@ -684,7 +684,7 @@ Now, let's try to delete a record in the `contacts` table.
 
 **Behavior notes:**
 - If the record doesn't exist, the API returns HTTP `404 Not Found`
-- Successfully deleted records return HTTP `204 No Content`
+- Successfully deleted records return HTTP `200 OK` with the deleted record data
 
 Check the `/config/sql.xml` file for the `delete_contact` node to see how the `id` parameter is used in the query.
 
@@ -695,7 +695,6 @@ Below is the `delete_contact` node in the `/config/sql.xml` file:
     <delete_contact>
       <route>contacts/{{id}}</route>
       <verb>DELETE</verb>
-      <success_status_code>204</success_status_code>
       <mandatory_parameters>id</mandatory_parameters>
       <query>
 
@@ -724,7 +723,7 @@ Below is the `delete_contact` node in the `/config/sql.xml` file:
 **Key configuration points:**
 - `id` is mandatory—missing it returns HTTP `400 Bad Request`
 - `verb` is set to `DELETE`—other HTTP methods return `404 Not Found`
-- `success_status_code` is `204`—successful deletions return `204 No Content`
+- The deleted record is returned in the response body (via `OUTPUT DELETED`)
 
 ### Example 7 - Activating / deactivating a contact record
 
@@ -1276,7 +1275,7 @@ Configure route mappings in `/config/api_gateway.xml`:
 | Node name (e.g., `<cat_facts>`) | Yes | Becomes the API route (e.g., `/cat_facts`) |
 | `<url>` | Yes | Destination URL for routing |
 | `<excluded_headers>` | No | Headers to remove before forwarding (comma-separated) |
-| `<ignore_certificate_errors>` | No | Bypass SSL certificate validation |
+| `<ignore_target_route_certificate_errors>` | No | Bypass SSL certificate validation |
 
 **Why exclude headers?**
 - `host` — Prevents TLS handshake errors during routing
@@ -2311,10 +2310,8 @@ Combine with local API keys for secure downloads:
   <response_structure>file</response_structure>
   <mandatory_parameters>id</mandatory_parameters>
   
-  <!-- Require API key authentication -->
-  <local_api_keys>
-    <key>secret-document-key-12345</key>
-  </local_api_keys>
+  <!-- Require API key authentication (references collections in /config/api_keys.xml) -->
+  <api_keys_collections>external_vendors</api_keys_collections>
   
   <file_management>
     <store>primary</store>

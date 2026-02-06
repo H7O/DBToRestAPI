@@ -358,7 +358,6 @@
     <delete_contact>
       <route>contacts/{{id}}</route>
       <verb>DELETE</verb>
-      <success_status_code>204</success_status_code>
       <mandatory_parameters>id</mandatory_parameters>
       <query>
 
