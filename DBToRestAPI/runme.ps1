@@ -1,0 +1,1 @@
+./DBToRestAPI.exe --environment Production

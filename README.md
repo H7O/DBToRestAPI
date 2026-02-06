@@ -101,6 +101,15 @@ The full xml node in `sql.xml` that has the above query defined is as follows:
 > The SQL parameterization feature is offered by `Com.H.Data.Common` package (available on [Github](https://github.com/H7O/Com.H.Data.Common) / [Nuget](https://www.nuget.org/packages/Com.H.Data.Common/)).
 
 
+## HTTPS / TLS Certificates
+
+To run the API over HTTPS (recommended), you'll need a TLS certificate. For local development, [mkcert](https://github.com/FiloSottile/mkcert) makes this trivial — see the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for step-by-step instructions covering:
+
+- Generating a locally-trusted certificate with mkcert
+- Configuring Kestrel in `appsettings.Production.json`
+- Production options (Let's Encrypt, reverse proxy)
+
+
 ## Supported Databases
 
 This solution supports multiple database providers with automatic detection or explicit configuration. You can connect to different databases for different API endpoints, enabling hybrid architectures where some endpoints query SQL Server while others query PostgreSQL, MySQL, or any other supported database.

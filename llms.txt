@@ -57,6 +57,7 @@ Fetch only what you need:
 | Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
+| TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
 
 ## Essential Concepts
 
