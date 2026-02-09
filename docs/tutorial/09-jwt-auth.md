@@ -188,7 +188,7 @@ If your provider includes roles in the token:
 </admin_only>
 ```
 
-The user must have **at least one** of the listed roles.
+The user must have **all** of the listed roles.
 
 ### Require Specific Scopes
 
