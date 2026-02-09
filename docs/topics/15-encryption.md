@@ -176,9 +176,9 @@ spec:
 3. Original XML unchanged
 
 ### Adding New Values
-1. Add unencrypted value to config
-2. Restart application
-3. Value automatically encrypted
+1. Add unencrypted value to config (or add a new section to `sections_to_encrypt`)
+2. Save the file — the application detects the change automatically
+3. Value encrypted without a restart
 
 ## Security Notes
 

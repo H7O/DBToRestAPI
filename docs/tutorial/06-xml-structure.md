@@ -235,10 +235,12 @@ The application supports two encryption methods, chosen automatically:
 The key path can also be set via the `DATA_PROTECTION_KEY_PATH` environment variable.
 
 On first run, the application:
-1. Reads the unencrypted values
+1. Reads the unencrypted values in the configured sections
 2. Encrypts them using the resolved encryption method
 3. Writes the encrypted values back to the file (prefixed with `encrypted:`)
 4. Keeps decrypted values in memory for runtime use
+
+The encryption configuration is **monitored for changes** — if you add a new section to `<sections_to_encrypt>` and save the file, the application picks it up immediately and encrypts the new values without a restart.
 
 After encryption, your connection string in the file looks like:
 ```xml
