@@ -246,26 +246,6 @@ where id in (
 );
 ```
 
-## Wildcard Routes
-
-For catch-all scenarios, use `*` in a route:
-
-```xml
-<catch_all>
-  <route>api/*</route>
-  <query>
-    <![CDATA[
-    declare @path nvarchar(500) = {{*}};
-    select @path as captured_path;
-    ]]>
-  </query>
-</catch_all>
-```
-
-`GET /api/users/123/orders` → `{{*}}` = `users/123/orders`
-
-This is useful for logging, routing, or building flexible proxy-like endpoints.
-
 ## Practical Exercise: Add a Get-by-ID Endpoint
 
 Let's put this together. Add a new endpoint to your `sql.xml` that fetches a single contact by ID:
@@ -332,7 +312,6 @@ curl http://localhost:5165/contacts/00000000-0000-0000-0000-000000000000
 - How to set SQL defaults for optional parameters
 - How to validate parameters with `THROW 50xxx` error codes
 - How to handle array parameters with `OPENJSON`
-- How wildcard routes work
 
 ---
 

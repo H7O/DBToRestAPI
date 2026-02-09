@@ -175,24 +175,6 @@ WHERE id IN (
 {"ids": ["id1", "id2", "id3"]}
 ```
 
-## Wildcard Routes
-
-Use `*` for wildcard matching:
-
-```xml
-<catch_all>
-  <route>api/*</route>
-  
-  <query><![CDATA[
-    -- Everything after api/ is in {{*}}
-    DECLARE @path NVARCHAR(500) = {{*}};
-    SELECT @path AS captured_path;
-  ]]></query>
-</catch_all>
-```
-
-`GET /api/users/123/orders` → `{{*}}` = "users/123/orders"
-
 ## Query Chaining Parameters
 
 In multi-query endpoints, previous query results become parameters:
