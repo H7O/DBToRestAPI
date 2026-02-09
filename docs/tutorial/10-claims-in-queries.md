@@ -83,6 +83,8 @@ order by created_at desc;
 
 This is a powerful pattern because the tenant filter is injected from the token — no chance of cross-tenant data leaks.
 
+> Note: The claim name for tenant identifiers varies by provider. Azure AD/Entra ID uses tid, while other providers may use tenant_id, app_tid, or custom claim names. Check your OIDC provider's documentation for the exact claim name and configure your <authorize> section accordingly.
+
 ## Pattern 3: Audit Trails
 
 Track who did what:
