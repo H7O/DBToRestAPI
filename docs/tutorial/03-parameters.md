@@ -135,8 +135,6 @@ SELECT [value] AS item_name
 FROM OPENJSON(@items, '$') WITH (name nvarchar(200) '$.name');
 ```
 
-> **Note**: Don't confuse input JSON parsing (shown here) with the `{type{json{}}}` **output decorator**, which formats SQL results as nested JSON in the API response. See [Response Formats](../topics/05-response-formats.md) for details.
-
 ## Header Parameters
 
 HTTP headers are accessible as parameters too. This is useful for accessing custom headers, content types, or other metadata:
