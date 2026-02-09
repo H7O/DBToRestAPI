@@ -222,9 +222,21 @@ Sensitive values (connection strings, API secrets) can be encrypted at rest:
 </settings_encryption>
 ```
 
+The application supports two encryption methods, chosen automatically:
+
+| Priority | Condition | Method |
+|----------|-----------|--------|
+| 1 | `data_protection_key_path` is configured | ASP.NET Core Data Protection API (cross-platform) |
+| 2 | Running on Windows (no key path) | Windows DPAPI |
+| 3 | Neither of the above | Encryption disabled (passthrough — values stored as plain text) |
+
+**On Windows**, `<data_protection_key_path>` is optional — if omitted, the application falls back to Windows DPAPI automatically. **On Linux/macOS**, you must configure `<data_protection_key_path>` or encryption will silently be disabled.
+
+The key path can also be set via the `DATA_PROTECTION_KEY_PATH` environment variable.
+
 On first run, the application:
 1. Reads the unencrypted values
-2. Encrypts them using .NET Data Protection API
+2. Encrypts them using the resolved encryption method
 3. Writes the encrypted values back to the file (prefixed with `encrypted:`)
 4. Keeps decrypted values in memory for runtime use
 
