@@ -101,7 +101,7 @@ The JSON keys become available as parameters:
 - `{{name}}` → `Alice`
 - `{{phone}}` → `555-0101`
 
-### Nested JSON with the Type Decorator
+### Nested JSON in Request Bodies
 
 What if the request body contains nested JSON?
 
@@ -115,23 +115,27 @@ What if the request body contains nested JSON?
 }
 ```
 
-You can access nested values using the **type decorator** syntax:
+Top-level keys are available directly as parameters. Nested objects arrive as JSON strings, so you extract their values using standard SQL JSON functions:
 
 ```sql
 declare @name nvarchar(500) = {{name}};
-declare @street nvarchar(500) = {type{json{address.street}}};
-declare @city nvarchar(500) = {type{json{address.city}}};
+declare @address nvarchar(max) = {{address}};
+
+-- Extract nested values with JSON_VALUE
+declare @street nvarchar(500) = JSON_VALUE(@address, '$.street');
+declare @city nvarchar(500) = JSON_VALUE(@address, '$.city');
 ```
 
-The pattern is: `{type{json{path.to.field}}}`
+For arrays or more complex structures, use `OPENJSON`:
 
-This also works with arrays:
 ```sql
--- Access first element: {type{json{items[0].name}}}
-declare @first_item nvarchar(500) = {type{json{items[0].name}}};
+declare @items nvarchar(max) = {{items}};
+
+SELECT [value] AS item_name
+FROM OPENJSON(@items, '$') WITH (name nvarchar(200) '$.name');
 ```
 
-> **Note**: The type decorator is a more advanced topic. For now, just know it exists. We'll cover it in more detail in a later topic.
+> **Note**: Don't confuse input JSON parsing (shown here) with the `{type{json{}}}` **output decorator**, which formats SQL results as nested JSON in the API response. See [Response Formats](../topics/05-response-formats.md) for details.
 
 ## Header Parameters
 
