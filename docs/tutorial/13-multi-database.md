@@ -33,7 +33,7 @@ In `/config/settings.xml`, each connection string gets a unique name:
 | Oracle | `Oracle.ManagedDataAccess.Core` | Yes |
 | IBM DB2 | `Net.IBM.Data.Db2` | Yes |
 
-> **Auto-detection**: SQL Server, PostgreSQL, MySQL, and SQLite connection strings are recognized automatically. For Oracle and DB2, always specify the `provider` attribute explicitly.
+> **Auto-detection**: SQL Server, PostgreSQL, MySQL, and SQLite connection strings are recognized automatically. For Oracle and DB2, its best to always specify the `provider` attribute explicitly despite auto-detection to avoid any ambiguity in some edge cases.
 
 ## Routing Queries to a Specific Database
 
