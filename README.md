@@ -8,7 +8,7 @@ It supports a range of use cases out of the box: public APIs, B2B APIs with API 
 
 Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, and IBM DB2 — with automatic provider detection.
 
-> **Note**: For .NET developers looking to extend the solution with custom features, the codebase is fully accessible and ready to customize.
+> **Note**: For .NET developers looking to extend the solution with custom features, the codebase is fully accessible under MIT license.
 
 ## Key Features
 
@@ -19,10 +19,10 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
 - **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML.
 - **Multi-query chaining** — Execute sequential queries across different databases in a single request.
-- **Embedded HTTP calls** — Call external APIs from within your SQL queries using `{http{…}http}` syntax.
+- **Embedded HTTP calls** — Call external APIs from within your SQL queries.
 - **Caching** — In-memory response caching with parameter-aware invalidation.
 - **Pagination** — Automatic `{count, data}` wrapping with `count_query`.
-- **Nested JSON** — `{type{json{field}}}` decorator embeds `FOR JSON` results as real JSON, not escaped strings.
+- **Nested JSON** — Embeds `FOR JSON` results as real JSON, not escaped strings.
 - **CORS** — Regex-based origin matching, per-endpoint or global, with automatic preflight handling.
 - **Encryption at rest** — Automatically encrypt connection strings and secrets in your config files.
 
@@ -30,7 +30,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 
 ### 1. Prerequisites
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download) (or later)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download) (or later)
 - A database — SQL Server is used below, but any of the six supported engines works
 
 ### 2. Create a test database

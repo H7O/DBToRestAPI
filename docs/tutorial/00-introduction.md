@@ -62,7 +62,7 @@ Any one of these:
 - **Oracle** — [Download Oracle XE](https://www.oracle.com/database/technologies/xe-downloads.html) (free)
 - **IBM DB2** — [Download DB2 Community](https://www.ibm.com/products/db2/developers)
 
-> **Recommendation for this tutorial**: SQL Server Express is the easiest to get started with on Windows. The SQL examples in this tutorial use SQL Server syntax, but equivalent queries for other databases are noted where they differ.
+> **Recommendation for this tutorial**: SQL Server Express (or Developer Edition) is the easiest to get started with on Windows. The SQL examples in this tutorial use SQL Server syntax, but equivalent queries for other databases are noted where they differ.
 
 ### 2. DBToRestAPI
 

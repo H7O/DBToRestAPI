@@ -105,7 +105,7 @@ This controls the shape of the JSON response:
 | `single`   | Always return only the first row as a plain object. |
 | `array`    | Always return an array, even for a single row. |
 
-Since our INSERT returns exactly one row (the newly created contact), we use `single` to guarantee a clean object response — never an array.
+Although in this example we expect only one row to be returned (the newly created contact), hence ommitting this optional tag would still work fine (and is recommended for ease of use). But we explicitly set it to `single` just to demonstrate how it works in cases where you want to enforce a specific response shape regardless of the number of rows returned.
 
 ### The SQL Query Itself
 
