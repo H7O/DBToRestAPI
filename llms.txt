@@ -106,6 +106,7 @@ Error codes 50000-51000 map to HTTP 0-1000.
 | `/config/api_gateway.xml` | Proxy route configurations |
 | `/config/file_management.xml` | File store definitions (local/SFTP) |
 | `/config/auth_providers.xml` | OIDC provider configurations |
+| `/config/regex.xml` | Shared regex patterns for parameter delimiters |
 
 ## Common Patterns
 
@@ -147,4 +148,4 @@ https://github.com/H7O/DBToRestAPI
 ## Dependencies
 
 - [Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common) - SQL parameterization
-- ASP.NET Core 8+
+- ASP.NET Core (.NET 10+)
