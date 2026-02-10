@@ -67,9 +67,11 @@ DATA_PROTECTION_KEY_PATH=./keys/
 
 ## Encryption Method Priority
 
-1. **If `data_protection_key_path` configured** → ASP.NET Core Data Protection API
-2. **Else if Windows** → DPAPI (machine-bound)
+1. **If `data_protection_key_path` configured** → ASP.NET Core Data Protection API (all platforms)
+2. **Else if Windows** → DPAPI (machine-bound, automatic fallback)
 3. **Else** → Encryption disabled (passthrough mode)
+
+> **Linux / macOS / Docker**: `data_protection_key_path` is **required** — there is no DPAPI fallback on non-Windows platforms.
 
 ## What to Encrypt
 

@@ -154,6 +154,8 @@ If your provider includes roles in token:
 </authorize>
 ```
 
+The user must have **all** listed roles (AND logic). In the example above, the user must have both `admin` and `superuser` roles.
+
 ### Scope Requirement
 
 ```xml
@@ -162,6 +164,8 @@ If your provider includes roles in token:
   <required_scopes>api.read,api.write</required_scopes>
 </authorize>
 ```
+
+The user must have **all** listed scopes (AND logic). In the example above, the token must contain both `api.read` and `api.write` scopes.
 
 ## Provider Configuration Options
 
