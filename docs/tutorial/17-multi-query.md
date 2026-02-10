@@ -23,47 +23,65 @@ server-side.
 
 ## Anatomy of a Chained Endpoint
 
-Here is the `hello_world_multi_query` example that ships with the project
-(`config/sql.xml`):
+Suppose you have orders in one database and customer profiles in another.  A
+single API call should return the order enriched with customer details:
 
 ```xml
-<hello_world_multi_query>
-  <!-- Fallback connection string for queries without explicit attribute -->
-  <connection_string_name>server2</connection_string_name>
+<order_with_customer>
+  <route>orders/{{order_id}}</route>
+  <verb>GET</verb>
 
-  <!-- Query 1 — uses 'server2' (fallback) -->
+  <!-- Query 1: look up the order (default database) -->
   <query><![CDATA[
-    SELECT 'new role' AS role_from_query1,
-           'new user' AS user_from_query1;
+    DECLARE @id INT = {{order_id}};
+
+    IF NOT EXISTS (SELECT 1 FROM orders WHERE id = @id)
+      THROW 50404, 'Order not found', 1;
+
+    SELECT customer_email, total_amount, order_date
+    FROM orders
+    WHERE id = @id;
   ]]></query>
 
-  <!-- Query 2 — uses 'server3' (explicit) -->
-  <query connection_string_name="server3"><![CDATA[
-    DECLARE @role NVARCHAR(100) = {{role_from_query1}};
+  <!-- Query 2: enrich with customer info (separate database) -->
+  <query connection_string_name="customers_db"><![CDATA[
+    DECLARE @email NVARCHAR(255) = {{customer_email}};
+    DECLARE @total DECIMAL(10,2) = {{total_amount}};
+    DECLARE @date  DATE          = {{order_date}};
 
-    SELECT * FROM (VALUES
-      ('Developer',        'Developer'),
-      ('Administrator',    'Administrator'),
-      ('Insiders Admin',   'Insiders Admin'),
-      ('Insiders Maker',   'Insiders Maker'),
-      ('Insiders Checker', 'Insiders Checker'),
-      (@role,              @role)
-    ) AS t ([value], [label]);
+    SELECT @email AS email,
+           @total AS total_amount,
+           @date  AS order_date,
+           full_name,
+           loyalty_tier
+    FROM customers
+    WHERE email = @email;
   ]]></query>
-
-  <!-- Query 3 — uses 'server2' (fallback) -->
-  <query><![CDATA[
-    DECLARE @roles_json NVARCHAR(MAX) = {{json}};
-
-    SELECT
-      JSON_VALUE(value, '$.value') AS role_value,
-      JSON_VALUE(value, '$.label') AS role_label
-    FROM OPENJSON(@roles_json);
-  ]]></query>
-</hello_world_multi_query>
+</order_with_customer>
 ```
 
-Three queries, two databases, one request — no client-side orchestration.
+Two queries, two databases, one request — no client-side orchestration.
+
+Call it:
+
+```
+GET /orders/42
+```
+
+Response:
+
+```json
+{
+  "email": "alice@example.com",
+  "total_amount": 129.99,
+  "order_date": "2025-12-01",
+  "full_name": "Alice Johnson",
+  "loyalty_tier": "Gold"
+}
+```
+
+Only the **last query's result** is returned to the caller.  Intermediate
+queries are purely for data gathering.
 
 ---
 
@@ -78,18 +96,18 @@ the next query, accessible with the usual `{{column_name}}` syntax:
 
 ```
 Query 1 result
-┌──────────────────┬──────────────────┐
-│ role_from_query1  │ user_from_query1  │
-├──────────────────┼──────────────────┤
-│ new role          │ new user          │
-└──────────────────┴──────────────────┘
+┌──────────────────┬──────────────┬────────────┐
+│ customer_email    │ total_amount  │ order_date  │
+├──────────────────┼──────────────┼────────────┤
+│ alice@example.com │ 129.99        │ 2025-12-01  │
+└──────────────────┴──────────────┴────────────┘
 
         ↓
 
-Query 2 can use: {{role_from_query1}}, {{user_from_query1}}
+Query 2 can use: {{customer_email}}, {{total_amount}}, {{order_date}}
 ```
 
-This is exactly what happens between Query 1 and Query 2 above.
+This is exactly what happens in the order example above.
 
 ### Multiple Rows → JSON Array
 
@@ -97,64 +115,80 @@ When a query returns **more than one row**, the entire result set is serialised
 as a JSON array and passed through a variable called `{{json}}` by default:
 
 ```
-Query 2 result (6 rows)
-┌───────────────────┬───────────────────┐
-│ value              │ label              │
-├───────────────────┼───────────────────┤
-│ Developer          │ Developer          │
-│ Administrator      │ Administrator      │
-│ ...                │ ...                │
-└───────────────────┴───────────────────┘
+Query 1 result (3 rows)
+┌──────────────────┬───────┐
+│ email             │ name   │
+├──────────────────┼───────┤
+│ alice@example.com │ Alice  │
+│ bob@example.com   │ Bob    │
+│ carol@example.com │ Carol  │
+└──────────────────┴───────┘
 
         ↓   serialised as JSON array
 
-Query 3 receives {{json}} containing:
+Query 2 receives {{json}} containing:
 [
-  {"value":"Developer","label":"Developer"},
-  {"value":"Administrator","label":"Administrator"},
-  ...
+  {"email":"alice@example.com","name":"Alice"},
+  {"email":"bob@example.com","name":"Bob"},
+  {"email":"carol@example.com","name":"Carol"}
 ]
 ```
 
-Query 3 then uses `OPENJSON` (SQL Server) or the equivalent JSON function in
+Query 2 then uses `OPENJSON` (SQL Server) or the equivalent JSON function in
 other databases to unpack the array.
+
+> **Note**: Single-row results are also available as `{{json}}` (a one-element
+> array), so you can always use `{{json}}` regardless of row count.  However,
+> named column parameters (`{{column_name}}`) are only available for single-row
+> results.
 
 ### Customising the JSON Variable Name
 
 If you chain many queries and need to distinguish results, add a
-`json_var` attribute to the **receiving** query:
+`json_var` attribute to the **receiving** query.  This controls the variable
+name that the **previous** query's results are stored under:
 
 ```xml
+<!-- Query 1: returns multiple roles -->
+<query><![CDATA[
+  SELECT role_name, role_level FROM roles;
+]]></query>
+
+<!-- Query 2: receives Query 1's results as {{roles_data}} instead of {{json}} -->
 <query json_var="roles_data"><![CDATA[
   DECLARE @roles NVARCHAR(MAX) = {{roles_data}};
   -- ...
 ]]></query>
 ```
 
-You can even carry forward multiple JSON blobs by using
-`json_variable_name` on intermediate queries:
+To carry forward results from multiple earlier queries, use `json_var` on
+each receiving query to give them distinct names:
 
 ```xml
 <!-- Query 1: returns multiple users -->
-<query json_variable_name="users_json"><![CDATA[
+<query><![CDATA[
   SELECT id, name FROM users;
 ]]></query>
 
-<!-- Query 2: returns multiple orders -->
-<query json_variable_name="orders_json"><![CDATA[
+<!-- Query 2: json_var="users_json" means Query 1's results arrive as {{users_json}} -->
+<query json_var="users_json"><![CDATA[
   SELECT * FROM orders WHERE user_id IN (
     SELECT JSON_VALUE(value, '$.id')
     FROM OPENJSON({{users_json}})
   );
 ]]></query>
 
-<!-- Query 3: both are available -->
-<query><![CDATA[
+<!-- Query 3: json_var="orders_json" means Query 2's results arrive as {{orders_json}} -->
+<!--           Query 1's results are still available as {{users_json}} -->
+<query json_var="orders_json"><![CDATA[
   DECLARE @users  NVARCHAR(MAX) = {{users_json}};
   DECLARE @orders NVARCHAR(MAX) = {{orders_json}};
   -- combine as needed
 ]]></query>
 ```
+
+Parameters accumulate across the chain — Query 3 can access results from
+both Query 1 and Query 2.
 
 ---
 
@@ -326,7 +360,7 @@ When the cache expires, all queries re-execute:
 - Place multiple `<query>` nodes inside an endpoint to create a chain.
 - Single-row results pass as named parameters; multi-row results pass as a
   `{{json}}` array.
-- Use `json_variable_name` / `json_var` to custom-name the JSON variable.
+- Use `json_var` on the receiving query to custom-name the JSON variable.
 - Each query can target a different database via `connection_string_name`.
 - Errors in any query stop the chain immediately.
 - Caching applies to the final result of the entire chain.

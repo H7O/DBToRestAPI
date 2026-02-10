@@ -142,20 +142,27 @@ WHERE product_id IN (
 
 ### Custom JSON Variable Name
 
+The `json_var` attribute goes on the **receiving** query to control the variable
+name that the previous query's results are stored under:
+
 ```xml
-<query json_variable_name="users_json"><![CDATA[
+<!-- Query 1: returns multiple users -->
+<query><![CDATA[
   SELECT id, name FROM users;
 ]]></query>
 
-<query json_variable_name="orders_json"><![CDATA[
-  -- Access previous as {{users_json}}
+<!-- Query 2: json_var="users_json" means Query 1's results arrive as {{users_json}} -->
+<query json_var="users_json"><![CDATA[
   SELECT * FROM orders WHERE user_id IN (
     SELECT JSON_VALUE(value, '$.id') FROM OPENJSON({{users_json}})
   );
 ]]></query>
 
-<query><![CDATA[
-  -- Access both: {{users_json}} and {{orders_json}}
+<!-- Query 3: json_var="orders_json" means Query 2's results arrive as {{orders_json}} -->
+<!--           Query 1's results are still available as {{users_json}} -->
+<query json_var="orders_json"><![CDATA[
+  DECLARE @users  NVARCHAR(MAX) = {{users_json}};
+  DECLARE @orders NVARCHAR(MAX) = {{orders_json}};
 ]]></query>
 ```
 
@@ -249,7 +256,7 @@ Caching applies to entire chain result:
 ## Tips
 
 1. **Single row results** are easier to work with — columns become direct parameters
-2. **Use custom `json_variable_name`** when chaining many queries
+2. **Use custom `json_var`** on the receiving query when chaining many queries
 3. **Validate early** — check permissions in first query
 4. **Handle empty results** — check if previous query returned data
 5. **Keep chains short** — complex workflows may need restructuring
