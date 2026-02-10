@@ -5,18 +5,17 @@ Welcome! This tutorial walks you through building a complete REST API from scrat
 By the end, you'll have a fully functional API with:
 - CRUD operations (Create, Read, Update, Delete)
 - Pagination and search
-- Custom actions (activate/deactivate)
+- Input validation (mandatory fields, regex, SQL error codes)
 - Error handling with custom HTTP status codes
 - API key protection
+- JWT/OIDC authentication with claims in SQL
 - Multiple database support
 - Response caching
 - API gateway routing
 - File uploads and downloads
-- CORS configuration
-- JWT/OIDC authentication
-- Query chaining across databases
 - Embedded HTTP calls from SQL
-- Settings encryption
+- Multi-query chaining across databases
+- Production deployment guidance
 
 No API coding knowledge required — just basic SQL.
 
@@ -37,35 +36,25 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 2 | [Creating Contacts](02-creating-contacts.md) | POST endpoints, mandatory parameters, `success_status_code` |
-| 3 | [Reading Contacts](03-reading-contacts.md) | GET endpoints, pagination, search, `count_query` |
-| 4 | [Updating Contacts](04-updating-contacts.md) | PUT endpoints, route parameters like `{{id}}` |
-| 5 | [Deleting Contacts](05-deleting-contacts.md) | DELETE endpoints, returning deleted data |
+| 2 | [Building CRUD Endpoints](02-basic-crud.md) | POST/GET/PUT/DELETE, mandatory parameters, `success_status_code` |
+| 3 | [Parameters Deep Dive](03-parameters.md) | Parameter sources, priority, nested JSON, headers |
+| 4 | [Pagination & Filtering](04-pagination-filtering.md) | `count_query`, search, `take`/`skip` |
+| 5 | [Update & Delete](05-update-delete.md) | Route parameters like `{{id}}`, returning modified data |
 
-### Shaping Responses & Actions
-
-| # | Topic | What You'll Learn |
-|---|-------|-------------------|
-| 6 | [Custom Actions](06-custom-actions.md) | Multi-parameter routes, activate/deactivate pattern |
-| 7 | [Response Formats](07-response-formats.md) | `response_structure`, nested JSON with `{type{json{}}}` |
-
-### Error Handling
+### Configuration & Validation
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 8 | [Error Handling](08-error-handling.md) | SQL → HTTP error codes, all databases, debug mode |
+| 6 | [XML Configuration Structure](06-xml-structure.md) | Config files, hot-reload, encryption, multi-file organization |
+| 7 | [Input Validation](07-regex-validation.md) | Mandatory parameters, SQL error codes, regex delimiters |
 
 ### Security
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 9 | [API Key Protection](09-api-keys.md) | API key collections, protecting endpoints |
-
-### Databases
-
-| # | Topic | What You'll Learn |
-|---|-------|-------------------|
-| 10 | [Multiple Databases](10-multiple-databases.md) | Connection strings, providers, per-endpoint databases |
+| 8 | [API Key Protection](08-api-keys.md) | API key collections, protecting endpoints |
+| 9 | [JWT & OIDC Authentication](09-jwt-auth.md) | Providers, `{auth{email}}`, roles, database-driven authorization |
+| 10 | [Using Claims in Queries](10-claims-in-queries.md) | Accessing JWT claims in SQL, auto-registration patterns |
 
 ### Performance
 
@@ -79,27 +68,27 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 |---|-------|-------------------|
 | 12 | [API Gateway](12-api-gateway.md) | Proxy routes, wildcards, protecting gateway routes |
 
-### File Management
+### Databases & Files
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 13 | [File Uploads](13-file-uploads.md) | Attach documents to contacts, local/SFTP stores |
-| 14 | [File Downloads](14-file-downloads.md) | Stream files from stores, database, or HTTP |
-
-### Cross-Origin & Authentication
-
-| # | Topic | What You'll Learn |
-|---|-------|-------------------|
-| 15 | [CORS](15-cors.md) | Pattern matching, credentials, preflight handling |
-| 16 | [Authentication](16-authentication.md) | OIDC/JWT, `{auth{email}}`, database-driven authorization |
+| 13 | [Multiple Databases](13-multi-database.md) | Connection strings, providers, per-endpoint databases |
+| 14 | [File Uploads](14-file-uploads.md) | Attach documents to contacts, local/SFTP stores |
+| 15 | [File Downloads](15-file-downloads.md) | Stream files from stores, database, or HTTP |
 
 ### Advanced Features
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 17 | [Query Chaining](17-query-chaining.md) | Cross-database workflows, parameter passing between queries |
-| 18 | [Embedded HTTP Calls](18-embedded-http-calls.md) | `{http{...}http}` syntax, calling APIs from SQL |
-| 19 | [Settings Encryption](19-settings-encryption.md) | DPAPI, cross-platform encryption, key management |
+| 16 | [Embedded HTTP Calls](16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
+| 17 | [Multi-Query Chaining](17-multi-query.md) | Cross-database workflows, parameter passing between queries |
+
+### Going to Production
+
+| # | Topic | What You'll Learn |
+|---|-------|-------------------|
+| 18 | [Production & Deployment](18-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 19 | [What's Next?](19-whats-next.md) | Further resources and community |
 
 ---
 
