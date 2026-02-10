@@ -1,5 +1,7 @@
 # No-Code Database-to-REST API
 
+> **LLM / AI agents**: For a structured, token-efficient overview of this project, see [llms.txt](llms.txt) (plain text) or [llms.md](llms.md) (markdown with full documentation links).
+
 A no-code solution that turns your SQL queries into RESTful APIs — no API coding required.
 
 If you can write basic SQL, you can build safe, secure REST APIs in minutes.
