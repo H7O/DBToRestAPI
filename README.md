@@ -187,26 +187,26 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 00 | [Introduction](docs/tutorial/00-introduction.md) | Project overview and architecture |
-| 01 | [Getting Started](docs/tutorial/01-getting-started.md) | Installation & first endpoint |
-| 02 | [Create Endpoint](docs/tutorial/02-create-endpoint.md) | POST with `mandatory_parameters`, `success_status_code` |
-| 03 | [Read Endpoint](docs/tutorial/03-read-endpoint.md) | GET with pagination, `count_query`, search filters |
-| 04 | [Update Endpoint](docs/tutorial/04-update-endpoint.md) | PUT with route parameters `{{id}}` |
-| 05 | [Delete Endpoint](docs/tutorial/05-delete-endpoint.md) | DELETE with `output deleted.*` |
-| 06 | [Custom Routes](docs/tutorial/06-custom-routes.md) | Route patterns, multi-segment parameters |
-| 07 | [Response Structure](docs/tutorial/07-response-structure.md) | `auto`, `single`, `array`, `file` modes |
-| 08 | [API Keys](docs/tutorial/08-api-keys.md) | API key collections, per-endpoint protection |
-| 09 | [Caching](docs/tutorial/09-caching.md) | In-memory cache with invalidators |
-| 10 | [Nested JSON](docs/tutorial/10-nested-json.md) | `{type{json{field}}}` decorator with `FOR JSON` |
-| 11 | [API Gateway](docs/tutorial/11-api-gateway.md) | Proxy, wildcard routes, applied headers |
-| 12 | [CORS](docs/tutorial/12-cors.md) | Regex patterns, per-endpoint overrides |
-| 13 | [JWT/OIDC Auth](docs/tutorial/13-jwt-oidc-auth.md) | Provider config, `{auth{claim}}` in SQL |
-| 14 | [File Uploads](docs/tutorial/14-file-uploads.md) | Local & SFTP stores, `path_query`, multipart |
-| 15 | [File Downloads](docs/tutorial/15-file-downloads.md) | Streaming, base64, HTTP proxy sources |
-| 16 | [Multiple Databases](docs/tutorial/16-multiple-databases.md) | Hybrid architectures, `connection_string_name` |
-| 17 | [Settings Encryption](docs/tutorial/17-settings-encryption.md) | Encrypt secrets at rest |
-| 18 | [Multi-Query Chaining](docs/tutorial/18-multi-query-chaining.md) | Sequential queries, cross-DB chaining |
-| 19 | [What's Next](docs/tutorial/19-whats-next.md) | Production tips, advanced patterns |
+| 00 | [Introduction](docs/tutorial/00-introduction.md) | Prerequisites, project setup, how the solution works |
+| 01 | [Your First API Endpoint](docs/tutorial/01-hello-world.md) | Run the app, call your first endpoint, understand `sql.xml` |
+| 02 | [Building CRUD Endpoints](docs/tutorial/02-basic-crud.md) | POST/GET/PUT/DELETE, mandatory parameters, `success_status_code` |
+| 03 | [Parameters Deep Dive](docs/tutorial/03-parameters.md) | Parameter sources, priority, nested JSON, headers |
+| 04 | [Pagination & Filtering](docs/tutorial/04-pagination-filtering.md) | `count_query`, search, `take`/`skip` |
+| 05 | [Update & Delete](docs/tutorial/05-update-delete.md) | Route parameters like `{{id}}`, returning modified data |
+| 06 | [XML Configuration Structure](docs/tutorial/06-xml-structure.md) | Config files, hot-reload, encryption, multi-file organization |
+| 07 | [Input Validation](docs/tutorial/07-regex-validation.md) | Mandatory parameters, SQL error codes, regex delimiters |
+| 08 | [API Key Protection](docs/tutorial/08-api-keys.md) | API key collections, protecting endpoints |
+| 09 | [JWT & OIDC Authentication](docs/tutorial/09-jwt-auth.md) | Providers, `{auth{email}}`, roles, database-driven authorization |
+| 10 | [Using Claims in Queries](docs/tutorial/10-claims-in-queries.md) | Accessing JWT claims in SQL, auto-registration patterns |
+| 11 | [Caching](docs/tutorial/11-caching.md) | Memory cache for SQL endpoints and gateway routes |
+| 12 | [API Gateway](docs/tutorial/12-api-gateway.md) | Proxy routes, wildcards, protecting gateway routes |
+| 13 | [Multiple Databases](docs/tutorial/13-multi-database.md) | Connection strings, providers, per-endpoint databases |
+| 14 | [File Uploads](docs/tutorial/14-file-uploads.md) | Attach documents to contacts, local/SFTP stores |
+| 15 | [File Downloads](docs/tutorial/15-file-downloads.md) | Stream files from stores, database, or HTTP |
+| 16 | [Embedded HTTP Calls](docs/tutorial/16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
+| 17 | [Multi-Query Chaining](docs/tutorial/17-multi-query.md) | Cross-database workflows, parameter passing between queries |
+| 18 | [Production & Deployment](docs/tutorial/18-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 19 | [What's Next?](docs/tutorial/19-whats-next.md) | Further resources and community |
 
 ### Reference Documentation
 
