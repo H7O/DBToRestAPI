@@ -1283,7 +1283,7 @@
         
         declare @json nvarchar(max) = {http{
         {
-          "url": "https://localhost:5000/hello_world?name={{name}}",
+          "url": "https://localhost:5001/hello_world?name={{name}}",
           "method": "GET",
           "headers": {
             "Content-Type": "application/json"
@@ -1292,6 +1292,8 @@
         }http};
         
         -- do something with @json, e.g., return it to the caller or parse it further, etc..
+        
+        select @json as http_call_response;
 
 
         
