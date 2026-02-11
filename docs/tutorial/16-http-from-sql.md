@@ -16,10 +16,23 @@ DECLARE @response NVARCHAR(MAX) = {http{
 ```
 
 **What happens at runtime:**
-1. The application finds the `{http{...}http}` marker
-2. It executes the HTTP request **before** running the SQL
-3. The marker is replaced with the HTTP response body
-4. The SQL executes with the response available as a variable
+1. The engine finds all `{http{...}http}` markers in your query
+2. It resolves any `{{param}}` placeholders inside them from the incoming request
+3. It executes the HTTP requests **before** running the SQL
+4. Each marker is replaced with a **parameterized SQL variable** (e.g., `@http_response_1`)
+5. The SQL executes with the HTTP response safely available as that variable
+
+> **For DB Admins — how parameters are bound**: The HTTP response is **never** pasted or concatenated into your SQL string. Instead, it works exactly like `sp_executesql` parameter binding:
+>
+> ```sql
+> -- Conceptually, this is what happens under the hood:
+> EXEC sp_executesql
+>   N'DECLARE @response NVARCHAR(MAX) = @http_response_1; SELECT ...',
+>   N'@http_response_1 NVARCHAR(MAX)',
+>   @http_response_1 = '{"name": "John", "age": 30}';  -- bound, not concatenated
+> ```
+>
+> This means even if an external API returns something malicious like `'; DROP TABLE users; --`, it is treated as a **value**, not as SQL code. The same protection you trust with `sp_executesql` parameters applies here.
 
 ## Basic Example: Enrich Data with External API
 
@@ -231,8 +244,39 @@ END
 -- Normal processing with @response...
 ```
 
+## Conditional Usage with IF Blocks
+
+All `{http{...}http}` calls execute during pre-processing regardless of SQL logic — because the engine processes them before the SQL even starts running. However, because results are delivered as parameterized SQL variables (not string-replaced), you can use `IF` blocks to control whether the result is actually assigned to your variables:
+
+```sql
+DECLARE @emirates_id NVARCHAR(50) = {{emirates_id}};
+DECLARE @lookup_result NVARCHAR(MAX) = NULL;
+
+-- The HTTP call fires either way during pre-processing,
+-- but the DECLARE + assignment below only executes
+-- when the IF condition passes (standard SQL behavior).
+IF @emirates_id IS NOT NULL AND @emirates_id != ''
+BEGIN
+    DECLARE @api_response NVARCHAR(MAX) = {http{
+      {
+        "url": "https://api.example.com/lookup?id={{emirates_id}}",
+        "method": "GET"
+      }
+    }http};
+
+    SET @lookup_result = JSON_VALUE(@api_response, '$.name');
+END
+
+-- @lookup_result is NULL if emirates_id wasn't provided
+SELECT COALESCE(@lookup_result, 'No lookup performed') AS result;
+```
+
+This works because the `{http{...}http}` marker becomes a parameter like `@http_response_1` during pre-processing. When the `IF` block's condition is false, the `DECLARE @api_response = @http_response_1` line never executes — exactly the same as any other SQL variable declared inside a conditional block. The HTTP response data is still bound as a parameter, but your SQL logic simply never reads it.
+```
+
 ## Security Considerations
 
+- **SQL injection safe** — HTTP responses are delivered as parameterized SQL variables (`@http_response_1`, `@http_response_2`, etc.), not string-replaced into the query. This is the same `sp_executesql`-style parameter binding that DB Admins already trust for preventing SQL injection. Even if an external API returns `'; DROP TABLE users; --`, it is treated as a harmless string value, not executable SQL.
 - **Never expose secrets in client-visible responses** — API keys in `{http{...}http}` are server-side only
 - **Validate external data** — don't trust external API responses blindly
 - **Set timeouts** — prevent your API from hanging if an external service is slow
@@ -243,12 +287,14 @@ END
 ### What You Learned
 
 - The `{http{...}http}` syntax for embedded HTTP calls
-- How HTTP calls execute before the SQL runs
+- How HTTP calls execute before the SQL runs, with results delivered via SQL parameterization (`sp_executesql`-style binding, not string replacement)
+- That `IF` blocks can control whether the parameterized result is assigned, even though the HTTP call always fires during pre-processing
 - Sending GET and POST requests with headers and body
 - Authentication options (bearer token, API key)
 - Parsing JSON responses with `JSON_VALUE` and `OPENJSON`
 - Error handling for failed HTTP calls
-- Practical patterns: data enrichment, validation, multi-service calls
+- No SQL injection risk — responses are bound as parameterized variables, same as `sp_executesql` parameters
+- Practical patterns: data enrichment, validation, conditional lookups, multi-service calls
 
 ---
 

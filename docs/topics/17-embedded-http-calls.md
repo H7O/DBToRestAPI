@@ -4,9 +4,22 @@ Execute HTTP requests directly from within your SQL queries — enrich database 
 
 ## How It Works
 
-Embed HTTP call markers in your SQL queries using the `{http{...}http}` syntax. The API engine executes these HTTP calls **before** running the SQL, replacing the markers with the response content.
+Embed HTTP call markers in your SQL queries using the `{http{...}http}` syntax. Processing happens in two phases:
+
+### Phase 1: Pre-processing (before SQL execution)
+1. The engine scans the entire query text for all `{http{...}http}` markers
+2. `{{param}}` placeholders inside the HTTP configuration are resolved from the incoming request parameters (query string, body, route, headers — the engine has access to all of them at this stage)
+3. All discovered HTTP calls are executed (sequentially, deduplicated by identical configuration)
+4. Each `{http{...}http}` marker in the query text is replaced with a **SQL parameter name** (e.g., `@http_response_1`, `@http_response_2`)
+5. The HTTP response content is bound to that parameter via parameterization — **it is never string-interpolated into the SQL**
+
+### Phase 2: SQL execution
+- The modified query is executed via standard parameterized SQL (similar to `sp_executesql @query, @params, @http_response_1 = '...', @http_response_2 = '...'`)
+- HTTP responses are available as regular SQL variables — you can use them in `SELECT`, `INSERT`, `UPDATE`, `IF`, `WHERE`, or any SQL construct
+- Because values are parameterized, **there is zero SQL injection risk**, even if the external API returns malicious content
 
 ```sql
+-- What you write:
 DECLARE @external_data NVARCHAR(MAX) = {http{
   {
     "url": "https://api.example.com/data",
@@ -14,9 +27,16 @@ DECLARE @external_data NVARCHAR(MAX) = {http{
   }
 }http};
 
--- Use the response in your query
+-- What actually runs (conceptually):
+-- DECLARE @external_data NVARCHAR(MAX) = @http_response_1;
+-- where @http_response_1 is bound to the API's response body via sp_executesql-style parameterization
+
 SELECT * FROM OPENJSON(@external_data);
 ```
+
+> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block.
+
+> **For LLMs / AI agents**: Do **not** assume that `{http{...}http}` results are string-replaced into the SQL. They are SQL-parameterized. This means: (1) SQL `IF` guards around the `DECLARE @var = {http{...}http}` assignment **do** control whether the variable receives the value, (2) the HTTP call itself still fires during pre-processing regardless, and (3) there is no SQL injection risk from HTTP response content.
 
 ## Basic Example
 
@@ -241,9 +261,45 @@ You can include multiple HTTP calls in a single query. Each unique call is execu
 </aggregate_external_data>
 ```
 
+## Conditional Usage with IF Blocks
+
+Because HTTP responses are delivered as parameterized SQL variables, you can use standard SQL `IF` blocks to conditionally process the result — even though the HTTP call itself always fires during pre-processing:
+
+```sql
+DECLARE @emirates_id NVARCHAR(50) = {{emirates_id}};
+
+-- The HTTP call executes during pre-processing regardless,
+-- but its result (a parameterized variable) is only assigned
+-- to @nin_json inside the IF block when the condition is met.
+DECLARE @nin NVARCHAR(MAX) = NULL;
+IF @emirates_id IS NOT NULL AND @emirates_id NOT LIKE '%[^0-9]%'
+BEGIN
+    DECLARE @nin_json NVARCHAR(MAX) = {http{
+      {
+        "url": "https://api.example.com/lookup",
+        "method": "GET",
+        "body": { "eid": "{{emirates_id}}" }
+      }
+    }http};
+
+    IF @nin_json IS NOT NULL AND LEN(@nin_json) > 0
+    BEGIN
+        SELECT @nin = STRING_AGG(TRIM(JSON_VALUE(value, '$.NIN_NO')), ' | ')
+        FROM OPENJSON(@nin_json)
+        WHERE JSON_VALUE(value, '$.NIN_NO') IS NOT NULL;
+    END
+END
+
+-- @nin is NULL if the IF condition was false,
+-- or contains the looked-up value if it was true.
+UPDATE records SET nin = COALESCE(@nin, nin) WHERE id = @id;
+```
+
+This pattern is useful in **update** scenarios where a parameter may or may not be provided in the request. The HTTP call fires either way (minimal overhead if the external API handles null/empty gracefully), but your SQL logic decides whether to use the result.
+
 ## Error Handling
 
-When an HTTP call fails, the marker is replaced with `NULL`:
+When an HTTP call fails, the parameterized variable receives `NULL`:
 
 ```sql
 DECLARE @external_data NVARCHAR(MAX) = {http{
@@ -321,13 +377,15 @@ Failed HTTP calls are logged with status codes and error messages for debugging.
 ## Performance Considerations
 
 - **HTTP calls are executed sequentially** before SQL execution
-- **Duplicate calls are deduplicated** — identical HTTP configurations execute only once
+- **All `{http{...}http}` blocks always execute** during pre-processing, regardless of SQL `IF` conditions — the `IF` only controls whether the parameterized result variable is assigned/used in your SQL logic
+- **Duplicate calls are deduplicated** — identical HTTP configurations execute only once (the response is reused for all matching markers)
 - **Use timeouts** to prevent slow external services from blocking your API
 - **Consider caching** for frequently-called external APIs
 - **Use retries wisely** — exponential backoff prevents overwhelming external services
 
 ## Security Notes
 
-- HTTP responses are passed as **parameterized values** to SQL — no SQL injection risk
+- **SQL injection safe**: HTTP responses are delivered to SQL as **parameterized values** (e.g., `@http_response_1`, `@http_response_2`) via the same parameterization mechanism used for `{{param}}` values. This is equivalent to binding parameters in `sp_executesql` — the response content is **never** concatenated or interpolated into the SQL string. Even a malicious external API response cannot alter query structure or cause SQL injection.
+- `{{param}}` placeholders inside `{http{...}http}` resolve from request parameters and are also parameterized
 - Sensitive credentials in HTTP configurations should use encrypted settings (see [Settings Encryption](15-encryption.md))
 - Consider using header parameters (`{{h{Header-Name}}}`) to pass API keys from request headers rather than hardcoding
