@@ -1,6 +1,7 @@
 ﻿using Com.H.Cache;
 using Com.H.Data.Common;
 using Com.H.Threading;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Hybrid;
 using System.Security.Cryptography;
 using System.Text;
@@ -127,6 +128,56 @@ namespace DBToRestAPI.Cache
                 cancellationToken: cancellationToken);
         }
 
+
+        /// <summary>
+        /// Retrieves a cached query result as an IActionResult, or generates and caches it.
+        /// This method handles the IActionResult serialization problem by converting to/from
+        /// a serializable <see cref="CachableQueryResult"/> container for cache storage.
+        /// HybridCache cannot serialize/deserialize IActionResult (an interface), so this method
+        /// converts the IActionResult to a CachableQueryResult before caching and back after retrieval.
+        /// </summary>
+        /// <param name="serviceSection">The configuration section containing cache settings.</param>
+        /// <param name="qParams">A list of query parameters used to identify the cache entry.</param>
+        /// <param name="dataFactory">A function that generates the IActionResult. Receives a boolean
+        /// for disableDeferredExecution (true = materialize for cache, false = stream).</param>
+        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+        /// <returns>The IActionResult either from cache or freshly generated.</returns>
+        public async Task<IActionResult> GetQueryResultAsActionAsync(
+                IConfigurationSection serviceSection,
+                List<DbQueryParams> qParams,
+                Func<bool, Task<IActionResult>> dataFactory,
+                CancellationToken cancellationToken = default
+            )
+        {
+            var cacheInfo = GetCacheInfo(serviceSection, qParams);
+            if (cacheInfo == null)
+            {
+                // No cache configured - return streaming IActionResult directly
+                return await dataFactory(false);
+            }
+
+            var options = new HybridCacheEntryOptions
+            {
+                Expiration = cacheInfo.Duration,
+                LocalCacheExpiration = cacheInfo.Duration,
+            };
+
+            // Cache a serializable CachableQueryResult instead of IActionResult
+            var cachedResult = await this._cache.GetOrCreateAsync<CachableQueryResult>(
+                cacheInfo.Key,
+                async cancel =>
+                {
+                    // Execute the data factory in materialized (non-deferred) mode
+                    var actionResult = await dataFactory(true);
+                    // Convert IActionResult to a serializable container
+                    return CachableQueryResult.FromActionResult(actionResult);
+                },
+                options: options,
+                cancellationToken: cancellationToken);
+
+            // Convert the cached container back to an IActionResult
+            return cachedResult.ToActionResult();
+        }
 
 
         /// <summary>

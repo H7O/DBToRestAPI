@@ -304,7 +304,7 @@ namespace DBToRestAPI.Controllers
                     HttpContext.Response.RegisterForDisposeAsync(connection);
 
                     response = await _settings.CacheService
-                        .GetQueryResultAsync<IActionResult>(
+                        .GetQueryResultAsActionAsync(
                         section,
                         qParams,
                         disableDiffered => GetResultFromDbAsync(section, connection, query.QueryText, qParams, disableDiffered),
@@ -315,7 +315,7 @@ namespace DBToRestAPI.Controllers
                 {
                     // Multiple queries: use chained query execution
                     response = await _settings.CacheService
-                        .GetQueryResultAsync<IActionResult>(
+                        .GetQueryResultAsActionAsync(
                         section,
                         qParams,
                         disableDiffered => GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDiffered),
