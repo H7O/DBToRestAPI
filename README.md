@@ -208,8 +208,8 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | 15 | [File Downloads](docs/tutorial/15-file-downloads.md) | Stream files from stores, database, or HTTP |
 | 16 | [Embedded HTTP Calls](docs/tutorial/16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
 | 17 | [Multi-Query Chaining](docs/tutorial/17-multi-query.md) | Cross-database workflows, parameter passing between queries |
-| 18 | [Production & Deployment](docs/tutorial/18-production.md) | Environment config, TLS, Docker, reverse proxy |
-| 19 | [Settings Variables](docs/tutorial/19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
+| 18 | [Settings Variables](docs/tutorial/18-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
+| 19 | [Production & Deployment](docs/tutorial/19-production.md) | Environment config, TLS, Docker, reverse proxy |
 | 20 | [What's Next?](docs/tutorial/20-whats-next.md) | Further resources and community |
 
 ### Reference Documentation

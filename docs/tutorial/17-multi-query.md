@@ -367,6 +367,6 @@ When the cache expires, all queries re-execute:
 
 ---
 
-**Next:** [Production & Deployment Tips →](18-production.md)
+**Next:** [Settings Variables →](18-settings-vars.md)
 
 [← Back to Index](index.md)
