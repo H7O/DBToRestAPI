@@ -227,7 +227,7 @@ public class ParametersBuilder
         // return default to avoid null reference issues downstream
         return new DbQueryParams()
         {
-            DataModel = new Dictionary<string, string> { { "unlikely_header_to_be_passed", "123" } },
+            DataModel = null, 
             QueryParamsRegex = authVarPattern
         };
     }
@@ -253,31 +253,19 @@ public class ParametersBuilder
                 QueryParamsRegex = headersVarPattern
             };
 
-        // add custom header with unlikely name to help
-        // set header variables in the query to DbNull.Value
-        // in the event that headers are not passed
-        // and the user has header variables in the query
-        // which if left unset will cause an error
-        // the reason for that is the Com.H.Data.Common library
-        // when executing a query it'll use the DbQueryParams not only
-        // to replace variables in the query (e.g., {{name}})
-        // with SQL parameterization version (to protect against sql injections)
-        // but it also replaces the variables in the query that aren't passed via the API
-        // in the payload with DbNull.
-        // e.g., if the sql query had a line like:
-        // `declare @some_http_header = {header{x-api-key}}`
-        // and the API call never passed `x-api-key`
-        // without the regex in the below `headersVarPattern` variable
-        // Com.H.Data.Common library won't know which variables left empty to replace them with DbNull
-        // when it does it's parameterized version of the line `declare @some_http_header = {header{x-api-key}}`
-        // leaving it as is which causes sql exception when running the query.
-        // however, if the qParams we're building had an entry with the regex in `headersVarPattern`
-        // the Com.H.Data.Common library would do convert that line to a parameterized version of it.
-        // which would look like `declare @some_http_header = @x_api_key` then pass DbNull to that `@x_api_key`
-        // parameter when running the query.
+        // Even when no headers are present, we still return a DbQueryParams
+        // with a null DataModel but with the headersVarPattern regex.
+        // This is needed because the Com.H.Data.Common query engine uses the
+        // QueryParamsRegex to identify variable references in the SQL query
+        // (e.g., `declare @some_http_header = {header{x-api-key}}`)
+        // and parameterize them (e.g., `declare @some_http_header = @x_api_key`).
+        // When the DataModel is null, the engine sets those parameters to DbNull,
+        // which prevents SQL exceptions from unresolved variable references.
+        // Without this regex entry, the engine wouldn't know which patterns
+        // to look for, leaving raw variable references in the query untouched.
         return new DbQueryParams()
         {
-            DataModel = new Dictionary<string, string> { { "unlikely_header_to_be_passed", "123" } },
+            DataModel = null,
             QueryParamsRegex = headersVarPattern
         };
     }
@@ -305,7 +293,7 @@ public class ParametersBuilder
 
         var nullProtectionParams = () => new DbQueryParams()
         {
-            DataModel = new Dictionary<string, string> { { "unlikely_header_to_be_passed", "123" } },
+            DataModel = null,
             QueryParamsRegex = jsonVarRegex
         };
 
@@ -1194,7 +1182,7 @@ public class ParametersBuilder
         var nullProtectionParams = () =>
             new DbQueryParams()
             {
-                DataModel = new Dictionary<string, string> { { "unlikely_header_to_be_passed", "123" } },
+                DataModel = null,
                 QueryParamsRegex = formDataVarRegex
             };
 
@@ -1300,7 +1288,7 @@ public class ParametersBuilder
         {
             return new DbQueryParams()
             {
-                DataModel = new Dictionary<string, string> { { "unlikely_header_to_be_passed", "123" } },
+                DataModel = null,
                 QueryParamsRegex = queryStringVarRegex
             };
         }
@@ -1326,15 +1314,12 @@ public class ParametersBuilder
         }
         else
         {
-            // add custom route with unlikely name to help
-            // set route variables in the SQL query to DbNull.Value
-            // in the event that no route variables were passed
-            // and the user has route variables in the SQL query
-            // which if left unset will cause an error
-            // see explanation of `custom headers` above for more details on why this is needed.
+            // A null DataModel with the regex still allows the query engine to
+            // identify route variable references and set them to DbNull,
+            // preventing SQL exceptions from unresolved variables.
             return new DbQueryParams()
             {
-                DataModel = new Dictionary<string, string> { { "unlikely_route_to_be_passed", "123" } },
+                DataModel = null,
                 QueryParamsRegex = routeVarRegex
             };
         }
