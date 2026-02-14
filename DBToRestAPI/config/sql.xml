@@ -8,7 +8,6 @@
         
         declare @name nvarchar(500) = {{name}};
 
-
         if (@name is null or ltrim(rtrim(@name)) = '')
         begin
             set @name = 'world';
