@@ -199,9 +199,52 @@ public class ParametersBuilder
 
         #endregion
 
+        #region settings vars
+
+        var settingsParams = ExtractSettingsParams();
+        if (settingsParams != null)
+            qParams.Add(settingsParams);
+
+        #endregion
+
         context.Items["parameters"] = qParams;
         return qParams;
 
+    }
+
+    private DbQueryParams? ExtractSettingsParams()
+    {
+        var section = Section;
+        var settingsVarPattern = section.GetValue<string>("settings_variables_pattern");
+        if (string.IsNullOrWhiteSpace(settingsVarPattern))
+            settingsVarPattern = _config.GetValue<string>("regex:settings_variables_pattern");
+        if (string.IsNullOrWhiteSpace(settingsVarPattern))
+            settingsVarPattern = DefaultRegex.DefaultSettingsVariablesPattern;
+
+        var varsSection = _config.GetSection("vars");
+        if (varsSection.Exists() && varsSection.GetChildren().Any())
+        {
+            var varsDict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            foreach (var child in varsSection.GetChildren())
+            {
+                if (child.Value != null)
+                    varsDict.TryAdd(child.Key, child.Value);
+            }
+            if (varsDict.Count > 0)
+            {
+                return new DbQueryParams()
+                {
+                    DataModel = varsDict,
+                    QueryParamsRegex = settingsVarPattern
+                };
+            }
+        }
+
+        return new DbQueryParams()
+        {
+            DataModel = null,
+            QueryParamsRegex = settingsVarPattern
+        };
     }
 
     private DbQueryParams? ExtractAuthParams()
