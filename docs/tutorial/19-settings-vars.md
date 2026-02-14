@@ -1,4 +1,4 @@
-# 20 — Settings Variables
+# 19 — Settings Variables
 
 In earlier topics you learned how to call external APIs from SQL using
 `{http{...}http}` markers.  You probably noticed that API keys and URLs were
@@ -240,6 +240,6 @@ DECLARE @request_id NVARCHAR(100) = {h{X-Request-Id}};
 
 ---
 
-**Next:** [What's Next? →](19-whats-next.md)
+**Next:** [What's Next? →](20-whats-next.md)
 
 **[Back to Tutorial Index](index.md)**

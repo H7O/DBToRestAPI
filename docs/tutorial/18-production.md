@@ -311,6 +311,6 @@ Use this quick reference before going live:
 
 ---
 
-**Next:** [What's Next? →](19-whats-next.md)
+**Next:** [Settings Variables →](19-settings-vars.md)
 
 [← Back to Index](index.md)

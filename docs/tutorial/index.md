@@ -82,14 +82,14 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 |---|-------|-------------------|
 | 16 | [Embedded HTTP Calls](16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
 | 17 | [Multi-Query Chaining](17-multi-query.md) | Cross-database workflows, parameter passing between queries |
-| 20 | [Settings Variables](20-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
+| 19 | [Settings Variables](19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
 
 ### Going to Production
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
 | 18 | [Production & Deployment](18-production.md) | Environment config, TLS, Docker, reverse proxy |
-| 19 | [What's Next?](19-whats-next.md) | Further resources and community |
+| 20 | [What's Next?](20-whats-next.md) | Further resources and community |
 
 ---
 

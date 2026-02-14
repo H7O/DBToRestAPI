@@ -1,4 +1,4 @@
-# 19 — What's Next?
+# 20 — What's Next?
 
 Congratulations — you have worked through the entire DBToRestAPI tutorial, from
 a bare "Hello World" endpoint to multi-query chaining, file management, and
@@ -110,8 +110,8 @@ Here is the full learning path you completed:
 | 16 | [HTTP from SQL](16-http-from-sql.md) | `{http{...}http}`, external API calls |
 | 17 | [Multi-Query Chaining](17-multi-query.md) | Sequential queries, cross-database |
 | 18 | [Production Tips](18-production.md) | Security, encryption, deployment checklist |
-| 19 | What's Next? | ← You are here |
-| 20 | [Settings Variables](20-settings-vars.md) | `{s{}}`, `<vars>` config, encrypted secrets |
+| 19 | [Settings Variables](19-settings-vars.md) | `{s{}}`, `<vars>` config, encrypted secrets |
+| 20 | What's Next? | ← You are here |
 
 ---
 
