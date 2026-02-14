@@ -11,6 +11,7 @@ Parameters can come from multiple sources (checked in this order):
 3. **Request body**: `{"name": "John"}` → `{{name}}` = "John"
 4. **HTTP headers**: `{{Content-Type}}`, `{{Authorization}}`
 5. **JWT claims**: `{auth{email}}`, `{auth{sub}}`
+6. **Settings variables**: `{s{api_key}}`, `{settings{api_url}}` (from `<vars>` in config)
 
 ## Basic Parameter Injection
 
@@ -207,3 +208,4 @@ WHERE id IN (
 - [CRUD Operations](03-crud-operations.md) - Using parameters in queries
 - [Authentication](12-authentication.md) - JWT claim parameters
 - [Query Chaining](14-query-chaining.md) - Parameter passing between queries
+- [Settings Variables](18-settings-vars.md) - Configuration values in queries

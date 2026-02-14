@@ -33,6 +33,7 @@ feature.  Use them when you need quick lookups:
 | Error Handling | [docs/topics/15-error-handling.md](../topics/15-error-handling.md) |
 | Debug Mode | [docs/topics/16-debug-mode.md](../topics/16-debug-mode.md) |
 | Embedded HTTP Calls | [docs/topics/17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) |
+| Settings Variables | [docs/topics/18-settings-vars.md](../topics/18-settings-vars.md) |
 
 ---
 
@@ -110,6 +111,7 @@ Here is the full learning path you completed:
 | 17 | [Multi-Query Chaining](17-multi-query.md) | Sequential queries, cross-database |
 | 18 | [Production Tips](18-production.md) | Security, encryption, deployment checklist |
 | 19 | What's Next? | ← You are here |
+| 20 | [Settings Variables](20-settings-vars.md) | `{s{}}`, `<vars>` config, encrypted secrets |
 
 ---
 

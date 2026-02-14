@@ -82,6 +82,7 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 |---|-------|-------------------|
 | 16 | [Embedded HTTP Calls](16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
 | 17 | [Multi-Query Chaining](17-multi-query.md) | Cross-database workflows, parameter passing between queries |
+| 20 | [Settings Variables](20-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
 
 ### Going to Production
 
@@ -113,6 +114,7 @@ For quick lookups and comprehensive details on any feature, see the [reference t
 - [15-encryption.md](../topics/15-encryption.md) — Encryption reference
 - [16-tls-certificates.md](../topics/16-tls-certificates.md) — TLS/HTTPS setup
 - [17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) — HTTP calls reference
+- [18-settings-vars.md](../topics/18-settings-vars.md) — Settings variables reference
 
 ---
 

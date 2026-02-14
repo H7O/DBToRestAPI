@@ -387,5 +387,5 @@ Failed HTTP calls are logged with status codes and error messages for debugging.
 
 - **SQL injection safe**: HTTP responses are delivered to SQL as **parameterized values** (e.g., `@http_response_1`, `@http_response_2`) via the same parameterization mechanism used for `{{param}}` values. This is equivalent to binding parameters in `sp_executesql` — the response content is **never** concatenated or interpolated into the SQL string. Even a malicious external API response cannot alter query structure or cause SQL injection.
 - `{{param}}` placeholders inside `{http{...}http}` resolve from request parameters and are also parameterized
-- Sensitive credentials in HTTP configurations should use encrypted settings (see [Settings Encryption](15-encryption.md))
+- Sensitive credentials in HTTP configurations should use [settings variables](18-settings-vars.md) with encryption — e.g., `{s{api_key}}` instead of hardcoding secrets (see [Settings Encryption](15-encryption.md))
 - Consider using header parameters (`{{h{Header-Name}}}`) to pass API keys from request headers rather than hardcoding

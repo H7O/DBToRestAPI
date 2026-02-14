@@ -22,6 +22,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML.
 - **Multi-query chaining** — Execute sequential queries across different databases in a single request.
 - **Embedded HTTP calls** — Call external APIs from within your SQL queries.
+- **Settings variables** — Reference encrypted configuration values in queries with `{s{name}}`.
 - **Caching** — In-memory response caching with parameter-aware invalidation.
 - **Pagination** — Automatic `{count, data}` wrapping with `count_query`.
 - **Nested JSON** — Embeds `FOR JSON` results as real JSON, not escaped strings.
@@ -185,7 +186,7 @@ For HTTPS (recommended), you'll need a TLS certificate. For local development, [
 
 ### Step-by-Step Tutorial
 
-The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete contacts API from scratch across 20 topics:
+The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete contacts API from scratch across 21 topics:
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
@@ -209,6 +210,7 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | 17 | [Multi-Query Chaining](docs/tutorial/17-multi-query.md) | Cross-database workflows, parameter passing between queries |
 | 18 | [Production & Deployment](docs/tutorial/18-production.md) | Environment config, TLS, Docker, reverse proxy |
 | 19 | [What's Next?](docs/tutorial/19-whats-next.md) | Further resources and community |
+| 20 | [Settings Variables](docs/tutorial/20-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
 
 ### Reference Documentation
 

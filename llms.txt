@@ -59,6 +59,7 @@ Fetch only what you need:
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
 | Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, auth, retries, microservice calls from SQL |
+| Settings Variables | [18-settings-vars.md](docs/topics/18-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
 
 ## Essential Concepts
 
@@ -67,6 +68,7 @@ Fetch only what you need:
 DECLARE @name NVARCHAR(500) = {{name}};  -- From body, query string, or route
 DECLARE @id UNIQUEIDENTIFIER = {{id}};    -- Route: /users/{{id}}
 DECLARE @email NVARCHAR(500) = {auth{email}};  -- From JWT claims
+DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
 ```
 
 ### Error Handling (SQL → HTTP)
@@ -128,6 +130,21 @@ Client sends: `x-api-key: secret-key-123`
 <authorize><provider>azure_b2c</provider></authorize>
 ```
 Access claims: `{auth{email}}`, `{auth{sub}}`, `{auth{roles}}`
+
+### Settings Variables in HTTP Calls
+```xml
+<!-- settings.xml -->
+<vars>
+  <partner_api_key>secret-key</partner_api_key>
+  <partner_api_url>https://api.partner.com</partner_api_url>
+</vars>
+```
+```sql
+DECLARE @result NVARCHAR(MAX) = {http{
+  {"url": "{s{partner_api_url}}/data", "headers": {"X-API-Key": "{s{partner_api_key}}"}}
+}http};
+```
+Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 
 ### Cross-Database Query Chain
 ```xml
