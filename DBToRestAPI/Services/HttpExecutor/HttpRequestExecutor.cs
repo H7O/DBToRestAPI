@@ -104,6 +104,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
         CancellationToken cancellationToken)
     {
         var retryHandler = new RetryHandler(request.Retry, _options.DefaultRetryAttempts);
+        var effectiveTimeoutSeconds = ResolveEffectiveTimeoutSeconds(request);
         var currentAttempt = 0;
         HttpResponseMessage? lastResponse = null;
         Exception? lastException = null;
@@ -121,7 +122,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
                 var client = GetClient(request);
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                cts.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds));
+                cts.CancelAfter(TimeSpan.FromSeconds(effectiveTimeoutSeconds));
 
                 lastResponse = await client.SendAsync(httpRequest, cts.Token);
 
@@ -167,7 +168,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
                 _logger.LogWarning(
                     "HttpExecutor: Request timeout for {Url} after {Timeout}s",
                     request.Url,
-                    request.TimeoutSeconds);
+                    effectiveTimeoutSeconds);
 
                 if (retryHandler.ShouldRetryOnException(ex, currentAttempt))
                 {
@@ -177,7 +178,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
 
                 stopwatch.Stop();
                 return HttpExecutorResponse.FromError(
-                    $"Request timed out after {request.TimeoutSeconds} seconds",
+                    $"Request timed out after {effectiveTimeoutSeconds} seconds",
                     ex,
                     stopwatch.Elapsed,
                     currentAttempt - 1);
@@ -247,6 +248,21 @@ public class HttpRequestExecutor : IHttpRequestExecutor
         };
 
         return _httpClientFactory.CreateClient(clientName);
+    }
+
+    private int ResolveEffectiveTimeoutSeconds(HttpExecutorRequest request)
+    {
+        if (request.TimeoutSeconds > 0)
+        {
+            return request.TimeoutSeconds;
+        }
+
+        if (_options.DefaultTimeoutSeconds > 0)
+        {
+            return _options.DefaultTimeoutSeconds;
+        }
+
+        return 30;
     }
 
     private void LogRequest(HttpExecutorRequest request, int attempt)

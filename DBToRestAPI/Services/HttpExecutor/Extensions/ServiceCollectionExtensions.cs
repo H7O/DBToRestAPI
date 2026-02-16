@@ -26,14 +26,14 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient("HttpExecutor")
             .ConfigureHttpClient(client =>
             {
-                client.Timeout = TimeSpan.FromSeconds(options.DefaultTimeoutSeconds);
+                client.Timeout = Timeout.InfiniteTimeSpan;
             });
 
         // Client that ignores certificate errors
         services.AddHttpClient("HttpExecutor.IgnoreCerts")
             .ConfigureHttpClient(client =>
             {
-                client.Timeout = TimeSpan.FromSeconds(options.DefaultTimeoutSeconds);
+                client.Timeout = Timeout.InfiniteTimeSpan;
             })
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
@@ -45,7 +45,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient("HttpExecutor.NoRedirect")
             .ConfigureHttpClient(client =>
             {
-                client.Timeout = TimeSpan.FromSeconds(options.DefaultTimeoutSeconds);
+                client.Timeout = Timeout.InfiniteTimeSpan;
             })
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
@@ -56,7 +56,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient("HttpExecutor.IgnoreCerts.NoRedirect")
             .ConfigureHttpClient(client =>
             {
-                client.Timeout = TimeSpan.FromSeconds(options.DefaultTimeoutSeconds);
+                client.Timeout = Timeout.InfiniteTimeSpan;
             })
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
