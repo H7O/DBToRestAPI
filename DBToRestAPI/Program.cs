@@ -10,8 +10,6 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Http;
-using Microsoft.Extensions.Options;
 using System.Data.Common;
 
 
@@ -74,13 +72,11 @@ builder.Services.AddSingleton<IQueryConfigurationParser, QueryConfigurationParse
 
 builder.Services.AddHttpClient();
 
-builder.Services.Configure<HttpClientFactoryOptions>(Options.DefaultName, options =>
-{
-    options.HttpClientActions.Add(client =>
+builder.Services.AddHttpClient("checkCertificateErrors")
+    .ConfigureHttpClient(client =>
     {
         client.Timeout = Timeout.InfiniteTimeSpan;
     });
-});
 
 builder.Services.AddHttpClient("ignoreCertificateErrors", c =>
 {

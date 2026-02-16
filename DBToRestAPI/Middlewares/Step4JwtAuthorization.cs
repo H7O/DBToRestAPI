@@ -172,6 +172,8 @@ namespace DBToRestAPI.Middlewares
 
             var userInfoTimeoutSeconds = routeAuthorizeSection.GetValue<int?>("userinfo_timeout_seconds")
                                          ?? providerSection?.GetValue<int?>("userinfo_timeout_seconds")
+                                         ?? _configuration.GetValue<int?>("authorize:userinfo_timeout_seconds")
+                                         ?? _configuration.GetValue<int?>("userinfo_timeout_seconds")
                                          ?? 30;
             if (userInfoTimeoutSeconds < 1)
                 userInfoTimeoutSeconds = 30;
@@ -666,7 +668,7 @@ namespace DBToRestAPI.Middlewares
                 effectiveCacheDuration,
                 async (ct) =>
                 {
-                    var httpClient = _httpClientFactory.CreateClient();
+                    var httpClient = _httpClientFactory.CreateClient("checkCertificateErrors");
                     var request = new HttpRequestMessage(HttpMethod.Get, discoveryDocument.UserInfoEndpoint);
                     request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
                     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, cancellationToken);

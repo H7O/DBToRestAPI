@@ -386,7 +386,7 @@ namespace DBToRestAPI.Middlewares
 
             using (var client = ignoreCertificateErrors == true
                 ? httpClientFactory.CreateClient("ignoreCertificateErrors")
-                : httpClientFactory.CreateClient()
+                : httpClientFactory.CreateClient("checkCertificateErrors")
                 )
             {
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
