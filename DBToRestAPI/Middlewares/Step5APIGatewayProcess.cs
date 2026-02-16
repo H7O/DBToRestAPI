@@ -376,6 +376,12 @@ namespace DBToRestAPI.Middlewares
             var ignoreCertificateErrors = section.GetValue<bool?>("ignore_target_route_certificate_errors");
             // if no ignore certificate errors for this route, check if there are default ignore certificate errors for all routes
             ignoreCertificateErrors ??= _configuration.GetValue<bool?>("ignore_target_route_certificate_errors");
+
+            var targetRouteTimeoutSeconds = section.GetValue<int?>("target_route_timeout_seconds")
+                ?? _configuration.GetValue<int?>("target_route_timeout_seconds")
+                ?? 30;
+            if (targetRouteTimeoutSeconds < 1)
+                targetRouteTimeoutSeconds = 30;
             #endregion
 
             using (var client = ignoreCertificateErrors == true
@@ -383,7 +389,9 @@ namespace DBToRestAPI.Middlewares
                 : httpClientFactory.CreateClient()
                 )
             {
-                var targetRouteResponse = await client.SendAsync(targetRequestMsg, context.RequestAborted);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+                linkedCts.CancelAfter(TimeSpan.FromSeconds(targetRouteTimeoutSeconds));
+                var targetRouteResponse = await client.SendAsync(targetRequestMsg, linkedCts.Token);
 
                 #region check if we should cache this status code
                 var memorySection = section.GetSection("cache:memory");

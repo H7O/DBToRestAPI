@@ -170,6 +170,12 @@ namespace DBToRestAPI.Middlewares
                                         // ?? _configuration.GetValue<int?>("authorize:userinfo_cache_duration_seconds");
             // Note: If null, cache will default to token expiration time
 
+            var userInfoTimeoutSeconds = routeAuthorizeSection.GetValue<int?>("userinfo_timeout_seconds")
+                                         ?? providerSection?.GetValue<int?>("userinfo_timeout_seconds")
+                                         ?? 30;
+            if (userInfoTimeoutSeconds < 1)
+                userInfoTimeoutSeconds = 30;
+
             if (string.IsNullOrWhiteSpace(authority))
             {
                 _logger.LogError("JWT authority not configured for route `{route}", route);
@@ -422,6 +428,7 @@ namespace DBToRestAPI.Middlewares
                     accessToken,
                     discoveryDocument,
                     userInfoCacheDuration,
+                    userInfoTimeoutSeconds,
                     validatedToken.ValidTo,  // Pass token expiration
                     context.RequestAborted);
 
@@ -623,6 +630,7 @@ namespace DBToRestAPI.Middlewares
             string accessToken,
             Microsoft.IdentityModel.Protocols.OpenIdConnect.OpenIdConnectConfiguration discoveryDocument,
             int? userInfoCacheDuration,
+            int userInfoTimeoutSeconds,
             DateTime tokenExpiration,
             CancellationToken cancellationToken)
         {
@@ -661,13 +669,15 @@ namespace DBToRestAPI.Middlewares
                     var httpClient = _httpClientFactory.CreateClient();
                     var request = new HttpRequestMessage(HttpMethod.Get, discoveryDocument.UserInfoEndpoint);
                     request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
-                    var response = await httpClient.SendAsync(request, ct);
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, cancellationToken);
+                    linkedCts.CancelAfter(TimeSpan.FromSeconds(userInfoTimeoutSeconds));
+                    var response = await httpClient.SendAsync(request, linkedCts.Token);
                     if (!response.IsSuccessStatusCode)
                     {
                         _logger.LogWarning("UserInfo endpoint returned non-success status: {status}", response.StatusCode);
                         return null;
                     }
-                    var content = await response.Content.ReadAsStringAsync(ct);
+                    var content = await response.Content.ReadAsStringAsync(linkedCts.Token);
                     var claims = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(content);
                     return claims;
                 },
