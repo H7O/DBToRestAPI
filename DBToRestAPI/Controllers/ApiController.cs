@@ -435,11 +435,18 @@ namespace DBToRestAPI.Controllers
                     QueryParamsRegex = httpVariablePattern
                 });
             }
+            
+            var internallyReplacedMarkerPattern = @"(?<open_marker>\{http_internally_replaced\{)(?<param>.*?)?(?<close_marker>\}\})";
+            qParams.Add(new DbQueryParams
+            {
+                DataModel = null,
+                QueryParamsRegex = internallyReplacedMarkerPattern
+            });
 
             var dbQueryParams = new DbQueryParams()
             {
                 DataModel = new Dictionary<string, string>(),
-                QueryParamsRegex = @"(?<open_marker>\{http_internally_replaced\{)(?<param>.*?)?(?<close_marker>\}\})"
+                QueryParamsRegex = internallyReplacedMarkerPattern
             };
 
             int count = 0;

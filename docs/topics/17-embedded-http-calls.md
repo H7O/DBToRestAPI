@@ -71,6 +71,8 @@ SELECT * FROM OPENJSON(@external_data);
 
 The JSON inside `{http{...}http}` supports the full HTTP executor configuration:
 
+> If you override `http_variable_pattern` with a custom regex, include inline `(?s)` (Singleline) when your `{http{...}http}` payload spans multiple lines.
+
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `url` | string | Yes | The HTTP endpoint URL |

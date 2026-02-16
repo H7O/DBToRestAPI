@@ -1301,7 +1301,46 @@
       </query>
     </http_call>
 
+<invalid_http_call>
+      <query>
+        <![CDATA[
+        
+        declare @json nvarchar(max) = {http{
+        {
+          "url": "https://localhost:5001/non_existing_endpoint?name={{name}}",
+          "method": "GET",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+        }http};
+        
+        -- do something with @json, e.g., return it to the caller or parse it further, etc..
+        
+        select @json as http_call_response;
+        
+        
+        ]]>
+      </query>
+    </invalid_http_call>
 
+
+  <error_test>
+  <query>
+  <![CDATA[
+    -- this query is to test the error handling of the app, you can call it and see how the app returns the error message and code when an error is thrown from the query
+    throw 50500, 'This is a test error message from the query', 1;
+  ]]>
+</query>
+</error_test>
+<invalid_sql_test>
+  <query>
+  <![CDATA[
+    -- this query is to test the error handling of the app when the sql is invalid and cannot be executed, you can call it and see how the app returns the error message and code when the sql is invalid
+    select * from non_existing_table;
+  ]]>
+</query>
+</invalid_sql_test>
     </queries>
 
 </settings>
