@@ -430,6 +430,18 @@ namespace DBToRestAPI.Controllers
                 return query;
             }
 
+            // Register embedded HTTP marker pattern so unresolved markers (if any)
+            // are parameterized as DbNull by Com.H.Data.Common.
+            // Safe to add even when all calls succeed because no markers remain in the query.
+            if (!qParams.Any(x => string.Equals(x.QueryParamsRegex, httpVariablePattern, StringComparison.Ordinal)))
+            {
+                qParams.Add(new DbQueryParams
+                {
+                    DataModel = null,
+                    QueryParamsRegex = httpVariablePattern
+                });
+            }
+
             var dbQueryParams = new DbQueryParams()
             {
                 DataModel = new Dictionary<string, string>(),
@@ -445,9 +457,21 @@ namespace DBToRestAPI.Controllers
                 httpRequestDetails = httpRequestDetails.Fill(qParams);
 
                 // Execute the HTTP call
-                HttpExecutorResponse response = await this._httpRequestExecutor.ExecuteAsync(
-                    httpRequestDetails, 
-                    this.HttpContext.RequestAborted);
+                HttpExecutorResponse response;
+                try
+                {
+                    response = await this._httpRequestExecutor.ExecuteAsync(
+                        httpRequestDetails,
+                        this.HttpContext.RequestAborted);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Embedded HTTP call threw an exception. The marker will be replaced with NULL in the SQL query.");
+                    // Leave the original marker - it will be replaced with DbNull by Com.H.Data.Common
+                    continue;
+                }
 
                 // Check for HTTP errors and log them
                 if (!response.IsSuccess)
@@ -484,17 +508,6 @@ namespace DBToRestAPI.Controllers
             if (count > 0)
             {
                 qParams.Add(dbQueryParams);
-            }
-            else
-            {
-                // Add an empty variable with marker regex to avoid issues in subsequent processing steps
-                // where the Com.H.Data.Common library won't be able to fill markers that don't 
-                // have values with DbNull since it doesn't know how the markers look like
-                qParams.Add(new DbQueryParams
-                {
-                    DataModel = null,
-                    QueryParamsRegex = httpVariablePattern
-                });
             }
 
             return query;
