@@ -371,19 +371,13 @@ namespace DBToRestAPI.Controllers
                 // else return a generic error message
                 if (_settings.IsDebugMode(Request))
                 {
-
-                    var errorMsg = $"====== exception ======{Environment.NewLine}"
-                        + $"{ex.Message}{Environment.NewLine}{Environment.NewLine}"
-                        + $"====== stack trace ====={Environment.NewLine}"
-                        + $"{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
-
-                    this.Response.ContentType = "query/plain";
-                    this.Response.StatusCode = 500;
-                    await this.Response.WriteAsync(errorMsg);
-                    await this.Response.CompleteAsync();
-                    // IMPORTANT: Return immediately after writing to response to avoid
-                    // the BadRequest below trying to set StatusCode on an already-started response
-                    return new EmptyResult();
+                    return StatusCode(500, new
+                    {
+                        success = false,
+                        message = ex.Message,
+                        stack_trace = ex.StackTrace,
+                        inner_exception = ex.InnerException?.Message
+                    });
                 }
 
                 return BadRequest(new { success = false, message = _settings.GetDefaultGenericErrorMessage() });
