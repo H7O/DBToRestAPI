@@ -180,8 +180,22 @@ The user must have **all** listed scopes (AND logic). In the example above, the 
 | `clock_skew_seconds` | Allowed time drift (default: 300) |
 | `userinfo_fallback_claims` | Fetch missing claims from UserInfo |
 | `userinfo_cache_duration_seconds` | Cache UserInfo responses |
+| `userinfo_timeout_seconds` | Timeout for UserInfo HTTP call (seconds, default: 30) |
 | `required_roles` | Required roles (comma-separated) |
 | `required_scopes` | Required scopes (comma-separated) |
+
+### UserInfo Timeout
+
+When UserInfo fallback is used, outbound UserInfo requests are cancelled after a timeout.
+
+Resolution order:
+1. Endpoint `<authorize><userinfo_timeout_seconds>...</userinfo_timeout_seconds></authorize>`
+2. Provider `userinfo_timeout_seconds` in `auth_providers.xml`
+3. Global `authorize:userinfo_timeout_seconds` (if configured)
+4. Global `userinfo_timeout_seconds` (if configured)
+5. Default: `30` seconds
+
+UserInfo calls also respect request cancellation (`HttpContext.RequestAborted`).
 
 ## Endpoint Overrides
 

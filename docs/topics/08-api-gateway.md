@@ -154,6 +154,26 @@ For development/internal APIs with self-signed certs:
 
 ⚠️ **Never use in production with external APIs**
 
+## Outbound Timeout
+
+API gateway outbound calls are cancelled after a timeout.
+
+Set per-route timeout in seconds:
+
+```xml
+<weather>
+  <url>https://api.weather.com/v1/current</url>
+  <target_route_timeout_seconds>30</target_route_timeout_seconds>
+</weather>
+```
+
+Resolution order:
+1. Route `target_route_timeout_seconds`
+2. Global `target_route_timeout_seconds`
+3. Default: `30` seconds
+
+Outbound calls also respect request cancellation (`HttpContext.RequestAborted`).
+
 ## Complete Example
 
 ```xml

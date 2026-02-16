@@ -53,7 +53,7 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
 | 8 | [API Key Protection](08-api-keys.md) | API key collections, protecting endpoints |
-| 9 | [JWT & OIDC Authentication](09-jwt-auth.md) | Providers, `{auth{email}}`, roles, database-driven authorization |
+| 9 | [JWT & OIDC Authentication](09-jwt-auth.md) | Providers, `{auth{email}}`, roles, database-driven authorization, UserInfo timeout |
 | 10 | [Using Claims in Queries](10-claims-in-queries.md) | Accessing JWT claims in SQL, auto-registration patterns |
 
 ### Performance
@@ -66,7 +66,7 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 12 | [API Gateway](12-api-gateway.md) | Proxy routes, wildcards, protecting gateway routes |
+| 12 | [API Gateway](12-api-gateway.md) | Proxy routes, wildcards, protecting gateway routes, outbound timeout |
 
 ### Databases & Files
 

@@ -49,11 +49,11 @@ Fetch only what you need:
 | Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON |
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
 | Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |
-| API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs |
+| API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs, outbound timeout |
 | File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Local/SFTP, multipart, base64 |
 | File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | Streaming from DB, local, SFTP, HTTP |
 | CORS | [11-cors.md](docs/topics/11-cors.md) | Pattern matching, credentials, preflight |
-| Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0 |
+| Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0, UserInfo timeout |
 | Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
