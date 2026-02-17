@@ -1346,6 +1346,7 @@
             "Content-Type": "application/json"
           }
         }
+        }http};
         
         
         -- do something with @json, e.g., return it to the caller or parse it further, etc..

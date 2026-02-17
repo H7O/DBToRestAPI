@@ -397,17 +397,18 @@ namespace DBToRestAPI.Controllers
             // Look for http regex in `http_variable_pattern` within the section to use for identifying http call variables.
             // If not found, try to get it from the global configuration, and if not found there, use the default pattern.
             var httpVariablePattern = section.GetValue<string?>("http_variable_pattern")
-                ?? this._configuration.GetValue<string?>("http_variable_pattern")
+                ?? this._configuration.GetValue<string?>("regex:http_variable_pattern")
                 ?? Settings.DefaultRegex.DefaultHttpVariablesPattern;
 
-            // Use Singleline mode to allow JSON content to span multiple lines.
             // Use Distinct to avoid executing the same HTTP request multiple times when the same
             // marker appears multiple times in the query. String.Replace will naturally replace
             // all occurrences of the same marker with the result.
+            // Note: No RegexOptions are passed here — matching the behavior of Com.H.Data.Common.
+            // Singleline (dot-matches-newline) is controlled via inline (?s) in the pattern itself,
+            // giving users the choice when overriding http_variable_pattern.
             var matches = System.Text.RegularExpressions.Regex.Matches(
                 query,
-                httpVariablePattern,
-                System.Text.RegularExpressions.RegexOptions.Singleline);
+                httpVariablePattern);
 
             // Get distinct matches by their full value (includes markers + param)
             // This ensures identical HTTP call definitions are only executed once
