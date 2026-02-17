@@ -51,10 +51,10 @@
       
 
       -->
-      
+
       <!-- `<route>` node is optional, if you don't specify it, the query will be accessible by `create_contact` which is the name of the query node. -->
       <route>contacts</route>
-      
+
       <verb>POST</verb>
       <!--  
       `<verb>` node is optional, if you don't specify it and you have only one unique route, the query will be accessible by any HTTP verb.
@@ -104,14 +104,14 @@
 
 
       -->
-      
-      
+
+
 
       <!-- success_status_code is optional, if you don't specify it, the app will return 200 OK -->
       <success_status_code>201</success_status_code>
 
       <query>
-      <![CDATA[
+        <![CDATA[
         declare @name nvarchar(500) = {{name}};
         declare @phone nvarchar(100) = {{phone}};
         declare @active bit = {{active}};
@@ -150,7 +150,7 @@
     ]]>
       </query>
 
-      
+
     </create_contact>
 
 
@@ -160,7 +160,7 @@
     <update_contact>
       <route>contacts/{{id}}</route>
       <verb>PUT</verb>
-      
+
       <mandatory_parameters>id,name,phone</mandatory_parameters>
 
       <connection_string_name>server2</connection_string_name>
@@ -177,7 +177,7 @@
 
 
       <query>
-      <![CDATA[
+        <![CDATA[
 
       -- update contact
       declare @id UNIQUEIDENTIFIER = {{id}};
@@ -222,9 +222,9 @@
       <route>contacts/{{id}}/{{status_action}}</route>
       <verb>PUT</verb>
       <mandatory_parameters>id</mandatory_parameters>
-      
+
       <query>
-      <![CDATA[
+        <![CDATA[
 
       -- update contact
       declare @id UNIQUEIDENTIFIER = {{id}};
@@ -438,10 +438,10 @@
           }
 
 
-      -->      
-      
-      
-      
+      -->
+
+
+
       <query>
         <![CDATA[
         declare @name nvarchar(500) = {{name}};
@@ -500,10 +500,10 @@
         ]]>
       </query>
 
-    </search_contacts_without_count>    
-    
-    
-    
+    </search_contacts_without_count>
+
+
+
 
 
     <!-- Protected endpoint with local API keys (for global keys, use global_api_keys.xml) -->
@@ -737,7 +737,7 @@
         <files_json_field_or_form_field_name>files</files_json_field_or_form_field_name>
 
         <pass_files_content_to_query>false</pass_files_content_to_query>
-<!-- `pass_files_content_to_query` controls whether the uploaded files content is passed to the SQL query
+        <!-- `pass_files_content_to_query` controls whether the uploaded files content is passed to the SQL query
         when set to true, the files content will be included in the query.
         when set to false, only the files metadata will be passed to the query.
         if not defined, the system will check if this tag is defined under `settings` -> `file_management`, if not, it will default to false.
@@ -976,8 +976,8 @@
 
     </create_contact_with_files>
 
-    
-    
+
+
     <download_document_example>
       <route>documents/{{id}}</route>
       <verb>get</verb>
@@ -988,7 +988,7 @@
       <response_structure>file</response_structure>
 
       <mandatory_parameters>id</mandatory_parameters>
-      
+
       <file_management>
         <!-- 
         if `response_structure` is set to `file`, the app will return the file as a download response
@@ -1074,7 +1074,7 @@
           
         ]]>
       </query>
-      
+
 
 
     </download_document_example>
@@ -1089,7 +1089,7 @@
       <cors>
         <!-- regex pattern for localhost or *.example.com -->
         <pattern><![CDATA[^(localhost|.*\.example\.com)$]]></pattern>
-        
+
         <!-- 
         fallback_origin: default cors value if the caller's origin domain doesn't match the regex pattern above,
         or the caller never set the `Origin` header in the request.
@@ -1107,7 +1107,7 @@
         if the caller doesn't send the `Origin` header in the request, the `fallback_origin` value will be used as the `Access-Control-Allow-Origin` header in the response.
         and if the `fallback_origin` is not defined anywhere (here or globally), it will default to `*` (allow all origins).
         -->
-        
+
         <!--
         also there are other optional cors settings that can be defined here or globally such as:
         <max_age>3600</max_age>
@@ -1223,9 +1223,9 @@
         ]]>
       </query>
     </hello_world_auth>
-    
-    
-    
+
+
+
     <!-- Multi-Query Chaining -->
     <hello_world_multi_query>
       <!-- Fallback connection string for queries without explicit connection_string_name attribute -->
@@ -1235,7 +1235,7 @@
       <query>
         <![CDATA[select 'new role' as role_from_query1, 'new user' as user_from_query1;]]>
       </query>
-      
+
       <!-- Query 2: Uses 'server3' (explicit). Receives {{role_from_query1}} and {{user_from_query1}} from Query 1. -->
       <query connection_string_name="server3">
         <![CDATA[
@@ -1252,7 +1252,7 @@
                 
         ]]>
       </query>
-      
+
       <!-- Query 3: Uses 'server2' (fallback). Receives {{json}} array since Query 2 returned multiple rows. -->
       <query>
         <![CDATA[
@@ -1264,15 +1264,15 @@
               from OPENJSON(@roles_json);
         ]]>
       </query>
-      
+
       <!-- 
       Multi-Query Chaining Documentation:
       See MULTI_QUERY_CHAINING.md for complete documentation.
       -->
-      
+
     </hello_world_multi_query>
 
-    
+
     <!-- 
     HTTP call example from within sql.
     -->
@@ -1301,7 +1301,7 @@
       </query>
     </http_call>
 
-<invalid_http_call>
+    <invalid_http_call>
       <query>
         <![CDATA[
         
@@ -1323,24 +1323,56 @@
         ]]>
       </query>
     </invalid_http_call>
+    <semi_invalid_http_call>
+      <query>
+        <![CDATA[
+        -- test the error handling when one of the http calls in the query is invalid,
+        
+        declare @json1 nvarchar(max) = {http{
+        {
+          "url": "https://localhost:5001/non_existing_endpoint?name={{name}}",
+          "method": "GET",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+        }http};
+        
+        declare @json2 nvarchar(max) = {http{
+        {
+          "url": "https://localhost:5001/hello_world?name={{name}}",
+          "method": "GET",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+        
+        
+        -- do something with @json, e.g., return it to the caller or parse it further, etc..
+        
+        select @json1 as http_call_response_1, @json2 as http_call_response_2;
+        
+        
+        ]]>
+      </query>
+    </semi_invalid_http_call>
 
-
-  <error_test>
-  <query>
-  <![CDATA[
-    -- this query is to test the error handling of the app, you can call it and see how the app returns the error message and code when an error is thrown from the query
-    throw 50500, 'This is a test error message from the query', 1;
-  ]]>
-</query>
-</error_test>
-<invalid_sql_test>
-  <query>
-  <![CDATA[
-    -- this query is to test the error handling of the app when the sql is invalid and cannot be executed, you can call it and see how the app returns the error message and code when the sql is invalid
-    select * from non_existing_table;
-  ]]>
-</query>
-</invalid_sql_test>
-    </queries>
+    <error_test>
+      <query>
+        <![CDATA[
+          -- this query is to test the error handling of the app, you can call it and see how the app returns the error message and code when an error is thrown from the query
+          throw 50500, 'This is a test error message from the query', 1;
+        ]]>
+      </query>
+    </error_test>
+    <invalid_sql_test>
+      <query>
+        <![CDATA[
+          -- this query is to test the error handling of the app when the sql is invalid and cannot be executed, you can call it and see how the app returns the error message and code when the sql is invalid
+          select * from non_existing_table;
+        ]]>
+      </query>
+    </invalid_sql_test>
+  </queries>
 
 </settings>
