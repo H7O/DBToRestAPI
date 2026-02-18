@@ -444,6 +444,23 @@ namespace DBToRestAPI.Controllers
                 QueryParamsRegex = internallyReplacedMarkerPattern
             });
 
+            // Phase 1: Prepare all requests (sequential — reads qParams, no mutation)
+            var preparedCalls = distinctMatches.Select((matched, index) =>
+            {
+                var httpRequestDetails = matched.Groups["param"].Value;
+                httpRequestDetails = httpRequestDetails.Fill(qParams);
+                return (Index: index, Match: matched, RequestDetails: httpRequestDetails);
+            }).ToList();
+
+            // Phase 2: Execute all HTTP calls in parallel (fan-out)
+            // All calls share the same cancellation token so they all cancel if the request is aborted.
+            var tasks = preparedCalls.Select(call =>
+                ExecuteSingleEmbeddedHttpCallAsync(call.RequestDetails, this.HttpContext.RequestAborted)
+            ).ToArray();
+
+            var results = await Task.WhenAll(tasks);
+
+            // Phase 3: Apply results to query (sequential — no concurrency concerns)
             var dbQueryParams = new DbQueryParams()
             {
                 DataModel = new Dictionary<string, string>(),
@@ -451,60 +468,25 @@ namespace DBToRestAPI.Controllers
             };
 
             int count = 0;
-            foreach (var matched in distinctMatches)
+            for (int i = 0; i < preparedCalls.Count; i++)
             {
-                var httpRequestDetails = matched.Groups["param"].Value;
-
-                // Fill any variables within the httpRequestDetails using the existing parameters
-                httpRequestDetails = httpRequestDetails.Fill(qParams);
-
-                // Execute the HTTP call
-                HttpExecutorResponse response;
-                try
+                var responseContent = results[i];
+                if (responseContent == null)
                 {
-                    response = await this._httpRequestExecutor.ExecuteAsync(
-                        httpRequestDetails,
-                        this.HttpContext.RequestAborted);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(
-                        ex,
-                        "Embedded HTTP call threw an exception. The marker will be replaced with NULL in the SQL query.");
-                    // Leave the original marker - it will be replaced with DbNull by Com.H.Data.Common
-                    continue;
-                }
-
-                // Check for HTTP errors and log them
-                if (!response.IsSuccess)
-                {
-                    _logger.LogWarning(
-                        "Embedded HTTP call failed with status {StatusCode}: {ErrorMessage}. " +
-                        "The marker will be replaced with NULL in the SQL query.",
-                        response.StatusCode,
-                        response.ErrorMessage);
-                    // Leave the original marker - it will be replaced with DbNull by Com.H.Data.Common
-                    continue;
-                }
-
-                var responseContent = response.ContentAsString;
-                if (string.IsNullOrWhiteSpace(responseContent))
-                {
-                    _logger.LogDebug("Embedded HTTP call returned empty content. Marker will be replaced with NULL.");
+                    // Failed, unsuccessful, or empty — original marker stays for DbNull replacement
                     continue;
                 }
 
                 count++;
                 var placeholderName = $"http_response_{count}";
 
-                // Add variable to the existing qParams so it can be used in the main query
                 (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
                     placeholderName, 
                     responseContent);
 
                 // Replace ALL occurrences of this marker in the query
                 // Since we're iterating over distinct matches, duplicates are handled automatically
-                query = query.Replace(matched.Value, $"{{http_internally_replaced{{{placeholderName}}}}}");
+                query = query.Replace(preparedCalls[i].Match.Value, $"{{http_internally_replaced{{{placeholderName}}}}}");
             }
 
             if (count > 0)
@@ -513,6 +495,50 @@ namespace DBToRestAPI.Controllers
             }
 
             return query;
+        }
+
+        /// <summary>
+        /// Executes a single embedded HTTP call and returns the response content,
+        /// or null if the call failed, was unsuccessful, or returned empty content.
+        /// Designed to be called in parallel via Task.WhenAll — touches no shared state.
+        /// </summary>
+        private async Task<string?> ExecuteSingleEmbeddedHttpCallAsync(
+            string httpRequestDetails,
+            CancellationToken cancellationToken)
+        {
+            HttpExecutorResponse response;
+            try
+            {
+                response = await this._httpRequestExecutor.ExecuteAsync(
+                    httpRequestDetails,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Embedded HTTP call threw an exception. The marker will be replaced with NULL in the SQL query.");
+                return null;
+            }
+
+            if (!response.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "Embedded HTTP call failed with status {StatusCode}: {ErrorMessage}. " +
+                    "The marker will be replaced with NULL in the SQL query.",
+                    response.StatusCode,
+                    response.ErrorMessage);
+                return null;
+            }
+
+            var responseContent = response.ContentAsString;
+            if (string.IsNullOrWhiteSpace(responseContent))
+            {
+                _logger.LogDebug("Embedded HTTP call returned empty content. Marker will be replaced with NULL.");
+                return null;
+            }
+
+            return responseContent;
         }
 
 
