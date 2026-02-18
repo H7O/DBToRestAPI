@@ -389,10 +389,13 @@ namespace DBToRestAPI.Controllers
         }
 
         private async Task<string> PrepareEmbeddedHttpCallsParamsIfAny(
-            string query, 
+            string query,
             List<DbQueryParams> qParams,
             IConfigurationSection section)
         {
+            var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var route = HttpContext.Items.TryGetValue("route", out var r) ? r?.ToString() : "unknown";
+
             // Check if there is an embedded http call within the query to resolve it before executing the main query.
             // Look for http regex in `http_variable_pattern` within the section to use for identifying http call variables.
             // If not found, try to get it from the global configuration, and if not found there, use the default pattern.
@@ -420,6 +423,10 @@ namespace DBToRestAPI.Controllers
                 .DistinctBy(m => m.Value)
                 .ToList();
 
+            _logger.LogDebug(
+                "{Time}: [EmbeddedHTTP] Route: {Route} — Found {Count} distinct {{http{{...}}http}} markers in query (regex match took {ElapsedMs}ms)",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, distinctMatches.Count, overallStopwatch.ElapsedMilliseconds);
+
             if (distinctMatches.Count < 1)
             {
                 return query;
@@ -436,7 +443,7 @@ namespace DBToRestAPI.Controllers
                     QueryParamsRegex = httpVariablePattern
                 });
             }
-            
+
             var internallyReplacedMarkerPattern = @"(?<open_marker>\{http_internally_replaced\{)(?<param>.*?)?(?<close_marker>\}\})";
             qParams.Add(new DbQueryParams
             {
@@ -449,16 +456,32 @@ namespace DBToRestAPI.Controllers
             {
                 var httpRequestDetails = matched.Groups["param"].Value;
                 httpRequestDetails = httpRequestDetails.Fill(qParams);
+                _logger.LogDebug(
+                    "{Time}: [EmbeddedHTTP] Route: {Route} — Prepared call #{Index}: {Details}",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, index,
+                    httpRequestDetails.Length > 500 ? httpRequestDetails[..500] + "..." : httpRequestDetails);
                 return (Index: index, Match: matched, RequestDetails: httpRequestDetails);
             }).ToList();
 
             // Phase 2: Execute all HTTP calls in parallel (fan-out)
             // All calls share the same cancellation token so they all cancel if the request is aborted.
+            _logger.LogDebug(
+                "{Time}: [EmbeddedHTTP] Route: {Route} — Starting {Count} HTTP call(s) in parallel...",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, preparedCalls.Count);
+            var phase2Stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
             var tasks = preparedCalls.Select(call =>
                 ExecuteSingleEmbeddedHttpCallAsync(call.RequestDetails, this.HttpContext.RequestAborted)
             ).ToArray();
 
             var results = await Task.WhenAll(tasks);
+            phase2Stopwatch.Stop();
+
+            _logger.LogDebug(
+                "{Time}: [EmbeddedHTTP] Route: {Route} — All {Count} HTTP call(s) completed in {ElapsedMs}ms. Results: [{ResultSummary}]",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, results.Length, phase2Stopwatch.ElapsedMilliseconds,
+                string.Join(", ", results.Select((res, i) =>
+                    res == null ? $"#{i}=NULL(failed)" : $"#{i}=OK({res.Length} chars)")));
 
             // Phase 3: Apply results to query (sequential — no concurrency concerns)
             var dbQueryParams = new DbQueryParams()
@@ -470,29 +493,50 @@ namespace DBToRestAPI.Controllers
             int count = 0;
             for (int i = 0; i < preparedCalls.Count; i++)
             {
-                var responseContent = results[i];
-                if (responseContent == null)
-                {
-                    // Failed, unsuccessful, or empty — original marker stays for DbNull replacement
-                    continue;
-                }
-
                 count++;
                 var placeholderName = $"http_response_{count}";
+                var responseContent = results[i];
 
-                (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
-                    placeholderName, 
-                    responseContent);
+                if (responseContent != null)
+                {
+                    // Success: add response content to DataModel for parameterization
+                    (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
+                        placeholderName,
+                        responseContent);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} returned NULL. Marker will be replaced with a NULL-mapped placeholder.",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i);
+                    // Don't add to DataModel — the placeholder will have no matching key,
+                    // so Com.H.Data.Common will parameterize it as DbNull.Value.
+                }
 
-                // Replace ALL occurrences of this marker in the query
-                // Since we're iterating over distinct matches, duplicates are handled automatically
+                // ALWAYS replace the original marker — even for failed calls.
+                // This is critical because the original {http{...}http} marker may contain
+                // inner variable references (e.g., {{param}}, {settings{...}}) that get
+                // modified by subsequent pattern processing in Com.H.Data.Common.
+                // If the original marker text is left in the query, the deferred null-param
+                // replacement (String.Replace with the saved original text) will fail to match
+                // the now-modified query text, leaving raw {http{ syntax in the SQL.
                 query = query.Replace(preparedCalls[i].Match.Value, $"{{http_internally_replaced{{{placeholderName}}}}}");
             }
 
-            if (count > 0)
-            {
-                qParams.Add(dbQueryParams);
-            }
+            // Always add the DataModel params entry — it may contain only successful responses,
+            // but failed responses' placeholders (not in DataModel) will be parameterized as DbNull.
+            qParams.Add(dbQueryParams);
+
+            overallStopwatch.Stop();
+
+            // Check if any unresolved {http{ markers remain (should be none after the fix)
+            bool hasUnresolvedMarkers = query.Contains("{http{");
+            var successCount = results.Count(r => r != null);
+            _logger.LogDebug(
+                "{Time}: [EmbeddedHTTP] Route: {Route} — Phase 3 complete. {SuccessCount}/{TotalCount} calls succeeded. " +
+                "All markers replaced with placeholders. Unresolved {{http{{}} markers remaining: {HasUnresolved}. Total embedded HTTP processing time: {ElapsedMs}ms",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, successCount, preparedCalls.Count,
+                hasUnresolvedMarkers, overallStopwatch.ElapsedMilliseconds);
 
             return query;
         }
@@ -506,6 +550,21 @@ namespace DBToRestAPI.Controllers
             string httpRequestDetails,
             CancellationToken cancellationToken)
         {
+            var callStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            // Extract URL from the JSON config for logging (best-effort)
+            string urlForLog = "(unknown)";
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(httpRequestDetails);
+                if (doc.RootElement.TryGetProperty("url", out var urlProp))
+                    urlForLog = urlProp.GetString() ?? "(null)";
+            }
+            catch { /* ignore parse errors for logging */ }
+
+            _logger.LogDebug(
+                "{Time}: [EmbeddedHTTP] Starting call to: {Url}",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog);
+
             HttpExecutorResponse response;
             try
             {
@@ -515,28 +574,38 @@ namespace DBToRestAPI.Controllers
             }
             catch (Exception ex)
             {
+                callStopwatch.Stop();
                 _logger.LogWarning(
                     ex,
-                    "Embedded HTTP call threw an exception. The marker will be replaced with NULL in the SQL query.");
+                    "{Time}: [EmbeddedHTTP] Call to {Url} threw {ExType} after {ElapsedMs}ms. The marker will be replaced with NULL in the SQL query.",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, ex.GetType().Name, callStopwatch.ElapsedMilliseconds);
                 return null;
             }
+
+            callStopwatch.Stop();
 
             if (!response.IsSuccess)
             {
                 _logger.LogWarning(
-                    "Embedded HTTP call failed with status {StatusCode}: {ErrorMessage}. " +
+                    "{Time}: [EmbeddedHTTP] Call to {Url} failed with status {StatusCode}: {ErrorMessage} (took {ElapsedMs}ms). " +
                     "The marker will be replaced with NULL in the SQL query.",
-                    response.StatusCode,
-                    response.ErrorMessage);
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, response.StatusCode,
+                    response.ErrorMessage, callStopwatch.ElapsedMilliseconds);
                 return null;
             }
 
             var responseContent = response.ContentAsString;
             if (string.IsNullOrWhiteSpace(responseContent))
             {
-                _logger.LogDebug("Embedded HTTP call returned empty content. Marker will be replaced with NULL.");
+                _logger.LogDebug(
+                    "{Time}: [EmbeddedHTTP] Call to {Url} returned empty content (took {ElapsedMs}ms). Marker will be replaced with NULL.",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, callStopwatch.ElapsedMilliseconds);
                 return null;
             }
+
+            _logger.LogDebug(
+                "{Time}: [EmbeddedHTTP] Call to {Url} succeeded with {ContentLength} chars (took {ElapsedMs}ms)",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, responseContent.Length, callStopwatch.ElapsedMilliseconds);
 
             return responseContent;
         }
@@ -596,6 +665,18 @@ namespace DBToRestAPI.Controllers
                 }
 
                 query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
+
+                // Diagnostic: check if unresolved {http{ markers remain before SQL execution
+                if (query.Contains("{http{"))
+                {
+                    _logger.LogError(
+                        "{Time}: [SQL-PRE-EXEC] Route: {Route} — WARNING: Query still contains unresolved {{http{{}} markers before SQL execution! " +
+                        "This will cause SQL syntax errors. qParams count: {ParamCount}, qParams regexes: [{Regexes}]",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                        HttpContext.Items.TryGetValue("route", out var preRoute) ? preRoute : "unknown",
+                        qParams.Count,
+                        string.Join("; ", qParams.Select((p, i) => $"#{i}: regex='{(p.QueryParamsRegex?.Length > 60 ? p.QueryParamsRegex[..60] + "..." : p.QueryParamsRegex)}' hasData={p.DataModel != null}")));
+                }
 
                 var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: dbCommandTimeout, cToken: HttpContext.RequestAborted);
                 // perhaps here is the right place to register for disposal

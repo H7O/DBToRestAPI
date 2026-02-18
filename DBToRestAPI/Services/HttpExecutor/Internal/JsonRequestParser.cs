@@ -42,7 +42,9 @@ internal static class JsonRequestParser
 
         var method = element.GetPropertyOrDefault("method")?.GetString() ?? "GET";
         var contentType = element.GetPropertyOrDefault("content_type")?.GetString() ?? "application/json";
-        var timeoutSeconds = element.GetPropertyOrDefault("timeout_seconds")?.GetInt32() ?? 30;
+        var timeoutSeconds = element.GetPropertyOrDefault("timeout_seconds")?.GetInt32()
+            ?? element.GetPropertyOrDefault("timeout")?.GetInt32()
+            ?? 30;
         var ignoreCertErrors = element.GetPropertyOrDefault("ignore_certificate_errors")?.GetBoolean() ?? false;
         var followRedirects = element.GetPropertyOrDefault("follow_redirects")?.GetBoolean() ?? true;
         var bodyRaw = element.GetPropertyOrDefault("body_raw")?.GetString();
