@@ -1390,6 +1390,43 @@
       </query>
     </timeout_test>
 
+    <!-- Two embedded HTTP calls to slow_endpoint, each with a 5-second timeout.
+         Currently (sequential execution): total time ≈ 10s (5s + 5s).
+         After parallel refactor: total time should drop to ≈ 5s.
+         Use this endpoint as a benchmark when upgrading to parallel execution:
+           curl -k https://localhost:7054/parallel_timeout_test -H "debug-mode: 54321"
+         Measure total response time to verify parallelism.
+         Note: URLs must differ (e.g. ?call=1 vs ?call=2) to avoid deduplication
+         by DistinctBy in PrepareEmbeddedHttpCallsParamsIfAny. -->
+    <parallel_timeout_test>
+      <query>
+        <![CDATA[
+        declare @json1 nvarchar(max) = {http{
+        {
+          "url": "https://localhost:7054/slow_endpoint?call=1",
+          "method": "GET",
+          "timeout_seconds": 5,
+          "ignore_certificate_errors": true
+        }
+        }http};
+
+        declare @json2 nvarchar(max) = {http{
+        {
+          "url": "https://localhost:7054/slow_endpoint?call=2",
+          "method": "GET",
+          "timeout_seconds": 5,
+          "ignore_certificate_errors": true
+        }
+        }http};
+
+        select
+          @json1 as slow_call_1,
+          @json2 as slow_call_2,
+          'sequential: ~10s, parallel: ~5s' as expected_timing;
+        ]]>
+      </query>
+    </parallel_timeout_test>
+
     <error_test>
       <query>
         <![CDATA[
