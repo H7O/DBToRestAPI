@@ -106,6 +106,12 @@ public class HttpRequestExecutor : IHttpRequestExecutor
         var retryHandler = new RetryHandler(request.Retry, _options.DefaultRetryAttempts);
         var effectiveTimeoutSeconds = ResolveEffectiveTimeoutSeconds(request);
         var currentAttempt = 0;
+
+        _logger.LogDebug(
+            "HttpExecutor: Starting request {Method} {Url} with effective timeout {TimeoutSeconds}s",
+            request.Method,
+            request.Url,
+            effectiveTimeoutSeconds);
         HttpResponseMessage? lastResponse = null;
         Exception? lastException = null;
 
@@ -155,7 +161,11 @@ public class HttpRequestExecutor : IHttpRequestExecutor
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 stopwatch.Stop();
-                _logger.LogWarning("HttpExecutor: Request cancelled for {Url}", request.Url);
+                _logger.LogWarning(
+                    "HttpExecutor: Request cancelled for {Url} after {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
+                    request.Url,
+                    stopwatch.ElapsedMilliseconds,
+                    effectiveTimeoutSeconds);
                 return HttpExecutorResponse.FromError(
                     "Request was cancelled",
                     null,
@@ -166,8 +176,9 @@ public class HttpRequestExecutor : IHttpRequestExecutor
             {
                 lastException = ex;
                 _logger.LogWarning(
-                    "HttpExecutor: Request timeout for {Url} after {Timeout}s",
+                    "HttpExecutor: Request timeout for {Url} after {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
                     request.Url,
+                    stopwatch.ElapsedMilliseconds,
                     effectiveTimeoutSeconds);
 
                 if (retryHandler.ShouldRetryOnException(ex, currentAttempt))
@@ -186,7 +197,12 @@ public class HttpRequestExecutor : IHttpRequestExecutor
             catch (HttpRequestException ex)
             {
                 lastException = ex;
-                _logger.LogError(ex, "HttpExecutor: Request failed for {Url}", request.Url);
+                _logger.LogError(
+                    ex,
+                    "HttpExecutor: Request failed for {Url} after {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
+                    request.Url,
+                    stopwatch.ElapsedMilliseconds,
+                    effectiveTimeoutSeconds);
 
                 if (retryHandler.ShouldRetryOnException(ex, currentAttempt))
                 {
@@ -301,6 +317,13 @@ public class HttpRequestExecutor : IHttpRequestExecutor
             (int)response.StatusCode,
             response.ReasonPhrase,
             elapsed.TotalMilliseconds.ToString("F0"));
+
+        _logger.LogDebug(
+            "HttpExecutor: {Method} {Url} completed in {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
+            request.Method,
+            request.Url,
+            elapsed.TotalMilliseconds.ToString("F1"),
+            ResolveEffectiveTimeoutSeconds(request));
     }
 
     private string RedactSensitiveHeaders(Dictionary<string, string> headers)

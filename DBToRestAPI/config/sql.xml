@@ -1358,6 +1358,38 @@
       </query>
     </semi_invalid_http_call>
 
+    <!-- A deliberately slow endpoint that waits 60 seconds before returning.
+         Used as a target for timeout testing. -->
+    <slow_endpoint>
+      <query>
+        <![CDATA[
+        waitfor delay '00:01:00';
+        select 'slow response complete' as result;
+        ]]>
+      </query>
+    </slow_endpoint>
+
+    <!-- Calls slow_endpoint via embedded HTTP with a 5-second timeout.
+         Expected behavior: the embedded call should time out after ~5s,
+         the marker gets replaced with NULL, and the query returns quickly.
+         Use: curl -k https://localhost:7054/timeout_test -H "debug-mode: 54321" -->
+    <timeout_test>
+      <query>
+        <![CDATA[
+        declare @json nvarchar(max) = {http{
+        {
+          "url": "https://localhost:7054/slow_endpoint",
+          "method": "GET",
+          "timeout_seconds": 5,
+          "ignore_certificate_errors": true
+        }
+        }http};
+
+        select @json as slow_call_response, 'timeout should have fired after ~5s' as note;
+        ]]>
+      </query>
+    </timeout_test>
+
     <error_test>
       <query>
         <![CDATA[
