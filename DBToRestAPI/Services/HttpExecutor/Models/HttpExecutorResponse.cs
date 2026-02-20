@@ -158,4 +158,91 @@ public class HttpExecutorResponse
             RetryAttempts = retryAttempts
         };
     }
+
+    /// <summary>
+    /// Serializes this response into a structured JSON string with the shape:
+    /// <code>
+    /// {
+    ///   "status_code": 200,
+    ///   "headers": { "Content-Type": "application/json", ... },
+    ///   "data": { ... },
+    ///   "error": null
+    /// }
+    /// </code>
+    /// <para>
+    /// Headers are merged from both response headers and content headers.
+    /// Multi-value headers are joined with ", " (per HTTP spec).
+    /// </para>
+    /// <para>
+    /// The <c>data</c> field is a parsed JSON value when the content is valid JSON,
+    /// a plain string when it is not, or <c>null</c> when the response body is empty
+    /// (e.g., network failures, timeouts, or empty 204 responses).
+    /// </para>
+    /// <para>
+    /// The <c>error</c> field is <c>null</c> when a server response was received
+    /// (regardless of status code — the server's error details are in <c>data</c>).
+    /// It is populated with <c>{"message": "..."}</c> only when <c>status_code</c>
+    /// is <c>0</c> — i.e., the request failed before reaching the server
+    /// (timeout, DNS, network, SSL, etc.).
+    /// </para>
+    /// </summary>
+    public string ToStructuredJson()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new Utf8JsonWriter(stream);
+
+        writer.WriteStartObject();
+
+        // status_code
+        writer.WriteNumber("status_code", StatusCode);
+
+        // headers — merge response headers + content headers, flatten multi-values
+        writer.WritePropertyName("headers");
+        writer.WriteStartObject();
+        foreach (var header in Headers)
+            writer.WriteString(header.Key, string.Join(", ", header.Value));
+        foreach (var header in ContentHeaders)
+            writer.WriteString(header.Key, string.Join(", ", header.Value));
+        writer.WriteEndObject();
+
+        // data — parsed JSON if possible, string otherwise, null if empty
+        writer.WritePropertyName("data");
+        var contentString = Content.Length > 0 ? ContentAsString : null;
+        if (contentString != null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(contentString);
+                doc.RootElement.WriteTo(writer);
+            }
+            catch
+            {
+                // Not valid JSON — write as a plain string value
+                writer.WriteStringValue(contentString);
+            }
+        }
+        else
+        {
+            writer.WriteNullValue();
+        }
+
+        // error — populated only for infrastructure failures (status_code == 0),
+        // null when a server response was received (even 4xx/5xx)
+        writer.WritePropertyName("error");
+        if (StatusCode == 0 && !string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("message", ErrorMessage);
+            writer.WriteEndObject();
+        }
+        else
+        {
+            writer.WriteNullValue();
+        }
+
+        writer.WriteEndObject();
+        writer.Flush();
+
+        return Encoding.UTF8.GetString(stream.ToArray());
+    }
 }

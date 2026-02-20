@@ -72,8 +72,8 @@ Use `{s{name}}` (short) or `{settings{name}}` (long) — both work identically:
     }http};
 
     SELECT
-      JSON_VALUE(@weather, '$.current.temp_c') AS temperature,
-      JSON_VALUE(@weather, '$.current.condition.text') AS condition;
+      JSON_VALUE(@weather, '$.data.current.temp_c') AS temperature,
+      JSON_VALUE(@weather, '$.data.current.condition.text') AS condition;
   ]]></query>
 </weather_lookup>
 ```
@@ -147,12 +147,13 @@ stored safely in config:
       }
     }http};
 
-    IF @payment IS NULL
+    DECLARE @status INT = CAST(JSON_VALUE(@payment, '$.status_code') AS INT);
+    IF @status = 0 OR @status >= 500
       THROW 50502, 'Payment service unavailable', 1;
 
     INSERT INTO payments (intent_id, amount, currency, customer_id, status)
     VALUES (
-      JSON_VALUE(@payment, '$.id'),
+      JSON_VALUE(@payment, '$.data.id'),
       {{amount}},
       {{currency}},
       {{customer_id}},
@@ -160,8 +161,8 @@ stored safely in config:
     );
 
     SELECT
-      JSON_VALUE(@payment, '$.id') AS payment_intent_id,
-      JSON_VALUE(@payment, '$.client_secret') AS client_secret;
+      JSON_VALUE(@payment, '$.data.id') AS payment_intent_id,
+      JSON_VALUE(@payment, '$.data.client_secret') AS client_secret;
   ]]></query>
 </create_payment>
 ```

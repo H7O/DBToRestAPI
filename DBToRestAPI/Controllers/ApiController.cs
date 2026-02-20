@@ -480,8 +480,7 @@ namespace DBToRestAPI.Controllers
             _logger.LogDebug(
                 "{Time}: [EmbeddedHTTP] Route: {Route} — All {Count} HTTP call(s) completed in {ElapsedMs}ms. Results: [{ResultSummary}]",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, results.Length, phase2Stopwatch.ElapsedMilliseconds,
-                string.Join(", ", results.Select((res, i) =>
-                    res == null ? $"#{i}=NULL(failed)" : $"#{i}=OK({res.Length} chars)")));
+                string.Join(", ", results.Select((res, i) => $"#{i}={res.Length} chars")));
 
             // Phase 3: Apply results to query (sequential — no concurrency concerns)
             var dbQueryParams = new DbQueryParams()
@@ -495,25 +494,14 @@ namespace DBToRestAPI.Controllers
             {
                 count++;
                 var placeholderName = $"http_response_{count}";
-                var responseContent = results[i];
+                var structuredJson = results[i];
 
-                if (responseContent != null)
-                {
-                    // Success: add response content to DataModel for parameterization
-                    (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
-                        placeholderName,
-                        responseContent);
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} returned NULL. Marker will be replaced with a NULL-mapped placeholder.",
-                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i);
-                    // Don't add to DataModel — the placeholder will have no matching key,
-                    // so Com.H.Data.Common will parameterize it as DbNull.Value.
-                }
+                // Always populate — structured JSON is never null (contains status_code, headers, data)
+                (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
+                    placeholderName,
+                    structuredJson);
 
-                // ALWAYS replace the original marker — even for failed calls.
+                // Replace the original marker with an internally-replaced placeholder.
                 // This is critical because the original {http{...}http} marker may contain
                 // inner variable references (e.g., {{param}}, {settings{...}}) that get
                 // modified by subsequent pattern processing in Com.H.Data.Common.
@@ -523,30 +511,28 @@ namespace DBToRestAPI.Controllers
                 query = query.Replace(preparedCalls[i].Match.Value, $"{{http_internally_replaced{{{placeholderName}}}}}");
             }
 
-            // Always add the DataModel params entry — it may contain only successful responses,
-            // but failed responses' placeholders (not in DataModel) will be parameterized as DbNull.
             qParams.Add(dbQueryParams);
 
             overallStopwatch.Stop();
 
-            // Check if any unresolved {http{ markers remain (should be none after the fix)
+            // Check if any unresolved {http{ markers remain (should be none)
             bool hasUnresolvedMarkers = query.Contains("{http{");
-            var successCount = results.Count(r => r != null);
             _logger.LogDebug(
-                "{Time}: [EmbeddedHTTP] Route: {Route} — Phase 3 complete. {SuccessCount}/{TotalCount} calls succeeded. " +
+                "{Time}: [EmbeddedHTTP] Route: {Route} — Phase 3 complete. {TotalCount} call(s) resolved to structured JSON. " +
                 "All markers replaced with placeholders. Unresolved {{http{{}} markers remaining: {HasUnresolved}. Total embedded HTTP processing time: {ElapsedMs}ms",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, successCount, preparedCalls.Count,
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, preparedCalls.Count,
                 hasUnresolvedMarkers, overallStopwatch.ElapsedMilliseconds);
 
             return query;
         }
 
         /// <summary>
-        /// Executes a single embedded HTTP call and returns the response content,
-        /// or null if the call failed, was unsuccessful, or returned empty content.
+        /// Executes a single embedded HTTP call and returns a structured JSON response
+        /// containing status_code, headers, and data. Always returns a valid JSON string —
+        /// never returns null.
         /// Designed to be called in parallel via Task.WhenAll — touches no shared state.
         /// </summary>
-        private async Task<string?> ExecuteSingleEmbeddedHttpCallAsync(
+        private async Task<string> ExecuteSingleEmbeddedHttpCallAsync(
             string httpRequestDetails,
             CancellationToken cancellationToken)
         {
@@ -577,37 +563,37 @@ namespace DBToRestAPI.Controllers
                 callStopwatch.Stop();
                 _logger.LogWarning(
                     ex,
-                    "{Time}: [EmbeddedHTTP] Call to {Url} threw {ExType} after {ElapsedMs}ms. The marker will be replaced with NULL in the SQL query.",
+                    "{Time}: [EmbeddedHTTP] Call to {Url} threw {ExType} after {ElapsedMs}ms. Structured response will have status_code=0 and data=null.",
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, ex.GetType().Name, callStopwatch.ElapsedMilliseconds);
-                return null;
+                // Build a synthetic error response so we always return structured JSON
+                response = HttpExecutorResponse.FromError(
+                    ex.Message,
+                    ex,
+                    callStopwatch.Elapsed,
+                    0);
             }
 
             callStopwatch.Stop();
 
+            var structuredJson = response.ToStructuredJson();
+
             if (!response.IsSuccess)
             {
                 _logger.LogWarning(
-                    "{Time}: [EmbeddedHTTP] Call to {Url} failed with status {StatusCode}: {ErrorMessage} (took {ElapsedMs}ms). " +
-                    "The marker will be replaced with NULL in the SQL query.",
+                    "{Time}: [EmbeddedHTTP] Call to {Url} returned status {StatusCode} (took {ElapsedMs}ms). " +
+                    "Structured response delivered to SQL — query author can inspect $.status_code.",
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, response.StatusCode,
-                    response.ErrorMessage, callStopwatch.ElapsedMilliseconds);
-                return null;
+                    callStopwatch.ElapsedMilliseconds);
             }
-
-            var responseContent = response.ContentAsString;
-            if (string.IsNullOrWhiteSpace(responseContent))
+            else
             {
                 _logger.LogDebug(
-                    "{Time}: [EmbeddedHTTP] Call to {Url} returned empty content (took {ElapsedMs}ms). Marker will be replaced with NULL.",
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, callStopwatch.ElapsedMilliseconds);
-                return null;
+                    "{Time}: [EmbeddedHTTP] Call to {Url} succeeded with status {StatusCode} ({ContentLength} chars, took {ElapsedMs}ms)",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, response.StatusCode,
+                    structuredJson.Length, callStopwatch.ElapsedMilliseconds);
             }
 
-            _logger.LogDebug(
-                "{Time}: [EmbeddedHTTP] Call to {Url} succeeded with {ContentLength} chars (took {ElapsedMs}ms)",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, responseContent.Length, callStopwatch.ElapsedMilliseconds);
-
-            return responseContent;
+            return structuredJson;
         }
 
 

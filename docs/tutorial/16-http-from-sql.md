@@ -20,7 +20,33 @@ DECLARE @response NVARCHAR(MAX) = {http{
 2. It resolves any `{{param}}` placeholders inside them from the incoming request
 3. It executes the HTTP requests **before** running the SQL
 4. Each marker is replaced with a **parameterized SQL variable** (e.g., `@http_response_1`)
-5. The SQL executes with the HTTP response safely available as that variable
+5. The variable contains a **structured JSON string** with `status_code`, `headers`, and `data`
+6. The SQL executes with the full HTTP response available as that variable
+
+### Structured Response Format
+
+Every embedded HTTP call — whether it succeeds or fails — produces a JSON string with this shape:
+
+```json
+{
+  "status_code": 200,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Request-Id": "abc-123"
+  },
+  "data": { ... },
+  "error": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status_code` | int | The HTTP status code. `0` if the request never reached the server (network error, DNS failure, timeout). |
+| `headers` | object | All response headers (response + content headers combined). |
+| `data` | any | The response body — parsed as a JSON object/array if valid JSON, a plain string if not, or `null` if empty. |
+| `error` | object\|null | `null` when a server response was received (even 4xx/5xx). Contains `{"message": "..."}` only when `status_code` is `0` — e.g., `"Request timed out after 30 seconds"` or `"Host not found: api.example.com"`. |
+
+This means you **always** get a result back — you never have to guess whether the call failed or why. Check `$.status_code` to decide what to do, and `$.error.message` to understand infrastructure failures.
 
 > **For DB Admins — how parameters are bound**: The HTTP response is **never** pasted or concatenated into your SQL string. Instead, it works exactly like `sp_executesql` parameter binding:
 >
@@ -29,7 +55,7 @@ DECLARE @response NVARCHAR(MAX) = {http{
 > EXEC sp_executesql
 >   N'DECLARE @response NVARCHAR(MAX) = @http_response_1; SELECT ...',
 >   N'@http_response_1 NVARCHAR(MAX)',
->   @http_response_1 = '{"name": "John", "age": 30}';  -- bound, not concatenated
+>   @http_response_1 = '{"status_code":200,"headers":{...},"data":{"name":"John","age":30}}';  -- bound, not concatenated
 > ```
 >
 > This means even if an external API returns something malicious like `'; DROP TABLE users; --`, it is treated as a **value**, not as SQL code. The same protection you trust with `sp_executesql` parameters applies here.
@@ -53,11 +79,21 @@ DECLARE @response NVARCHAR(MAX) = {http{
     -- Combine with database data
     DECLARE @id UNIQUEIDENTIFIER = {{id}};
 
+    -- Check if the weather API responded successfully
+    IF JSON_VALUE(@weather, '$.status_code') != '200'
+    BEGIN
+      -- API failed — return contact data without weather
+      SELECT c.name, c.phone, NULL AS temperature, 'Unavailable' AS weather
+      FROM contacts c WHERE c.id = @id;
+      RETURN;
+    END
+
+    -- Combine with database data — response body is under $.data
     SELECT 
       c.name,
       c.phone,
-      JSON_VALUE(@weather, '$.current.temp_c') AS temperature,
-      JSON_VALUE(@weather, '$.current.condition.text') AS weather
+      JSON_VALUE(@weather, '$.data.current.temp_c') AS temperature,
+      JSON_VALUE(@weather, '$.data.current.condition.text') AS weather
     FROM contacts c
     WHERE c.id = @id;
     ]]>
@@ -158,14 +194,22 @@ Validate an email address against an external service before creating a user:
       }
     }http};
 
-    -- Step 2: Check validation result
-    IF JSON_VALUE(@validation, '$.is_valid') = 'false'
+    -- Step 2: Check the API responded successfully
+    DECLARE @status INT = CAST(JSON_VALUE(@validation, '$.status_code') AS INT);
+    IF @status = 0 OR @status >= 500
+    BEGIN
+      THROW 50502, 'Email validation service unavailable', 1;
+      RETURN;
+    END
+
+    -- Step 3: Check validation result (response body is under $.data)
+    IF JSON_VALUE(@validation, '$.data.is_valid') = 'false'
     BEGIN
       THROW 50400, 'Invalid email address', 1;
       RETURN;
     END
 
-    -- Step 3: Create the user
+    -- Step 4: Create the user
     INSERT INTO users (email, name, email_verified)
     VALUES ({{email}}, {{name}}, 1);
 
@@ -195,36 +239,45 @@ DECLARE @news NVARCHAR(MAX) = {http{
 }http};
 
 SELECT 
-  JSON_VALUE(@weather, '$.temperature') AS temp,
-  JSON_VALUE(@news, '$.articles[0].title') AS top_headline;
+  JSON_VALUE(@weather, '$.data.temperature') AS temp,
+  JSON_VALUE(@news, '$.data.articles[0].title') AS top_headline,
+  JSON_VALUE(@weather, '$.status_code') AS weather_api_status,
+  JSON_VALUE(@news, '$.status_code') AS news_api_status;
 ```
 
 ## Parsing the Response
 
-Since HTTP responses are typically JSON, use SQL Server's JSON functions:
+The response body lives under `$.data`. Since external APIs typically return JSON, use SQL Server's JSON functions to dig into it:
 
 ```sql
--- Single value
-SELECT JSON_VALUE(@response, '$.name') AS name;
+-- First, always check the status
+DECLARE @status INT = CAST(JSON_VALUE(@response, '$.status_code') AS INT);
+
+-- Single value from the response body
+SELECT JSON_VALUE(@response, '$.data.name') AS name;
 
 -- Nested value
-SELECT JSON_VALUE(@response, '$.address.city') AS city;
+SELECT JSON_VALUE(@response, '$.data.address.city') AS city;
 
 -- Array element
-SELECT JSON_VALUE(@response, '$.items[0].id') AS first_item_id;
+SELECT JSON_VALUE(@response, '$.data.items[0].id') AS first_item_id;
 
 -- Parse array into rows
-SELECT * FROM OPENJSON(@response, '$.items')
+SELECT * FROM OPENJSON(@response, '$.data.items')
 WITH (
   id INT '$.id',
   name NVARCHAR(100) '$.name',
   price DECIMAL(10,2) '$.price'
 );
+
+-- Access response headers (e.g., pagination, rate limits)
+SELECT JSON_VALUE(@response, '$.headers.X-Total-Count') AS total_items;
+SELECT JSON_VALUE(@response, '$.headers.X-RateLimit-Remaining') AS rate_limit_left;
 ```
 
 ## Error Handling
 
-If the HTTP call fails (timeout, connection error, non-2xx response), the variable receives the error response or `NULL`. Handle this gracefully:
+Every embedded HTTP call **always** returns a structured JSON string — it never returns `NULL`. You can inspect `$.status_code` to know exactly what happened:
 
 ```sql
 DECLARE @response NVARCHAR(MAX) = {http{
@@ -234,14 +287,48 @@ DECLARE @response NVARCHAR(MAX) = {http{
   }
 }http};
 
-IF @response IS NULL
+DECLARE @status INT = CAST(JSON_VALUE(@response, '$.status_code') AS INT);
+
+-- status_code = 0 means the request never reached the server
+-- (network error, DNS failure, timeout, etc.)
+-- Check $.error.message for the specific reason
+IF @status = 0
 BEGIN
-  -- External API unavailable — return cached/default data
-  SELECT * FROM cached_data;
-  RETURN;
+  DECLARE @err NVARCHAR(500) = JSON_VALUE(@response, '$.error.message');
+  -- e.g., "Request timed out after 10 seconds"
+  -- or  "Host not found: api.example.com"
+  -- or  "Connection refused - the server may be down"
+  THROW 50502, @err, 1;
 END
 
--- Normal processing with @response...
+-- Handle specific error scenarios
+IF @status = 401 OR @status = 403
+  THROW 50401, 'External API authentication failed', 1;
+
+IF @status = 429
+  THROW 50429, 'External API rate limit exceeded — try again later', 1;
+
+IF @status < 200 OR @status >= 300
+  THROW 50502, 'External API returned an error', 1;
+
+-- Success — process the response body
+SELECT * FROM OPENJSON(@response, '$.data');
+```
+
+### Quick Reference: Status Codes
+
+| `$.status_code` | What it means |
+|-----------------|---------------|
+| `0` | Request never reached the server (DNS error, timeout, network failure). Check `$.error.message` for details. |
+| `200`–`299` | Success — `$.data` has the response body |
+| `400`–`499` | Client error — `$.data` may have error details from the server |
+| `500`–`599` | Server error — `$.data` may have error details from the server |
+
+You can also read response headers to make smarter decisions:
+
+```sql
+-- Check if the server told us to retry later
+DECLARE @retry_after NVARCHAR(50) = JSON_VALUE(@response, '$.headers.Retry-After');
 ```
 
 ## Conditional Usage with IF Blocks
@@ -264,7 +351,9 @@ BEGIN
       }
     }http};
 
-    SET @lookup_result = JSON_VALUE(@api_response, '$.name');
+    -- Only use the result if the API returned 2xx
+    IF CAST(JSON_VALUE(@api_response, '$.status_code') AS INT) BETWEEN 200 AND 299
+      SET @lookup_result = JSON_VALUE(@api_response, '$.data.name');
 END
 
 -- @lookup_result is NULL if emirates_id wasn't provided
@@ -272,7 +361,6 @@ SELECT COALESCE(@lookup_result, 'No lookup performed') AS result;
 ```
 
 This works because the `{http{...}http}` marker becomes a parameter like `@http_response_1` during pre-processing. When the `IF` block's condition is false, the `DECLARE @api_response = @http_response_1` line never executes — exactly the same as any other SQL variable declared inside a conditional block. The HTTP response data is still bound as a parameter, but your SQL logic simply never reads it.
-```
 
 ## Security Considerations
 
@@ -287,12 +375,16 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 ### What You Learned
 
 - The `{http{...}http}` syntax for embedded HTTP calls
+- The **structured response format** — every call returns `{status_code, headers, data, error}`, never `NULL`
+- How to check `$.status_code` to handle success, client errors, server errors, and network failures
+- How to read `$.error.message` for infrastructure failure details (timeout, DNS, connection refused, etc.)
+- How to access the response body via `$.data` and response headers via `$.headers`
 - How HTTP calls execute before the SQL runs, with results delivered via SQL parameterization (`sp_executesql`-style binding, not string replacement)
 - That `IF` blocks can control whether the parameterized result is assigned, even though the HTTP call always fires during pre-processing
 - Sending GET and POST requests with headers and body
 - Authentication options (bearer token, API key)
-- Parsing JSON responses with `JSON_VALUE` and `OPENJSON`
-- Error handling for failed HTTP calls
+- Parsing JSON responses with `JSON_VALUE` and `OPENJSON` — all under the `$.data` path
+- Granular error handling — inspecting status codes instead of checking for `NULL`
 - No SQL injection risk — responses are bound as parameterized variables, same as `sp_executesql` parameters
 - Practical patterns: data enrichment, validation, conditional lookups, multi-service calls
 

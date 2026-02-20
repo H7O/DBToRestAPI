@@ -9,18 +9,42 @@ Embed HTTP call markers in your SQL queries using the `{http{...}http}` syntax. 
 ### Phase 1: Pre-processing (before SQL execution)
 1. The engine scans the entire query text for all `{http{...}http}` markers
 2. `{{param}}` placeholders inside the HTTP configuration are resolved from the incoming request parameters (query string, body, route, headers — the engine has access to all of them at this stage)
-3. All discovered HTTP calls are executed (sequentially, deduplicated by identical configuration)
+3. All discovered HTTP calls are executed (in parallel, deduplicated by identical configuration)
 4. Each `{http{...}http}` marker in the query text is replaced with a **SQL parameter name** (e.g., `@http_response_1`, `@http_response_2`)
-5. The HTTP response content is bound to that parameter via parameterization — **it is never string-interpolated into the SQL**
+5. The HTTP response is bound to that parameter as a **structured JSON string** via parameterization — **it is never string-interpolated into the SQL**
+
+### Structured Response Format
+
+Every embedded HTTP call produces a JSON string with this shape — regardless of success or failure:
+
+```json
+{
+  "status_code": 200,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Request-Id": "abc-123"
+  },
+  "data": { ... },
+  "error": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status_code` | int | HTTP status code (e.g., 200, 404, 500). `0` if the request failed before receiving a response (network error, timeout, DNS failure). |
+| `headers` | object | All response headers (including content headers). Multi-value headers are joined with `, `. |
+| `data` | any | The response body — parsed as a JSON object/array if valid JSON, a plain string if not, or `null` if the body was empty. |
+| `error` | object\|null | `null` when a server response was received (even 4xx/5xx — the server's error details are in `data`). Populated as `{"message": "..."}` only when `status_code` is `0` (infrastructure failures: timeout, DNS, network, SSL, etc.). |
 
 ### Phase 2: SQL execution
 - The modified query is executed via standard parameterized SQL (similar to `sp_executesql @query, @params, @http_response_1 = '...', @http_response_2 = '...'`)
 - HTTP responses are available as regular SQL variables — you can use them in `SELECT`, `INSERT`, `UPDATE`, `IF`, `WHERE`, or any SQL construct
+- Use `JSON_VALUE(@var, '$.status_code')` to inspect the HTTP status, `$.headers` for response headers, and `$.data` for the response body
 - Because values are parameterized, **there is zero SQL injection risk**, even if the external API returns malicious content
 
 ```sql
 -- What you write:
-DECLARE @external_data NVARCHAR(MAX) = {http{
+DECLARE @response NVARCHAR(MAX) = {http{
   {
     "url": "https://api.example.com/data",
     "method": "GET"
@@ -28,15 +52,20 @@ DECLARE @external_data NVARCHAR(MAX) = {http{
 }http};
 
 -- What actually runs (conceptually):
--- DECLARE @external_data NVARCHAR(MAX) = @http_response_1;
--- where @http_response_1 is bound to the API's response body via sp_executesql-style parameterization
+-- DECLARE @response NVARCHAR(MAX) = @http_response_1;
+-- where @http_response_1 = '{"status_code":200,"headers":{...},"data":{...},"error":null}'
 
-SELECT * FROM OPENJSON(@external_data);
+-- Check status before using data
+IF JSON_VALUE(@response, '$.status_code') != '200'
+  THROW 50502, 'External API call failed', 1;
+
+-- Access the response body via $.data
+SELECT * FROM OPENJSON(@response, '$.data');
 ```
 
-> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block.
+> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block. The response is **always** a structured JSON string (never NULL) — check `JSON_VALUE(@var, '$.status_code')` to determine success or failure.
 
-> **For LLMs / AI agents**: Do **not** assume that `{http{...}http}` results are string-replaced into the SQL. They are SQL-parameterized. This means: (1) SQL `IF` guards around the `DECLARE @var = {http{...}http}` assignment **do** control whether the variable receives the value, (2) the HTTP call itself still fires during pre-processing regardless, and (3) there is no SQL injection risk from HTTP response content.
+> **For LLMs / AI agents**: Do **not** assume that `{http{...}http}` results are string-replaced into the SQL. They are SQL-parameterized. The parameter value is a **structured JSON string** with `status_code`, `headers`, and `data` fields. This means: (1) SQL `IF` guards around the `DECLARE @var = {http{...}http}` assignment **do** control whether the variable receives the value, (2) the HTTP call itself still fires during pre-processing regardless, (3) there is no SQL injection risk from HTTP response content, and (4) the actual API response body is at `$.data`, not at the root level.
 
 ## Basic Example
 
@@ -53,13 +82,17 @@ SELECT * FROM OPENJSON(@external_data);
       }
     }http};
     
-    -- Combine with database data
+    -- Check if the call succeeded
+    IF JSON_VALUE(@weather, '$.status_code') != '200'
+      THROW 50502, 'Weather API unavailable', 1;
+    
+    -- Combine with database data (response body is under $.data)
     SELECT 
       l.id,
       l.name,
       l.city,
-      JSON_VALUE(@weather, '$.current.temp_c') AS temperature_celsius,
-      JSON_VALUE(@weather, '$.current.condition.text') AS weather_condition,
+      JSON_VALUE(@weather, '$.data.current.temp_c') AS temperature_celsius,
+      JSON_VALUE(@weather, '$.data.current.condition.text') AS weather_condition,
       l.last_updated
     FROM locations l
     WHERE l.city = {{city}};
@@ -106,7 +139,11 @@ Parameters from the incoming HTTP request (query string, body, headers, route) c
       }
     }http};
     
-    IF JSON_VALUE(@validation, '$.is_valid') = 'false'
+    -- Check HTTP status first
+    IF JSON_VALUE(@validation, '$.status_code') != '200'
+      THROW 50502, 'Email validation service unavailable', 1;
+    
+    IF JSON_VALUE(@validation, '$.data.is_valid') = 'false'
       THROW 50400, 'Invalid email address', 1;
     
     INSERT INTO users (email, name, email_verified)
@@ -136,17 +173,21 @@ Parameters from the incoming HTTP request (query string, body, headers, route) c
       }
     }http};
     
+    -- Check payment API responded successfully
+    IF JSON_VALUE(@payment, '$.status_code') != '200'
+      THROW 50502, 'Payment service error', 1;
+    
     INSERT INTO orders (customer_id, amount, payment_intent_id, status)
     VALUES (
       {{customer_id}},
       {{amount}},
-      JSON_VALUE(@payment, '$.id'),
+      JSON_VALUE(@payment, '$.data.id'),
       'pending_payment'
     );
     
     SELECT 
-      JSON_VALUE(@payment, '$.id') AS payment_intent_id,
-      JSON_VALUE(@payment, '$.client_secret') AS client_secret;
+      JSON_VALUE(@payment, '$.data.id') AS payment_intent_id,
+      JSON_VALUE(@payment, '$.data.client_secret') AS client_secret;
   ]]></query>
 </create_order_with_payment>
 ```
@@ -255,9 +296,12 @@ You can include multiple HTTP calls in a single query. Each unique call is execu
     }http};
     
     SELECT 
-      JSON_VALUE(@users, '$.total_users') AS total_users,
-      JSON_VALUE(@orders, '$.total_orders') AS total_orders,
-      JSON_VALUE(@inventory, '$.items_in_stock') AS items_in_stock,
+      JSON_VALUE(@users, '$.data.total_users') AS total_users,
+      JSON_VALUE(@orders, '$.data.total_orders') AS total_orders,
+      JSON_VALUE(@inventory, '$.data.items_in_stock') AS items_in_stock,
+      JSON_VALUE(@users, '$.status_code') AS users_api_status,
+      JSON_VALUE(@orders, '$.status_code') AS orders_api_status,
+      JSON_VALUE(@inventory, '$.status_code') AS inventory_api_status,
       GETDATE() AS generated_at;
   ]]></query>
 </aggregate_external_data>
@@ -284,10 +328,10 @@ BEGIN
       }
     }http};
 
-    IF @nin_json IS NOT NULL AND LEN(@nin_json) > 0
+    IF CAST(JSON_VALUE(@nin_json, '$.status_code') AS INT) BETWEEN 200 AND 299
     BEGIN
         SELECT @nin = STRING_AGG(TRIM(JSON_VALUE(value, '$.NIN_NO')), ' | ')
-        FROM OPENJSON(@nin_json)
+        FROM OPENJSON(@nin_json, '$.data')
         WHERE JSON_VALUE(value, '$.NIN_NO') IS NOT NULL;
     END
 END
@@ -297,26 +341,54 @@ END
 UPDATE records SET nin = COALESCE(@nin, nin) WHERE id = @id;
 ```
 
-This pattern is useful in **update** scenarios where a parameter may or may not be provided in the request. The HTTP call fires either way (minimal overhead if the external API handles null/empty gracefully), but your SQL logic decides whether to use the result.
+This pattern is useful in **update** scenarios where a parameter may or may not be provided in the request. The HTTP call fires either way (minimal overhead if the external API handles null/empty gracefully), but your SQL logic decides whether to use the result. You can also inspect `$.status_code` to handle API failures gracefully within the conditional block.
 
 ## Error Handling
 
-When an HTTP call fails, the parameterized variable receives `NULL`:
+Every embedded HTTP call **always** returns a structured JSON response — even when the call fails. This gives query authors full visibility into what happened:
 
 ```sql
-DECLARE @external_data NVARCHAR(MAX) = {http{
+DECLARE @response NVARCHAR(MAX) = {http{
   {"url": "https://api.example.com/data", "method": "GET"}
 }http};
 
--- Handle potential failure
-IF @external_data IS NULL
-  THROW 50502, 'External service unavailable', 1;
+DECLARE @status INT = CAST(JSON_VALUE(@response, '$.status_code') AS INT);
 
--- Continue with valid data
-SELECT * FROM OPENJSON(@external_data);
+-- Handle specific failure scenarios
+IF @status = 0
+BEGIN
+  -- Infrastructure failure — check $.error.message for details
+  DECLARE @err_msg NVARCHAR(500) = JSON_VALUE(@response, '$.error.message');
+  -- e.g., "Request timed out after 30 seconds" or "Host not found: api.example.com"
+  THROW 50502, @err_msg, 1;
+END
+
+IF @status = 401 OR @status = 403
+  THROW 50401, 'External service authentication failed', 1;
+
+IF @status = 429
+  THROW 50429, 'External service rate limit exceeded', 1;
+
+IF @status < 200 OR @status >= 300
+  THROW 50502, 'External service returned an error', 1;
+
+-- Access response headers (e.g., pagination, rate-limit info)
+SELECT JSON_VALUE(@response, '$.headers.X-RateLimit-Remaining') AS rate_limit_remaining;
+
+-- Continue with the actual response body
+SELECT * FROM OPENJSON(@response, '$.data');
 ```
 
-Failed HTTP calls are logged with status codes and error messages for debugging.
+### Status Code Reference
+
+| `$.status_code` | Meaning |
+|------------------|---------|
+| `0` | Request never reached the server (DNS failure, network error, timeout, exception). Check `$.error.message` for details. |
+| `200`–`299` | Success — `$.data` contains the response body |
+| `400`–`499` | Client error — `$.data` may contain error details from the server |
+| `500`–`599` | Server error — `$.data` may contain error details from the server |
+
+All HTTP calls are also logged with status codes and timing for debugging.
 
 ## Real-World Example: KYC Verification
 
@@ -351,11 +423,19 @@ Failed HTTP calls are logged with status codes and error messages for debugging.
       }
     }http};
     
-    IF @kyc_result IS NULL
+    DECLARE @kyc_status_code INT = CAST(JSON_VALUE(@kyc_result, '$.status_code') AS INT);
+    IF @kyc_status_code = 0
+    BEGIN
+      DECLARE @kyc_err NVARCHAR(500) = JSON_VALUE(@kyc_result, '$.error.message');
+      THROW 50503, @kyc_err, 1;
+    END
+    IF @kyc_status_code >= 500
       THROW 50503, 'KYC service temporarily unavailable', 1;
+    IF @kyc_status_code = 401 OR @kyc_status_code = 403
+      THROW 50401, 'KYC service authentication failed', 1;
     
-    DECLARE @kyc_status NVARCHAR(50) = JSON_VALUE(@kyc_result, '$.status');
-    DECLARE @kyc_score INT = JSON_VALUE(@kyc_result, '$.confidence_score');
+    DECLARE @kyc_status NVARCHAR(50) = JSON_VALUE(@kyc_result, '$.data.status');
+    DECLARE @kyc_score INT = JSON_VALUE(@kyc_result, '$.data.confidence_score');
     
     IF @kyc_status != 'VERIFIED' OR @kyc_score < 80
       THROW 50400, 'KYC verification failed', 1;
@@ -364,7 +444,7 @@ Failed HTTP calls are logged with status codes and error messages for debugging.
     SET 
       kyc_verified = 1,
       kyc_verified_at = GETDATE(),
-      kyc_reference = JSON_VALUE(@kyc_result, '$.reference_id'),
+      kyc_reference = JSON_VALUE(@kyc_result, '$.data.reference_id'),
       kyc_score = @kyc_score
     WHERE id = @customer_id;
     
@@ -388,6 +468,7 @@ Failed HTTP calls are logged with status codes and error messages for debugging.
 ## Security Notes
 
 - **SQL injection safe**: HTTP responses are delivered to SQL as **parameterized values** (e.g., `@http_response_1`, `@http_response_2`) via the same parameterization mechanism used for `{{param}}` values. This is equivalent to binding parameters in `sp_executesql` — the response content is **never** concatenated or interpolated into the SQL string. Even a malicious external API response cannot alter query structure or cause SQL injection.
+- **No information leakage to clients**: The structured response (status_code, headers, data, error) is available only inside the SQL query. The query author controls what, if anything, is returned to the API consumer.
 - `{{param}}` placeholders inside `{http{...}http}` resolve from request parameters and are also parameterized
 - Sensitive credentials in HTTP configurations should use [settings variables](18-settings-vars.md) with encryption — e.g., `{s{api_key}}` instead of hardcoding secrets (see [Settings Encryption](15-encryption.md))
 - Consider using header parameters (`{{h{Header-Name}}}`) to pass API keys from request headers rather than hardcoding
