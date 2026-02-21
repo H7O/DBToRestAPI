@@ -480,7 +480,7 @@ namespace DBToRestAPI.Controllers
             _logger.LogDebug(
                 "{Time}: [EmbeddedHTTP] Route: {Route} — All {Count} HTTP call(s) completed in {ElapsedMs}ms. Results: [{ResultSummary}]",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, results.Length, phase2Stopwatch.ElapsedMilliseconds,
-                string.Join(", ", results.Select((res, i) => $"#{i}={res.Length} chars")));
+                string.Join(", ", results.Select((res, i) => res == null ? $"#{i}=SKIPPED" : $"#{i}={res.Length} chars")));
 
             // Phase 3: Apply results to query (sequential — no concurrency concerns)
             var dbQueryParams = new DbQueryParams()
@@ -496,10 +496,21 @@ namespace DBToRestAPI.Controllers
                 var placeholderName = $"http_response_{count}";
                 var structuredJson = results[i];
 
-                // Always populate — structured JSON is never null (contains status_code, headers, data)
-                (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
-                    placeholderName,
-                    structuredJson);
+                if (structuredJson != null)
+                {
+                    // Normal response (success or failure) — add structured JSON to DataModel
+                    (dbQueryParams.DataModel as Dictionary<string, string>)!.Add(
+                        placeholderName,
+                        structuredJson);
+                }
+                else
+                {
+                    // Skipped call — don't add to DataModel.
+                    // Com.H.Data.Common will parameterize it as DbNull.Value.
+                    _logger.LogDebug(
+                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} was skipped. Marker will be parameterized as NULL.",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i);
+                }
 
                 // Replace the original marker with an internally-replaced placeholder.
                 // This is critical because the original {http{...}http} marker may contain
@@ -517,10 +528,12 @@ namespace DBToRestAPI.Controllers
 
             // Check if any unresolved {http{ markers remain (should be none)
             bool hasUnresolvedMarkers = query.Contains("{http{");
+            int skippedCount = results.Count(r => r == null);
             _logger.LogDebug(
-                "{Time}: [EmbeddedHTTP] Route: {Route} — Phase 3 complete. {TotalCount} call(s) resolved to structured JSON. " +
+                "{Time}: [EmbeddedHTTP] Route: {Route} — Phase 3 complete. {TotalCount} call(s) processed ({ResolvedCount} resolved, {SkippedCount} skipped). " +
                 "All markers replaced with placeholders. Unresolved {{http{{}} markers remaining: {HasUnresolved}. Total embedded HTTP processing time: {ElapsedMs}ms",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, preparedCalls.Count,
+                preparedCalls.Count - skippedCount, skippedCount,
                 hasUnresolvedMarkers, overallStopwatch.ElapsedMilliseconds);
 
             return query;
@@ -528,16 +541,51 @@ namespace DBToRestAPI.Controllers
 
         /// <summary>
         /// Executes a single embedded HTTP call and returns a structured JSON response
-        /// containing status_code, headers, and data. Always returns a valid JSON string —
-        /// never returns null.
+        /// containing status_code, headers, data, and error. Returns null if the call
+        /// was skipped via the "skip" property.
         /// Designed to be called in parallel via Task.WhenAll — touches no shared state.
         /// </summary>
-        private async Task<string> ExecuteSingleEmbeddedHttpCallAsync(
+        /// <summary>
+        /// Determines whether an embedded HTTP call should be skipped based on the "skip"
+        /// property in its JSON configuration. Accepts bool, string ("true"/"1"/"yes"
+        /// case-insensitive), or non-zero number as truthy values.
+        /// Returns false if the property is absent, falsy, or the JSON is invalid.
+        /// </summary>
+        internal static bool ShouldSkipHttpCall(string httpRequestDetailsJson)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(httpRequestDetailsJson);
+                if (!doc.RootElement.TryGetProperty("skip", out var skipProp))
+                    return false;
+
+                return skipProp.ValueKind switch
+                {
+                    System.Text.Json.JsonValueKind.True => true,
+                    System.Text.Json.JsonValueKind.False => false,
+                    System.Text.Json.JsonValueKind.String => skipProp.GetString() switch
+                    {
+                        var s when string.Equals(s, "true", StringComparison.OrdinalIgnoreCase) => true,
+                        var s when string.Equals(s, "1", StringComparison.Ordinal) => true,
+                        var s when string.Equals(s, "yes", StringComparison.OrdinalIgnoreCase) => true,
+                        _ => false
+                    },
+                    System.Text.Json.JsonValueKind.Number => skipProp.TryGetInt32(out var n) && n != 0,
+                    _ => false
+                };
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private async Task<string?> ExecuteSingleEmbeddedHttpCallAsync(
             string httpRequestDetails,
             CancellationToken cancellationToken)
         {
             var callStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            // Extract URL from the JSON config for logging (best-effort)
+            // Extract URL for logging (best-effort)
             string urlForLog = "(unknown)";
             try
             {
@@ -546,6 +594,15 @@ namespace DBToRestAPI.Controllers
                     urlForLog = urlProp.GetString() ?? "(null)";
             }
             catch { /* ignore parse errors for logging */ }
+
+            if (ShouldSkipHttpCall(httpRequestDetails))
+            {
+                callStopwatch.Stop();
+                _logger.LogDebug(
+                    "{Time}: [EmbeddedHTTP] Call to {Url} skipped (\"skip\" property is truthy). Marker will be parameterized as NULL.",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog);
+                return null;
+            }
 
             _logger.LogDebug(
                 "{Time}: [EmbeddedHTTP] Starting call to: {Url}",

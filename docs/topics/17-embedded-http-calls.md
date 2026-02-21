@@ -63,9 +63,9 @@ IF JSON_VALUE(@response, '$.status_code') != '200'
 SELECT * FROM OPENJSON(@response, '$.data');
 ```
 
-> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block. The response is **always** a structured JSON string (never NULL) — check `JSON_VALUE(@var, '$.status_code')` to determine success or failure.
+> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block. When executed, the response is **always** a structured JSON string — check `JSON_VALUE(@var, '$.status_code')` to determine success or failure. The only case where the variable receives `NULL` is when the call is explicitly skipped via the [`skip`](#skipping-http-calls) property.
 
-> **For LLMs / AI agents**: Do **not** assume that `{http{...}http}` results are string-replaced into the SQL. They are SQL-parameterized. The parameter value is a **structured JSON string** with `status_code`, `headers`, and `data` fields. This means: (1) SQL `IF` guards around the `DECLARE @var = {http{...}http}` assignment **do** control whether the variable receives the value, (2) the HTTP call itself still fires during pre-processing regardless, (3) there is no SQL injection risk from HTTP response content, and (4) the actual API response body is at `$.data`, not at the root level.
+> **For LLMs / AI agents**: Do **not** assume that `{http{...}http}` results are string-replaced into the SQL. They are SQL-parameterized. The parameter value is a **structured JSON string** with `status_code`, `headers`, and `data` fields. This means: (1) SQL `IF` guards around the `DECLARE @var = {http{...}http}` assignment **do** control whether the variable receives the value, (2) the HTTP call still fires during pre-processing regardless (unless the `skip` property is truthy — see [Skipping HTTP Calls](#skipping-http-calls)), (3) there is no SQL injection risk from HTTP response content, and (4) the actual API response body is at `$.data`, not at the root level.
 
 ## Basic Example
 
@@ -115,6 +115,7 @@ The JSON inside `{http{...}http}` supports the full HTTP executor configuration:
 | `timeout` | number | No | Request timeout in seconds (default: 30) |
 | `auth` | object | No | Authentication configuration |
 | `retry` | object | No | Retry policy configuration |
+| `skip` | bool/string/number | No | When truthy (`true`, `"true"`, `"1"`, `"yes"`, non-zero), the call is **not executed** and the SQL variable receives `NULL` instead of structured JSON. See [Skipping HTTP Calls](#skipping-http-calls). |
 
 ## Using Request Parameters
 
@@ -273,6 +274,62 @@ DECLARE @data NVARCHAR(MAX) = {http{
   }
 }http};
 ```
+
+## Skipping HTTP Calls
+
+Use the `skip` property to conditionally prevent an HTTP call from executing. When `skip` evaluates to a truthy value, the call is **not made** and the SQL variable receives `NULL` (DbNull) instead of a structured JSON response.
+
+```sql
+-- Skip validation when the caller passes skip_validation=true
+DECLARE @validation NVARCHAR(MAX) = {http{
+  {
+    "url": "https://api.example.com/validate",
+    "method": "POST",
+    "body": { "email": "{{email}}" },
+    "skip": "{{skip_validation}}"
+  }
+}http};
+
+-- Three-state check:
+--   NULL          = call was skipped (skip property was truthy)
+--   status_code 0 = infrastructure failure (timeout, DNS, network)
+--   status_code>0 = server responded (check the specific code)
+IF @validation IS NULL
+BEGIN
+  -- Skipped — proceed without validation
+  INSERT INTO users (email, name) VALUES ({{email}}, {{name}});
+END
+ELSE IF CAST(JSON_VALUE(@validation, '$.status_code') AS INT) = 0
+BEGIN
+  DECLARE @err NVARCHAR(500) = JSON_VALUE(@validation, '$.error.message');
+  THROW 50502, @err, 1;
+END
+ELSE IF JSON_VALUE(@validation, '$.status_code') != '200'
+BEGIN
+  THROW 50502, 'Validation service error', 1;
+END
+ELSE
+BEGIN
+  IF JSON_VALUE(@validation, '$.data.is_valid') = 'false'
+    THROW 50400, 'Invalid email', 1;
+  INSERT INTO users (email, name, validated) VALUES ({{email}}, {{name}}, 1);
+END
+```
+
+### Truthy Values for `skip`
+
+The `skip` property accepts multiple representations because `{{param}}` placeholders are resolved as strings before the JSON is parsed:
+
+| Value | Skipped? |
+|-------|----------|
+| `true` (boolean) | Yes |
+| `"true"` (string, case-insensitive) | Yes |
+| `"1"` | Yes |
+| `"yes"` (string, case-insensitive) | Yes |
+| Non-zero number | Yes |
+| `false`, `"false"`, `"0"`, `"no"`, `0`, absent | No |
+
+> **Tip**: Since `{{param}}` values are resolved as strings, `"skip": "{{should_skip}}"` works naturally — pass `true` or `1` in the request to skip the call.
 
 ## Multiple HTTP Calls
 
@@ -459,7 +516,7 @@ All HTTP calls are also logged with status codes and timing for debugging.
 ## Performance Considerations
 
 - **HTTP calls are executed sequentially** before SQL execution
-- **All `{http{...}http}` blocks always execute** during pre-processing, regardless of SQL `IF` conditions — the `IF` only controls whether the parameterized result variable is assigned/used in your SQL logic
+- **All `{http{...}http}` blocks execute during pre-processing**, regardless of SQL `IF` conditions (unless the `skip` property is truthy) — the `IF` only controls whether the parameterized result variable is assigned/used in your SQL logic
 - **Duplicate calls are deduplicated** — identical HTTP configurations execute only once (the response is reused for all matching markers)
 - **Use timeouts** to prevent slow external services from blocking your API
 - **Consider caching** for frequently-called external APIs

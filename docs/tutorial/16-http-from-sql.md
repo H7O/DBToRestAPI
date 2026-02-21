@@ -46,7 +46,7 @@ Every embedded HTTP call — whether it succeeds or fails — produces a JSON st
 | `data` | any | The response body — parsed as a JSON object/array if valid JSON, a plain string if not, or `null` if empty. |
 | `error` | object\|null | `null` when a server response was received (even 4xx/5xx). Contains `{"message": "..."}` only when `status_code` is `0` — e.g., `"Request timed out after 30 seconds"` or `"Host not found: api.example.com"`. |
 
-This means you **always** get a result back — you never have to guess whether the call failed or why. Check `$.status_code` to decide what to do, and `$.error.message` to understand infrastructure failures.
+This means you **always** get a result back — you never have to guess whether the call failed or why. Check `$.status_code` to decide what to do, and `$.error.message` to understand infrastructure failures. The only exception is when the [`skip`](#skipping-http-calls) property is truthy — in that case the variable receives `NULL` because the call was never made.
 
 > **For DB Admins — how parameters are bound**: The HTTP response is **never** pasted or concatenated into your SQL string. Instead, it works exactly like `sp_executesql` parameter binding:
 >
@@ -116,6 +116,7 @@ The JSON inside `{http{...}http}` supports these properties:
 | `timeout` | number | No | 30 | Timeout in seconds |
 | `auth` | object | No | — | Authentication config |
 | `retry` | object | No | — | Retry policy |
+| `skip` | bool/string/number | No | `false` | When truthy (`true`, `"true"`, `"1"`, `"yes"`, non-zero), the call is not executed and the variable receives `NULL` |
 
 ## POST with JSON Body
 
@@ -277,7 +278,7 @@ SELECT JSON_VALUE(@response, '$.headers.X-RateLimit-Remaining') AS rate_limit_le
 
 ## Error Handling
 
-Every embedded HTTP call **always** returns a structured JSON string — it never returns `NULL`. You can inspect `$.status_code` to know exactly what happened:
+Every embedded HTTP call returns a structured JSON string — you can inspect `$.status_code` to know exactly what happened. The only case where the variable is `NULL` is when the call is [skipped](#skipping-http-calls):
 
 ```sql
 DECLARE @response NVARCHAR(MAX) = {http{
@@ -331,9 +332,34 @@ You can also read response headers to make smarter decisions:
 DECLARE @retry_after NVARCHAR(50) = JSON_VALUE(@response, '$.headers.Retry-After');
 ```
 
+## Skipping HTTP Calls
+
+Use the `skip` property to conditionally prevent an HTTP call from executing. When truthy, the call is not made and the SQL variable receives `NULL`:
+
+```sql
+DECLARE @validation NVARCHAR(MAX) = {http{
+  {
+    "url": "https://api.example.com/validate",
+    "method": "POST",
+    "body": { "email": "{{email}}" },
+    "skip": "{{skip_validation}}"
+  }
+}http};
+
+-- NULL = skipped, status_code 0 = infra failure, status_code > 0 = server responded
+IF @validation IS NULL
+  PRINT 'Validation skipped';
+ELSE IF CAST(JSON_VALUE(@validation, '$.status_code') AS INT) = 0
+  THROW 50502, JSON_VALUE(@validation, '$.error.message'), 1;
+ELSE IF JSON_VALUE(@validation, '$.status_code') = '200'
+  PRINT 'Validation passed';
+```
+
+Truthy values for `skip`: `true`, `"true"`, `"1"`, `"yes"` (case-insensitive), and non-zero numbers. Since `{{param}}` values resolve as strings, `"skip": "{{should_skip}}"` works naturally — pass `true` or `1` in the request to skip the call.
+
 ## Conditional Usage with IF Blocks
 
-All `{http{...}http}` calls execute during pre-processing regardless of SQL logic — because the engine processes them before the SQL even starts running. However, because results are delivered as parameterized SQL variables (not string-replaced), you can use `IF` blocks to control whether the result is actually assigned to your variables:
+All `{http{...}http}` calls execute during pre-processing regardless of SQL logic (unless `skip` is truthy) — because the engine processes them before the SQL even starts running. However, because results are delivered as parameterized SQL variables (not string-replaced), you can use `IF` blocks to control whether the result is actually assigned to your variables:
 
 ```sql
 DECLARE @emirates_id NVARCHAR(50) = {{emirates_id}};
@@ -375,7 +401,7 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 ### What You Learned
 
 - The `{http{...}http}` syntax for embedded HTTP calls
-- The **structured response format** — every call returns `{status_code, headers, data, error}`, never `NULL`
+- The **structured response format** — every call returns `{status_code, headers, data, error}` (or `NULL` when the `skip` property is truthy)
 - How to check `$.status_code` to handle success, client errors, server errors, and network failures
 - How to read `$.error.message` for infrastructure failure details (timeout, DNS, connection refused, etc.)
 - How to access the response body via `$.data` and response headers via `$.headers`
@@ -385,6 +411,7 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 - Authentication options (bearer token, API key)
 - Parsing JSON responses with `JSON_VALUE` and `OPENJSON` — all under the `$.data` path
 - Granular error handling — inspecting status codes instead of checking for `NULL`
+- The `skip` property for conditionally disabling HTTP calls
 - No SQL injection risk — responses are bound as parameterized variables, same as `sp_executesql` parameters
 - Practical patterns: data enrichment, validation, conditional lookups, multi-service calls
 
