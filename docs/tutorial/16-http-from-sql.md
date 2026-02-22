@@ -17,10 +17,10 @@ DECLARE @response NVARCHAR(MAX) = {http{
 
 **What happens at runtime:**
 1. The engine finds all `{http{...}http}` markers in your query
-2. It resolves any `{{param}}` placeholders inside them from the incoming request
-3. It executes the HTTP requests **before** running the SQL
+2. It resolves any `{{param}}` placeholders inside them from the incoming request (sequential preparation)
+3. It executes all HTTP requests **concurrently** (`Task.WhenAll`) — so the wait time is the slowest call, not the sum of all calls
 4. Each marker is replaced with a **parameterized SQL variable** (e.g., `@http_response_1`)
-5. The variable contains a **structured JSON string** with `status_code`, `headers`, and `data`
+5. The variable contains a **structured JSON string** with `status_code`, `headers`, `data`, and `error`
 6. The SQL executes with the full HTTP response available as that variable
 
 ### Structured Response Format
@@ -357,6 +357,47 @@ ELSE IF JSON_VALUE(@validation, '$.status_code') = '200'
 
 Truthy values for `skip`: `true`, `"true"`, `"1"`, `"yes"` (case-insensitive), and non-zero numbers. Since `{{param}}` values resolve as strings, `"skip": "{{should_skip}}"` works naturally — pass `true` or `1` in the request to skip the call.
 
+### Database-Driven Skip with Query Chaining
+
+The `skip` value is resolved **before** SQL runs, so it can't come from SQL in the same query. But by combining `skip` with [multi-query chaining](17-multi-query.md), you can let the database decide:
+
+1. **Query 1** runs SQL and outputs a flag column (e.g., `skip_http` = `'1'` or `'0'`)
+2. Because Query 1 returns a single row, its columns become `{{column_name}}` parameters for Query 2
+3. **Query 2** uses `"skip": "{{skip_http}}"` — the value comes from Query 1's SQL result
+
+```xml
+<!-- Query 1: Check if enrichment is needed -->
+<query><![CDATA[
+  SELECT id, email,
+    CASE WHEN enriched_at IS NOT NULL THEN '1' ELSE '0' END AS skip_http
+  FROM contacts WHERE id = {{id}};
+]]></query>
+
+<!-- Query 2: Conditionally call the API -->
+<query><![CDATA[
+  DECLARE @enrichment NVARCHAR(MAX) = {http{
+    {
+      "url": "{s{enrichment_api_url}}/lookup",
+      "body": { "email": "{{email}}" },
+      "skip": "{{skip_http}}"
+    }
+  }http};
+
+  -- NULL = skipped (already enriched), otherwise process the response
+  IF @enrichment IS NULL
+    SELECT *, 'already_enriched' AS status FROM contacts WHERE id = {{id}};
+  ELSE IF CAST(JSON_VALUE(@enrichment, '$.status_code') AS INT) BETWEEN 200 AND 299
+  BEGIN
+    UPDATE contacts SET company = JSON_VALUE(@enrichment, '$.data.company') WHERE id = {{id}};
+    SELECT *, 'enriched' AS status FROM contacts WHERE id = {{id}};
+  END
+  ELSE
+    THROW 50502, 'Enrichment API failed', 1;
+]]></query>
+```
+
+This is especially useful for pay-per-call APIs, rate-limited services, or idempotent enrichment workflows. See the [full reference example](../topics/17-embedded-http-calls.md#conditionally-skipping-based-on-database-logic) for a complete walkthrough.
+
 ## Conditional Usage with IF Blocks
 
 All `{http{...}http}` calls execute during pre-processing regardless of SQL logic (unless `skip` is truthy) — because the engine processes them before the SQL even starts running. However, because results are delivered as parameterized SQL variables (not string-replaced), you can use `IF` blocks to control whether the result is actually assigned to your variables:
@@ -412,6 +453,7 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 - Parsing JSON responses with `JSON_VALUE` and `OPENJSON` — all under the `$.data` path
 - Granular error handling — inspecting status codes instead of checking for `NULL`
 - The `skip` property for conditionally disabling HTTP calls
+- Combining `skip` with [query chaining](17-multi-query.md) for database-driven conditional HTTP calls
 - No SQL injection risk — responses are bound as parameterized variables, same as `sp_executesql` parameters
 - Practical patterns: data enrichment, validation, conditional lookups, multi-service calls
 

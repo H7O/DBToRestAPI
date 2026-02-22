@@ -8,10 +8,9 @@ Embed HTTP call markers in your SQL queries using the `{http{...}http}` syntax. 
 
 ### Phase 1: Pre-processing (before SQL execution)
 1. The engine scans the entire query text for all `{http{...}http}` markers
-2. `{{param}}` placeholders inside the HTTP configuration are resolved from the incoming request parameters (query string, body, route, headers — the engine has access to all of them at this stage)
-3. All discovered HTTP calls are executed (in parallel, deduplicated by identical configuration)
-4. Each `{http{...}http}` marker in the query text is replaced with a **SQL parameter name** (e.g., `@http_response_1`, `@http_response_2`)
-5. The HTTP response is bound to that parameter as a **structured JSON string** via parameterization — **it is never string-interpolated into the SQL**
+2. **Prepare (sequential):** `{{param}}` placeholders inside each HTTP configuration are resolved from the incoming request parameters (query string, body, route, headers — the engine has access to all of them at this stage). Calls with `skip` set to a truthy value are excluded.
+3. **Execute (parallel):** All prepared HTTP calls are fired concurrently via `Task.WhenAll` — the total wait time is the duration of the **slowest** call, not the sum of all calls. Duplicate calls (identical configuration) are deduplicated and executed only once.
+4. **Apply (sequential):** Each `{http{...}http}` marker in the query text is replaced with a **SQL parameter name** (e.g., `@http_response_1`, `@http_response_2`), and the corresponding HTTP response is bound to that parameter as a **structured JSON string** via parameterization — **it is never string-interpolated into the SQL**
 
 ### Structured Response Format
 
@@ -331,6 +330,107 @@ The `skip` property accepts multiple representations because `{{param}}` placeho
 
 > **Tip**: Since `{{param}}` values are resolved as strings, `"skip": "{{should_skip}}"` works naturally — pass `true` or `1` in the request to skip the call.
 
+### Conditionally Skipping Based on Database Logic
+
+The `skip` property is resolved during **Phase 1 pre-processing**, before any SQL executes. This means the skip decision must come from something available at that stage — request parameters (`{{param}}`), JWT claims (`{auth{claim}}`), or settings variables (`{s{var}}`). It **cannot** come from a SQL computation in the same query, because that SQL hasn't run yet.
+
+However, by combining `skip` with **[query chaining](14-query-chaining.md)**, you can let the database drive the skip decision. Query 1 runs first, and when it returns a single row, each output column becomes a `{{column_name}}` parameter for Query 2. Query 2 can reference one of those columns as the `skip` value — effectively letting SQL decide whether the HTTP call fires.
+
+| Condition source | Can drive `skip`? | Mechanism |
+|---|---|---|
+| Request parameter (`{{param}}`) | Yes | Body, query string, route, or header |
+| JWT claim (`{auth{claim}}`) | Yes | Any claim from the validated token |
+| Settings variable (`{s{var}}`) | Yes | From `<vars>` in settings.xml |
+| SQL in the **same** query | No | SQL hasn't run yet during Phase 1 |
+| SQL in a **previous** chained query | Yes | Output columns become `{{column}}` parameters — see below |
+
+#### Example: Skip Enrichment If Data Already Exists
+
+Query 1 checks the database and outputs a `skip_http` flag. Query 2 uses it to conditionally fire an enrichment API.
+
+```xml
+<enrich_contact>
+  <route>contacts/{{id}}/enrich</route>
+  <verb>POST</verb>
+  <mandatory_parameters>id</mandatory_parameters>
+
+  <!-- Query 1: Check if enrichment is needed -->
+  <!-- Output columns become {{column}} parameters in Query 2 -->
+  <query><![CDATA[
+    DECLARE @id UNIQUEIDENTIFIER = {{id}};
+
+    IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = @id)
+    BEGIN
+      THROW 50404, 'Contact not found', 1;
+      RETURN;
+    END
+
+    SELECT
+      id,
+      email,
+      -- '1' = already enriched → skip the API call
+      -- '0' = not yet enriched → fire the API call
+      CASE WHEN enriched_at IS NOT NULL THEN '1' ELSE '0' END AS skip_http
+    FROM contacts
+    WHERE id = @id;
+  ]]></query>
+
+  <!-- Query 2: Conditionally call the enrichment API -->
+  <!-- {{skip_http}}, {{id}}, {{email}} all come from Query 1's single-row output -->
+  <query><![CDATA[
+    DECLARE @id UNIQUEIDENTIFIER = {{id}};
+    DECLARE @email NVARCHAR(500) = {{email}};
+
+    DECLARE @enrichment NVARCHAR(MAX) = {http{
+      {
+        "url": "{s{enrichment_api_url}}/lookup",
+        "method": "POST",
+        "headers": { "X-API-Key": "{s{enrichment_api_key}}" },
+        "body": { "email": "{{email}}" },
+        "skip": "{{skip_http}}"
+      }
+    }http};
+
+    -- Three-state check:
+    --   NULL          → skipped (already enriched)
+    --   status_code 0 → infrastructure failure
+    --   status_code>0 → server responded
+    IF @enrichment IS NULL
+    BEGIN
+      SELECT id, name, email, company, enriched_at,
+             'already_enriched' AS status
+      FROM contacts WHERE id = @id;
+    END
+    ELSE IF CAST(JSON_VALUE(@enrichment, '$.status_code') AS INT) = 0
+    BEGIN
+      DECLARE @err NVARCHAR(500) = JSON_VALUE(@enrichment, '$.error.message');
+      THROW 50502, @err, 1;
+    END
+    ELSE IF CAST(JSON_VALUE(@enrichment, '$.status_code') AS INT) NOT BETWEEN 200 AND 299
+    BEGIN
+      THROW 50502, 'Enrichment service returned an error', 1;
+    END
+    ELSE
+    BEGIN
+      UPDATE contacts
+      SET
+        company     = JSON_VALUE(@enrichment, '$.data.company'),
+        location    = JSON_VALUE(@enrichment, '$.data.location'),
+        enriched_at = GETUTCDATE()
+      WHERE id = @id;
+
+      SELECT id, name, email, company, enriched_at,
+             'enriched' AS status
+      FROM contacts WHERE id = @id;
+    END
+  ]]></query>
+</enrich_contact>
+```
+
+**Why this works:** Query 1 executes first and outputs `skip_http` alongside `id` and `email`. Because Query 1 returns a single row, all output columns automatically become `{{column_name}}` parameters available to Query 2 (see [Query Chaining — Parameter Passing](14-query-chaining.md#parameter-passing)). When Query 2's Phase 1 pre-processing resolves `"skip": "{{skip_http}}"`, it reads `"1"` or `"0"` from that parameter — before any SQL in Query 2 runs. If `skip_http` is `"1"`, the HTTP call never fires and `@enrichment` receives `NULL`. If it's `"0"`, the call executes normally. The database made the decision; no application code, no extra round-trips.
+
+> **When to use this pattern:** pay-per-call APIs (avoid unnecessary charges), rate-limited APIs (protect your quota), slow external services (skip when data is already fresh), and idempotent enrichment workflows (safely re-run without double-calling).
+
 ## Multiple HTTP Calls
 
 You can include multiple HTTP calls in a single query. Each unique call is executed once, and duplicates are automatically deduplicated:
@@ -515,7 +615,7 @@ All HTTP calls are also logged with status codes and timing for debugging.
 
 ## Performance Considerations
 
-- **HTTP calls are executed sequentially** before SQL execution
+- **HTTP calls are executed concurrently** — after sequential parameter preparation, all calls fan out in parallel via `Task.WhenAll`, so the total latency is the **slowest** call, not the sum. Results are then applied to the query sequentially before SQL execution
 - **All `{http{...}http}` blocks execute during pre-processing**, regardless of SQL `IF` conditions (unless the `skip` property is truthy) — the `IF` only controls whether the parameterized result variable is assigned/used in your SQL logic
 - **Duplicate calls are deduplicated** — identical HTTP configurations execute only once (the response is reused for all matching markers)
 - **Use timeouts** to prevent slow external services from blocking your API

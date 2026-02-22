@@ -148,6 +148,7 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- Check status: JSON_VALUE(@result, '$.status_code')
 -- On failure (status_code=0): JSON_VALUE(@result, '$.error.message')
 -- Skip a call conditionally: "skip": "{{should_skip}}" (truthy = true/1/yes → variable receives NULL)
+-- Database-driven skip: combine with query chaining — Query 1 outputs a flag column, Query 2 uses it as "skip": "{{flag}}"
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 
