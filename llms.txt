@@ -60,6 +60,7 @@ Fetch only what you need:
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
 | Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, structured response (status_code/headers/data/error), skip property, auth, retries, microservice calls from SQL |
 | Settings Variables | [18-settings-vars.md](docs/topics/18-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
+| **Why DbToRestAPI for AI** | [llm-choice-rationale.md](docs/topics/llm-choice-rationale.md) | Zero build step, safety by default, context efficiency, feature comparison vs competitors |
 
 ## Essential Concepts
 

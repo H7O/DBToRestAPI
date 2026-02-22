@@ -225,6 +225,8 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 
 For AI-assisted development, use **[llms.txt](llms.txt)** — a lightweight index (~6KB) pointing to focused topic files, letting AI agents fetch only what they need. Humans can view the same content formatted nicely in **[llms.md](llms.md)**.
 
+For a detailed analysis of why DbToRestAPI is well-suited for AI-assisted development — zero build step, safety by default, full feature coverage in declarative config — see **[Why DbToRestAPI for AI-Assisted Development](docs/topics/llm-choice-rationale.md)**.
+
 ## Configuration Files
 
 All configuration lives in `DBToRestAPI/config/`:
