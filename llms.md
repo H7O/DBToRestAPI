@@ -49,17 +49,17 @@ Fetch only what you need:
 | Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON |
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
 | Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |
-| API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs, outbound timeout |
+| API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs |
 | File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Local/SFTP, multipart, base64 |
 | File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | Streaming from DB, local, SFTP, HTTP |
 | CORS | [11-cors.md](docs/topics/11-cors.md) | Pattern matching, credentials, preflight |
-| Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0, UserInfo timeout |
+| Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0 |
 | Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
-| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, auth, retries, microservice calls from SQL |
-| Settings Variables | [18-settings-vars.md](docs/topics/18-settings-vars.md) | {s{}}/{settings{}} syntax, `<vars>` config, encrypted secrets in queries |
+| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, structured response (status_code/headers/data/error), skip property, auth, retries, microservice calls from SQL |
+| Settings Variables | [18-settings-vars.md](docs/topics/18-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
 
 ## Essential Concepts
 
@@ -143,6 +143,12 @@ Access claims: `{auth{email}}`, `{auth{sub}}`, `{auth{roles}}`
 DECLARE @result NVARCHAR(MAX) = {http{
   {"url": "{s{partner_api_url}}/data", "headers": {"X-API-Key": "{s{partner_api_key}}"}}
 }http};
+-- @result = {"status_code":200,"headers":{...},"data":{...},"error":null}
+-- Access data: JSON_VALUE(@result, '$.data.some_field')
+-- Check status: JSON_VALUE(@result, '$.status_code')
+-- On failure (status_code=0): JSON_VALUE(@result, '$.error.message')
+-- Skip a call conditionally: "skip": "{{should_skip}}" (truthy = true/1/yes → variable receives NULL)
+-- Database-driven skip: combine with query chaining — Query 1 outputs a flag column, Query 2 uses it as "skip": "{{flag}}"
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 
