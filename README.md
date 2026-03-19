@@ -31,11 +31,21 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 
 ## Quick Start
 
-### 1. Prerequisites
+### 1. Download & run
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download) (or later)
+Download the latest release for your platform from the [Releases page](https://github.com/H7O/DBToRestAPI/releases):
 
-### 2. Clone & run
+| Platform | Download |
+|----------|----------|
+| Windows (x64) | `DBToRestAPI-win-x64.zip` |
+| Linux (x64) | `DBToRestAPI-linux-x64.tar.gz` |
+| Linux (ARM64) | `DBToRestAPI-linux-arm64.tar.gz` |
+| macOS (x64) | `DBToRestAPI-osx-x64.tar.gz` |
+| macOS (ARM64) | `DBToRestAPI-osx-arm64.tar.gz` |
+
+Extract the archive and run the executable — no .NET SDK or database setup required. The app ships with a bundled SQLite database (`demo.db`) and pre-configured endpoints so you can start exploring immediately.
+
+**Alternatively**, if you have the [.NET 10 SDK](https://dotnet.microsoft.com/download) (or later):
 
 ```bash
 git clone https://github.com/H7O/DBToRestAPI.git
@@ -43,9 +53,7 @@ cd DBToRestAPI/DBToRestAPI
 dotnet run
 ```
 
-That's it — no database setup needed. The app ships with a bundled SQLite database (`demo.db`) and pre-configured endpoints so you can start exploring immediately.
-
-### 3. Test
+### 2. Test
 
 ```bash
 curl -X POST "https://localhost:7054/hello_world" \
@@ -73,7 +81,7 @@ curl -X POST "https://localhost:7054/contacts" \
      -d '{"name": "Alice Smith", "phone": "555-0101"}'
 ```
 
-### 4. How it works
+### 3. How it works
 
 That response came straight from this SQL in `config/sql.xml`:
 
@@ -88,7 +96,7 @@ That response came straight from this SQL in `config/sql.xml`:
 
 The XML node name becomes the route. `{{name}}` is safely injected from the request body. Edit the query, save the file, and the endpoint updates instantly — no restart.
 
-### 5. Connect your own database
+### 4. Connect your own database
 
 When you're ready, swap the default connection string in `config/settings.xml` to point to your own database:
 
