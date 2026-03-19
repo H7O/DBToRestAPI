@@ -122,21 +122,17 @@ if (!string.IsNullOrEmpty(httpsCertPath))
     if (!File.Exists(resolvedCertPath))
     {
         httpsSkipped = true;
-        // Clear the HTTPS endpoint config so Kestrel won't attempt to bind it
-        builder.Configuration["Kestrel:Endpoints:Https:Url"] = null;
-        builder.Configuration["Kestrel:Endpoints:Https:Certificate:Path"] = null;
-        builder.Configuration["Kestrel:Endpoints:Https:Certificate:Password"] = null;
-
-        // Also configure Kestrel to only listen on the HTTP endpoint
+        // Override Kestrel to HTTP-only — nulling individual config values
+        // doesn't remove the section, so Kestrel would still try to bind HTTPS.
         var httpUrl = builder.Configuration["Kestrel:Endpoints:Http:Url"] ?? "http://*:5000";
-        // Extract port without Uri — wildcard hostnames like http://*:5000 are not valid URIs
         var port = 5000;
         var colonIndex = httpUrl.LastIndexOf(':');
         if (colonIndex >= 0 && int.TryParse(httpUrl[(colonIndex + 1)..], out var parsedPort))
         {
             port = parsedPort;
         }
-        builder.WebHost.ConfigureKestrel(serverOptions =>
+        // UseKestrel replaces config-based endpoints entirely
+        builder.WebHost.UseKestrel(serverOptions =>
         {
             serverOptions.ListenAnyIP(port);
         });
