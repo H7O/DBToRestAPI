@@ -14,7 +14,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 
 ## Key Features
 
-- **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step.
+- **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step. Call stored procedures, functions, CTEs — anything your database supports.
 - **6 database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2 with automatic provider detection.
 - **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
 - **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc.), and SQL injection protection via parameterised queries.
@@ -176,7 +176,7 @@ curl -X POST "https://localhost:7054/contacts" \
 }
 ```
 
-No controllers, no models, no migrations — just XML and SQL.
+No controllers, no models, no migrations — just XML and SQL. Stored procedures work the same way — just use `EXEC` in your `<query>`.
 
 ## HTTPS / TLS Certificates
 

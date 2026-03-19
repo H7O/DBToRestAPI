@@ -165,6 +165,12 @@ Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</s
 <query>SELECT file_name, relative_path FROM files WHERE id = {{id}};</query>
 ```
 
+### Stored Procedure Call
+```xml
+<query><![CDATA[ EXEC dbo.GetContacts @status = {{status}}; ]]></query>
+```
+Since `<query>` executes arbitrary SQL, stored procedures, functions, views, CTEs, and any database-native feature work naturally.
+
 ## Repository
 
 https://github.com/H7O/DBToRestAPI
