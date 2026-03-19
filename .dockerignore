@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/node_modules/
+*.md
+!README.md
+LICENSE
+.git/
+.github/
+docs/
+source_from_nuget/
+DBToRestAPI.Tests/

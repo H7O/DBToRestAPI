@@ -108,6 +108,16 @@ curl -X POST "http://localhost:5000/contacts" \
 
 > **HTTPS**: The app is pre-configured for HTTPS — just place a `.pfx` certificate at `config/certs/certificate.pfx` and restart. It will automatically listen on both HTTP (port 5000) and HTTPS (port 5001). See the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for details.
 
+> **Docker**: Run with Docker in one command:
+> ```bash
+> docker build -t dbtorestapi https://github.com/H7O/DBToRestAPI.git
+> docker run -p 5000:5000 dbtorestapi
+> ```
+> To persist your config changes, mount the config directory:
+> ```bash
+> docker run -p 5000:5000 -v ./my-config:/app/config dbtorestapi
+> ```
+
 ### 3. How it works
 
 That response came straight from this SQL in `config/sql.xml`:
