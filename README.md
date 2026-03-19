@@ -110,12 +110,11 @@ curl -X POST "http://localhost:5000/contacts" \
 
 > **Docker**: Run with Docker in one command:
 > ```bash
-> docker build -t dbtorestapi https://github.com/H7O/DBToRestAPI.git
-> docker run -p 5000:5000 dbtorestapi
+> docker run -p 5000:5000 ghcr.io/h7o/dbtorestapi
 > ```
 > To persist your config changes, mount the config directory:
 > ```bash
-> docker run -p 5000:5000 -v ./my-config:/app/config dbtorestapi
+> docker run -p 5000:5000 -v ./my-config:/app/config ghcr.io/h7o/dbtorestapi
 > ```
 
 ### 3. How it works
