@@ -122,19 +122,19 @@ if (!string.IsNullOrEmpty(httpsCertPath))
     if (!File.Exists(resolvedCertPath))
     {
         httpsSkipped = true;
-        // Override Kestrel to HTTP-only — nulling individual config values
-        // doesn't remove the section, so Kestrel would still try to bind HTTPS.
+        // Replace Kestrel's configuration loader with an HTTP-only section.
+        // Just adding programmatic endpoints via ListenAnyIP() doesn't prevent
+        // the default config loader from also processing the HTTPS section.
         var httpUrl = builder.Configuration["Kestrel:Endpoints:Http:Url"] ?? "http://*:5000";
-        var port = 5000;
-        var colonIndex = httpUrl.LastIndexOf(':');
-        if (colonIndex >= 0 && int.TryParse(httpUrl[(colonIndex + 1)..], out var parsedPort))
-        {
-            port = parsedPort;
-        }
-        // UseKestrel replaces config-based endpoints entirely
+        var httpOnlyConfig = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Endpoints:Http:Url"] = httpUrl,
+            })
+            .Build();
         builder.WebHost.UseKestrel(serverOptions =>
         {
-            serverOptions.ListenAnyIP(port);
+            serverOptions.Configure(httpOnlyConfig, reloadOnChange: false);
         });
     }
 }
