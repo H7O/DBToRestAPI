@@ -2,6 +2,8 @@
 
 Welcome to the DBToRestAPI tutorial! In this series, you'll build a fully functional **phonebook contacts API** — step by step — using nothing but SQL queries and XML configuration files.
 
+> **Note**: This tutorial uses SQL Server syntax for its examples. The bundled `config/sql.xml` and `demo.db` included with the project provide the same endpoints using SQLite, so you can try the API immediately without any database setup. When following along, adapt the SQL to your chosen database — see the [Multi-Database](13-multi-database.md) topic for syntax differences across all six supported engines.
+
 ## What You'll Build
 
 By the end of this tutorial, your phonebook API will support:

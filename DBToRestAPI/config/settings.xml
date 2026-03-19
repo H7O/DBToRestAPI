@@ -3,32 +3,20 @@
 
 
   <ConnectionStrings>
-    <!-- SQL Server (default - no provider attribute needed) -->
-    <default><![CDATA[Data Source=.\s22;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></default>
+    <!-- SQLite — works out of the box, no database setup needed -->
+    <default provider="Microsoft.Data.Sqlite"><![CDATA[Data Source=demo.db;]]></default>
 
-    <!-- SQL Server with explicit provider -->
-    <server2 provider="Microsoft.Data.SqlClient"><![CDATA[Data Source=.\s22;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></server2>
-
-    <!-- SQL Server with explicit provider - just simulating different servers -->
-    <server3 provider="Microsoft.Data.SqlClient"><![CDATA[Data Source=.\s22;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></server3>
-
-    <!-- PostgreSQL -->
-    <postgres provider="Npgsql"><![CDATA[Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypass;]]></postgres>
-
-    <!-- MySQL / MariaDB -->
-    <mysql provider="MySqlConnector"><![CDATA[Server=localhost;Port=3306;Database=mydb;User=root;Password=mypass;SslMode=None;]]></mysql>
-
-    <!-- SQLite (file-based) -->
-    <sqlite provider="Microsoft.Data.Sqlite"><![CDATA[Data Source=mydb.db;]]></sqlite>
-
-    <!-- SQLite (in-memory) -->
-    <sqlite_memory provider="Microsoft.Data.Sqlite"><![CDATA[Data Source=:memory:;]]></sqlite_memory>
-
-    <!-- Oracle -->
-    <oracle provider="Oracle.ManagedDataAccess.Core"><![CDATA[Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=localhost)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=ORCL)));User Id=myuser;Password=mypass;]]></oracle>
-
-    <!-- Oracle (simplified EZ Connect format) -->
-    <oracle_ez provider="Oracle.ManagedDataAccess.Core"><![CDATA[Data Source=localhost:1521/ORCL;User Id=myuser;Password=mypass;]]></oracle_ez>
+    <!-- 
+    Point to your own database by changing <default> above. Examples:
+    
+    <default><![CDATA[Data Source=.\SQLEXPRESS;Initial Catalog=mydb;Integrated Security=True;TrustServerCertificate=True;]]></default>
+    <default provider="Npgsql"><![CDATA[Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypass;]]></default>
+    <default provider="MySqlConnector"><![CDATA[Server=localhost;Port=3306;Database=mydb;User=root;Password=mypass;SslMode=None;]]></default>
+    <default provider="Oracle.ManagedDataAccess.Core"><![CDATA[Data Source=localhost:1521/ORCL;User Id=myuser;Password=mypass;]]></default>
+    
+    You can also define named connections and target them per-endpoint with <connection_string_name>:
+    <analytics provider="Npgsql"><![CDATA[Host=localhost;Port=5432;Database=analytics;...]]></analytics>
+    -->
   </ConnectionStrings>
   
   <additional_configurations>

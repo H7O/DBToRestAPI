@@ -861,6 +861,12 @@ namespace DBToRestAPI.Controllers
                     message = $"Count query `{countQuery}` did not return any records for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                 });
             }
+            // Extract scalar value from single-column count result
+            // e.g. SELECT COUNT(*) returns {"COUNT(*)": 3} on SQLite, extract just 3
+            if (rowCount is IDictionary<string, object?> countDict && countDict.Count == 1)
+            {
+                rowCount = countDict.Values.First();
+            }
             // close the reader for the count query
             await resultCount.CloseReaderAsync();
 
@@ -1225,6 +1231,11 @@ namespace DBToRestAPI.Controllers
                     success = false,
                     message = $"Count query did not return any records for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                 });
+            }
+            // Extract scalar value from single-column count result
+            if (rowCount is IDictionary<string, object?> countDict && countDict.Count == 1)
+            {
+                rowCount = countDict.Values.First();
             }
             await resultCount.CloseReaderAsync();
 

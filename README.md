@@ -34,46 +34,18 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 ### 1. Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) (or later)
-- A database — SQL Server is used below, but any of the six supported engines works
 
-### 2. Create a test database
-
-```sql
-CREATE DATABASE test;
-GO
-USE test;
-GO
-CREATE TABLE [dbo].[contacts] (
-    [id]     UNIQUEIDENTIFIER DEFAULT (NEWID()) NOT NULL PRIMARY KEY,
-    [name]   NVARCHAR(500)    NULL,
-    [phone]  NVARCHAR(100)    NULL,
-    [active] BIT              NULL DEFAULT 1
-);
-```
-
-### 3. Clone & configure
+### 2. Clone & run
 
 ```bash
 git clone https://github.com/H7O/DBToRestAPI.git
-cd DBToRestAPI
-```
-
-Open `DBToRestAPI/config/settings.xml` and set the default connection string:
-
-```xml
-<ConnectionStrings>
-  <default><![CDATA[Data Source=.\SQLEXPRESS;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></default>
-</ConnectionStrings>
-```
-
-### 4. Run
-
-```bash
-cd DBToRestAPI
+cd DBToRestAPI/DBToRestAPI
 dotnet run
 ```
 
-### 5. Test
+That's it — no database setup needed. The app ships with a bundled SQLite database (`demo.db`) and pre-configured endpoints so you can start exploring immediately.
+
+### 3. Test
 
 ```bash
 curl -X POST "https://localhost:7054/hello_world" \
@@ -85,25 +57,47 @@ Response:
 
 ```json
 {
-  "message_from_db": "hello World! Time now is 2025-01-15 12:34:56.789"
+  "message_from_db": "hello World! Time now is 2025-01-15 12:34:56"
 }
 ```
+
+Try the bundled contacts API:
+
+```bash
+# List contacts (3 sample contacts included)
+curl "https://localhost:7054/contacts"
+
+# Create a new contact
+curl -X POST "https://localhost:7054/contacts" \
+     -H "Content-Type: application/json" \
+     -d '{"name": "Alice Smith", "phone": "555-0101"}'
+```
+
+### 4. How it works
 
 That response came straight from this SQL in `config/sql.xml`:
 
 ```xml
 <hello_world>
   <query><![CDATA[
-    DECLARE @name NVARCHAR(500) = {{name}};
-    IF (@name IS NULL OR LTRIM(RTRIM(@name)) = '')
-      SET @name = 'world';
-    SELECT 'hello ' + @name + '! Time now is '
-           + CONVERT(NVARCHAR(50), GETDATE(), 121) AS message_from_db;
+    SELECT 'hello ' || COALESCE(NULLIF({{name}}, ''), 'world')
+      || '! Time now is ' || datetime('now') AS message_from_db;
   ]]></query>
 </hello_world>
 ```
 
 The XML node name becomes the route. `{{name}}` is safely injected from the request body. Edit the query, save the file, and the endpoint updates instantly — no restart.
+
+### 5. Connect your own database
+
+When you're ready, swap the default connection string in `config/settings.xml` to point to your own database:
+
+```xml
+<ConnectionStrings>
+  <!-- SQL Server -->
+  <default><![CDATA[Data Source=.\SQLEXPRESS;Initial Catalog=mydb;Integrated Security=True;TrustServerCertificate=True;]]></default>
+</ConnectionStrings>
+```
 
 ## Supported Databases
 
@@ -151,12 +145,9 @@ Here is a complete CRUD endpoint — a POST that creates a contact and returns t
   <success_status_code>201</success_status_code>
   <response_structure>single</response_structure>
   <query><![CDATA[
-    DECLARE @name  NVARCHAR(500) = {{name}};
-    DECLARE @phone NVARCHAR(100) = {{phone}};
-
     INSERT INTO contacts (name, phone)
-    OUTPUT inserted.id, inserted.name, inserted.phone, inserted.active
-    VALUES (@name, @phone);
+    VALUES ({{name}}, {{phone}})
+    RETURNING id, name, phone, active;
   ]]></query>
 </create_contact>
 ```
@@ -172,7 +163,7 @@ curl -X POST "https://localhost:7054/contacts" \
   "id": "9a4f2c8d-1b3e-4f5a-8c7d-6e9f0a1b2c3d",
   "name": "Alice Johnson",
   "phone": "12345",
-  "active": true
+  "active": 1
 }
 ```
 
