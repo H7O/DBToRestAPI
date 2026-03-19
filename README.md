@@ -43,14 +43,20 @@ Download the latest release for your platform from the [Releases page](https://g
 | macOS (x64) | `DBToRestAPI-osx-x64.tar.gz` |
 | macOS (ARM64) | `DBToRestAPI-osx-arm64.tar.gz` |
 
-Extract the archive and run the executable — no .NET SDK or database setup required. The app ships with a bundled SQLite database (`demo.db`) and pre-configured endpoints so you can start exploring immediately.
+No .NET SDK or database setup required. The app ships with a bundled SQLite database (`demo.db`) and pre-configured endpoints so you can start exploring immediately.
 
-**Alternatively**, if you have the [.NET 10 SDK](https://dotnet.microsoft.com/download) (or later):
+**Windows:**
+```powershell
+# Extract the zip, then:
+.\DBToRestAPI.exe
+```
 
+**Linux / macOS:**
 ```bash
-git clone https://github.com/H7O/DBToRestAPI.git
-cd DBToRestAPI/DBToRestAPI
-dotnet run
+tar xzf DBToRestAPI-linux-x64.tar.gz
+cd DBToRestAPI-linux-x64
+chmod +x DBToRestAPI
+./DBToRestAPI
 ```
 
 ### 2. Test
@@ -81,7 +87,7 @@ curl -X POST "http://localhost:5000/contacts" \
      -d '{"name": "Alice Smith", "phone": "555-0101"}'
 ```
 
-> **HTTPS**: To use HTTPS instead, run with `dotnet run --launch-profile https` (or provide a certificate for the release binary), then replace the URL with `https://localhost:5001` and add `-k` to your curl commands to accept the dev certificate: `curl -k https://localhost:5001/hello_world`. See the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for production setup.
+> **HTTPS**: The app is pre-configured for HTTPS — just place a `.pfx` certificate at `config/certs/certificate.pfx` and restart. It will automatically listen on both HTTP (port 5000) and HTTPS (port 5001). See the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for details.
 
 ### 3. How it works
 
