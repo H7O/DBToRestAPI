@@ -129,9 +129,16 @@ if (!string.IsNullOrEmpty(httpsCertPath))
 
         // Also configure Kestrel to only listen on the HTTP endpoint
         var httpUrl = builder.Configuration["Kestrel:Endpoints:Http:Url"] ?? "http://*:5000";
+        // Extract port without Uri — wildcard hostnames like http://*:5000 are not valid URIs
+        var port = 5000;
+        var colonIndex = httpUrl.LastIndexOf(':');
+        if (colonIndex >= 0 && int.TryParse(httpUrl[(colonIndex + 1)..], out var parsedPort))
+        {
+            port = parsedPort;
+        }
         builder.WebHost.ConfigureKestrel(serverOptions =>
         {
-            serverOptions.ListenAnyIP(new Uri(httpUrl).Port);
+            serverOptions.ListenAnyIP(port);
         });
     }
 }
