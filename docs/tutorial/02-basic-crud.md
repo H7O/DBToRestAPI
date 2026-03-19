@@ -132,14 +132,14 @@ Key points:
 ### Test It
 
 ```bash
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Alice Smith\", \"phone\": \"555-0101\"}"
 ```
 
 > **Windows CMD note**: Use double quotes for the outer string and escape inner quotes with `\"`. Or use PowerShell:
 > ```powershell
-> curl -Method POST http://localhost:5165/contacts `
+> curl -Method POST http://localhost:5000/contacts `
 >   -ContentType "application/json" `
 >   -Body '{"name": "Alice Smith", "phone": "555-0101"}'
 > ```
@@ -157,11 +157,11 @@ Response (HTTP 201 Created):
 Add a few more contacts so we have data to work with:
 
 ```bash
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Bob Jones\", \"phone\": \"555-0102\"}"
 
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Charlie Brown\", \"phone\": \"555-0103\"}"
 ```
@@ -208,7 +208,7 @@ This way a single endpoint handles both "get all contacts" and "search contacts"
 
 **Get all contacts:**
 ```bash
-curl http://localhost:5165/contacts
+curl http://localhost:5000/contacts
 ```
 
 Response:
@@ -237,7 +237,7 @@ Response:
 
 **Search by name:**
 ```bash
-curl "http://localhost:5165/contacts?name=alice"
+curl "http://localhost:5000/contacts?name=alice"
 ```
 
 Response:
@@ -254,7 +254,7 @@ Response:
 
 **Search by phone:**
 ```bash
-curl "http://localhost:5165/contacts?phone=0102"
+curl "http://localhost:5000/contacts?phone=0102"
 ```
 
 ```json
@@ -305,7 +305,7 @@ The formula: **50000 + HTTP status code**. The application strips the `50` prefi
 Try creating a duplicate:
 
 ```bash
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Alice Smith\", \"phone\": \"555-0101\"}"
 ```

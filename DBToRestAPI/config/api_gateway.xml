@@ -1,4 +1,4 @@
-﻿<settings>
+<settings>
   <routes>
 
     <cat_facts>
@@ -7,7 +7,7 @@
     </cat_facts>
 
     <hello_world_routed>
-      <url>https://localhost:7054/hello_world</url>
+      <url>https://localhost:5001/hello_world</url>
       <excluded_headers>x-api-key,host</excluded_headers>
       <ignore_target_route_certificate_errors>true</ignore_target_route_certificate_errors>
     </hello_world_routed>
@@ -32,7 +32,7 @@
     -->
     <remote_protected_hello_world_routed>
       
-      <url>https://localhost:7054/protected_hello_world</url>
+      <url>https://localhost:5001/protected_hello_world</url>
       <excluded_headers>host</excluded_headers>
       <ignore_target_route_certificate_errors>true</ignore_target_route_certificate_errors>
       <applied_headers>
@@ -45,7 +45,7 @@
 
 
     <!-- 
-    callers to this API will use the path `cat/facts` (e.g., https://localhost:7054/cat/facts)
+    callers to this API will use the path `cat/facts` (e.g., https://localhost:5001/cat/facts)
     will get routed to the `https://catfact.ninja/fact` API.
     -->
     <cat_facts_custom_path_example>
@@ -65,13 +65,13 @@
 
     <hello_world_loopback>
       <route>loopback/hello_world</route>
-      <url>https://localhost:7054/hello_world</url>
+      <url>https://localhost:5001/hello_world</url>
       <excluded_headers>x-api-key,host</excluded_headers>
     </hello_world_loopback>
 
     <hello_world_loopback_with_cache>
       <route>loopback/hello_world_with_cache</route>
-      <url>https://localhost:7054/hello_world</url>
+      <url>https://localhost:5001/hello_world</url>
       <excluded_headers>x-api-key,host</excluded_headers>
 
       <cache>

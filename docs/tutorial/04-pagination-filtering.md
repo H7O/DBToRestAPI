@@ -98,7 +98,7 @@ When you add a `<count_query>`, two things happen:
 ### Response With `<count_query>`
 
 ```bash
-curl "http://localhost:5165/contacts?take=2&skip=0"
+curl "http://localhost:5000/contacts?take=2&skip=0"
 ```
 
 ```json
@@ -191,22 +191,22 @@ Let's test various pagination scenarios:
 
 **Page 1 (first 2 records):**
 ```bash
-curl "http://localhost:5165/contacts?take=2&skip=0"
+curl "http://localhost:5000/contacts?take=2&skip=0"
 ```
 
 **Page 2 (next 2 records):**
 ```bash
-curl "http://localhost:5165/contacts?take=2&skip=2"
+curl "http://localhost:5000/contacts?take=2&skip=2"
 ```
 
 **Sorted by phone, descending:**
 ```bash
-curl "http://localhost:5165/contacts?sort_by=phone&sort_order=desc"
+curl "http://localhost:5000/contacts?sort_by=phone&sort_order=desc"
 ```
 
 **Search + pagination:**
 ```bash
-curl "http://localhost:5165/contacts?name=a&take=10&skip=0"
+curl "http://localhost:5000/contacts?name=a&take=10&skip=0"
 ```
 
 ## The `response_structure` and `count_query` Relationship

@@ -54,7 +54,7 @@ A download endpoint is like any other endpoint, but with two differences:
 ### Test It
 
 ```bash
-curl -O http://localhost:5165/contacts/abc-123/documents/def-456
+curl -O http://localhost:5000/contacts/abc-123/documents/def-456
 ```
 
 The `-O` flag saves the file with its original name.

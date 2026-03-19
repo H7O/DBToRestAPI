@@ -266,17 +266,17 @@ Test the validation:
 
 ```bash
 # Too short name → 400
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"A\", \"phone\": \"555-0101\"}"
 
 # Invalid phone characters → 400
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Alice\", \"phone\": \"not_a_phone!\"}"
 
 # Duplicate → 409
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Alice Smith\", \"phone\": \"555-0101\"}"
 ```

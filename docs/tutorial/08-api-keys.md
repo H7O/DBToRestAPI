@@ -78,7 +78,7 @@ In this example:
 
 ```bash
 curl -H "x-api-key: vendor-key-abc123" \
-  http://localhost:5165/api/contacts
+  http://localhost:5000/api/contacts
 ```
 
 Response: normal JSON data.
@@ -86,7 +86,7 @@ Response: normal JSON data.
 ### Without a key:
 
 ```bash
-curl http://localhost:5165/api/contacts
+curl http://localhost:5000/api/contacts
 ```
 
 Response (HTTP 401):
@@ -100,7 +100,7 @@ Response (HTTP 401):
 
 ```bash
 curl -H "x-api-key: wrong-key" \
-  http://localhost:5165/api/contacts
+  http://localhost:5000/api/contacts
 ```
 
 Response (HTTP 401):
@@ -240,16 +240,16 @@ Let's add API key protection to the write operations (create, update, delete) wh
 3. Test it:
    ```bash
    # Read still works without key
-   curl http://localhost:5165/contacts
+   curl http://localhost:5000/contacts
 
    # Write requires the key
-   curl -X POST http://localhost:5165/contacts \
+   curl -X POST http://localhost:5000/contacts \
      -H "Content-Type: application/json" \
      -H "x-api-key: my-secret-write-key" \
      -d "{\"name\": \"Dave\", \"phone\": \"555-0104\"}"
 
    # Write without key → 401
-   curl -X POST http://localhost:5165/contacts \
+   curl -X POST http://localhost:5000/contacts \
      -H "Content-Type: application/json" \
      -d "{\"name\": \"Eve\", \"phone\": \"555-0105\"}"
    ```

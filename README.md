@@ -56,7 +56,7 @@ dotnet run
 ### 2. Test
 
 ```bash
-curl -X POST "http://localhost:5165/hello_world" \
+curl -X POST "http://localhost:5000/hello_world" \
      -H "Content-Type: application/json" \
      -d '{"name": "World"}'
 ```
@@ -73,15 +73,15 @@ Try the bundled contacts API:
 
 ```bash
 # List contacts (3 sample contacts included)
-curl "http://localhost:5165/contacts"
+curl "http://localhost:5000/contacts"
 
 # Create a new contact
-curl -X POST "http://localhost:5165/contacts" \
+curl -X POST "http://localhost:5000/contacts" \
      -H "Content-Type: application/json" \
      -d '{"name": "Alice Smith", "phone": "555-0101"}'
 ```
 
-> **HTTPS**: To use HTTPS instead, run with `dotnet run --launch-profile https` (or use the release binary which listens on both by default), then replace the URL with `https://localhost:7054` and add `-k` to your curl commands to accept the dev certificate: `curl -k https://localhost:7054/hello_world`. See the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for production setup.
+> **HTTPS**: To use HTTPS instead, run with `dotnet run --launch-profile https` (or provide a certificate for the release binary), then replace the URL with `https://localhost:5001` and add `-k` to your curl commands to accept the dev certificate: `curl -k https://localhost:5001/hello_world`. See the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for production setup.
 
 ### 3. How it works
 
@@ -163,7 +163,7 @@ Here is a complete CRUD endpoint — a POST that creates a contact and returns t
 ```
 
 ```bash
-curl -X POST "http://localhost:5165/contacts" \
+curl -X POST "http://localhost:5000/contacts" \
      -H "Content-Type: application/json" \
      -d '{"name":"Alice Johnson","phone":"12345"}'
 ```

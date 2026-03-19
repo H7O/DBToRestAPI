@@ -53,7 +53,7 @@
   <settings_encryption>
     <!-- Prefix added to encrypted values (helps identify what's encrypted) -->
     <encryption_prefix>encrypted:</encryption_prefix>
-    <data_protection_key_path>c:/temp/vault/keys/</data_protection_key_path>
+    <data_protection_key_path>config/vault/keys/</data_protection_key_path>
 
     <!-- List of configuration sections/paths to encrypt -->
     <sections_to_encrypt>

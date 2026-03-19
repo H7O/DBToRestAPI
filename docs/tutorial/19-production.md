@@ -40,7 +40,7 @@ memory only.
 <!-- settings.xml -->
 <settings_encryption>
   <encryption_prefix>encrypted:</encryption_prefix>
-  <data_protection_key_path>c:/secure/vault/keys/</data_protection_key_path>
+  <data_protection_key_path>/secure/vault/keys/</data_protection_key_path>
 
   <sections_to_encrypt>
     <!-- Encrypt all connection strings -->

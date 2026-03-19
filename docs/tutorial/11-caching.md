@@ -110,16 +110,16 @@ Try it:
 
 ```bash
 # First call - note the timestamp
-curl http://localhost:5165/hello_world_with_cache
+curl http://localhost:5000/hello_world_with_cache
 
 # Second call within 20 seconds - same timestamp (cached!)
-curl http://localhost:5165/hello_world_with_cache
+curl http://localhost:5000/hello_world_with_cache
 
 # Different name - different cache entry
-curl "http://localhost:5165/hello_world_with_cache?name=Alice"
+curl "http://localhost:5000/hello_world_with_cache?name=Alice"
 
 # Wait 20 seconds, try again - new timestamp
-curl http://localhost:5165/hello_world_with_cache
+curl http://localhost:5000/hello_world_with_cache
 ```
 
 The timestamp in the response proves whether the SQL actually ran or the cache was used.

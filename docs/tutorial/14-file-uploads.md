@@ -143,7 +143,7 @@ Add the upload endpoint to `sql.xml`:
 ### Method 1: JSON with Base64
 
 ```bash
-curl -X POST http://localhost:5165/contacts/abc-123/documents \
+curl -X POST http://localhost:5000/contacts/abc-123/documents \
   -H "Content-Type: application/json" \
   -d '{
     "attachments": [
@@ -158,7 +158,7 @@ curl -X POST http://localhost:5165/contacts/abc-123/documents \
 ### Method 2: Multipart Form Data
 
 ```bash
-curl -X POST http://localhost:5165/contacts/abc-123/documents \
+curl -X POST http://localhost:5000/contacts/abc-123/documents \
   -F "attachments=[{\"file_name\": \"photo.jpg\"}]" \
   -F "file=@/path/to/photo.jpg"
 ```

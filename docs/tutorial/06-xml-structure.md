@@ -169,7 +169,7 @@ In production, SQL error details are hidden. Debug mode lets you see them:
 
 Send this header to see SQL errors in the response:
 ```bash
-curl -H "debug-mode: my-secret-key" http://localhost:5165/broken_endpoint
+curl -H "debug-mode: my-secret-key" http://localhost:5000/broken_endpoint
 ```
 
 Without this header, errors return a generic message instead:

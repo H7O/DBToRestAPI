@@ -77,12 +77,12 @@ The `OUTPUT inserted.*` clause is SQL Server's way of returning the modified row
 
 First, get a contact ID:
 ```bash
-curl http://localhost:5165/contacts
+curl http://localhost:5000/contacts
 ```
 
 Then update it (replace with your actual ID):
 ```bash
-curl -X PUT http://localhost:5165/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+curl -X PUT http://localhost:5000/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Alice Johnson\", \"phone\": \"555-9999\"}"
 ```
@@ -98,7 +98,7 @@ Response (HTTP 200):
 
 **Test the 404 case:**
 ```bash
-curl -X PUT http://localhost:5165/contacts/00000000-0000-0000-0000-000000000000 \
+curl -X PUT http://localhost:5000/contacts/00000000-0000-0000-0000-000000000000 \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Nobody\", \"phone\": \"000-0000\"}"
 ```
@@ -151,7 +151,7 @@ Some REST APIs return HTTP 204 (No Content) for deletes. Here, since we're retur
 ### Test It
 
 ```bash
-curl -X DELETE http://localhost:5165/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+curl -X DELETE http://localhost:5000/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
 Response (HTTP 200):
@@ -166,7 +166,7 @@ Response (HTTP 200):
 
 Verify it's gone:
 ```bash
-curl http://localhost:5165/contacts
+curl http://localhost:5000/contacts
 ```
 
 The deleted contact should no longer appear.
@@ -247,7 +247,7 @@ The OUTPUT clause can contain expressions — not just columns. Here we convert 
 
 Deactivate a contact:
 ```bash
-curl -X PUT http://localhost:5165/contacts/b2c3d4e5-.../deactivate
+curl -X PUT http://localhost:5000/contacts/b2c3d4e5-.../deactivate
 ```
 
 Response:
@@ -262,7 +262,7 @@ Response:
 
 Reactivate:
 ```bash
-curl -X PUT http://localhost:5165/contacts/b2c3d4e5-.../activate
+curl -X PUT http://localhost:5000/contacts/b2c3d4e5-.../activate
 ```
 
 Response:
@@ -277,7 +277,7 @@ Response:
 
 Invalid action:
 ```bash
-curl -X PUT http://localhost:5165/contacts/b2c3d4e5-.../archive
+curl -X PUT http://localhost:5000/contacts/b2c3d4e5-.../archive
 ```
 
 Response (HTTP 400):

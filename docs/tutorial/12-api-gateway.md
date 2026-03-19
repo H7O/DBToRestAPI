@@ -32,7 +32,7 @@ Define gateway routes in `/config/api_gateway.xml`:
 
 Test it:
 ```bash
-curl http://localhost:5165/cat_facts
+curl http://localhost:5000/cat_facts
 ```
 
 Response (proxied from catfact.ninja):
@@ -132,13 +132,13 @@ Combine API key protection with proxying:
 
 **Without** your API key:
 ```bash
-curl http://localhost:5165/protected_cat_facts
+curl http://localhost:5000/protected_cat_facts
 # → 401 Unauthorized
 ```
 
 **With** your API key:
 ```bash
-curl -H "x-api-key: api key 1" http://localhost:5165/protected_cat_facts
+curl -H "x-api-key: api key 1" http://localhost:5000/protected_cat_facts
 # → Cat fact JSON (200 OK)
 ```
 

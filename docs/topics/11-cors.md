@@ -214,13 +214,13 @@ When `allow_credentials` is true:
 ```bash
 # With Origin header
 curl -i -H "Origin: https://app.example.com" \
-  https://localhost:7054/api/data
+  https://localhost:5001/api/data
 
 # Preflight
 curl -i -X OPTIONS \
   -H "Origin: https://app.example.com" \
   -H "Access-Control-Request-Method: POST" \
-  https://localhost:7054/api/data
+  https://localhost:5001/api/data
 ```
 
 ### JavaScript

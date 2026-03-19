@@ -107,7 +107,7 @@ Add the `<authorize>` block to any endpoint in `sql.xml`:
 **With a valid token:**
 ```bash
 curl -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
-  http://localhost:5165/profile
+  http://localhost:5000/profile
 ```
 
 Response (HTTP 200):
@@ -121,7 +121,7 @@ Response (HTTP 200):
 
 **Without a token:**
 ```bash
-curl http://localhost:5165/profile
+curl http://localhost:5000/profile
 ```
 
 Response (HTTP 401):

@@ -92,7 +92,7 @@ A request to `GET /users/abc-123/posts?take=5&skip=10` resolves:
 For POST and PUT requests, parameters are typically sent in the JSON request body:
 
 ```bash
-curl -X POST http://localhost:5165/contacts \
+curl -X POST http://localhost:5000/contacts \
   -H "Content-Type: application/json" \
   -d '{"name": "Alice", "phone": "555-0101"}'
 ```
@@ -282,19 +282,19 @@ Let's put this together. Add a new endpoint to your `sql.xml` that fetches a sin
 Test it by first getting a contact ID from the list:
 
 ```bash
-curl http://localhost:5165/contacts
+curl http://localhost:5000/contacts
 ```
 
 Then fetching that specific contact (replace with your actual ID):
 
 ```bash
-curl http://localhost:5165/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+curl http://localhost:5000/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
 Try a non-existent ID to see the 404 error:
 
 ```bash
-curl http://localhost:5165/contacts/00000000-0000-0000-0000-000000000000
+curl http://localhost:5000/contacts/00000000-0000-0000-0000-000000000000
 ```
 
 ```json

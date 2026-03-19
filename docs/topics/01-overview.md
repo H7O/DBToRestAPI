@@ -65,7 +65,7 @@ dotnet run --project DBToRestAPI
 ### Step 5: Test
 
 ```bash
-curl -X POST https://localhost:7054/hello_world \
+curl -X POST https://localhost:5001/hello_world \
   -H "Content-Type: application/json" \
   -d '{"name": "John"}'
 ```

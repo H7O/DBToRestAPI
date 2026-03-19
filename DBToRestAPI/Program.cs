@@ -110,6 +110,32 @@ var maxFileSize = builder.Configuration.GetValue<long?>("max_payload_size_in_byt
     ?? (300 * 1024 * 1024); // Default to 300MB if not found
 
 
+// Gracefully skip HTTPS endpoint if the configured certificate file is missing
+var httpsCertPath = builder.Configuration["Kestrel:Endpoints:Https:Certificate:Path"];
+var httpsSkipped = false;
+if (!string.IsNullOrEmpty(httpsCertPath))
+{
+    var resolvedCertPath = Path.IsPathRooted(httpsCertPath)
+        ? httpsCertPath
+        : Path.Combine(AppContext.BaseDirectory, httpsCertPath);
+
+    if (!File.Exists(resolvedCertPath))
+    {
+        httpsSkipped = true;
+        // Clear the HTTPS endpoint config so Kestrel won't attempt to bind it
+        builder.Configuration["Kestrel:Endpoints:Https:Url"] = null;
+        builder.Configuration["Kestrel:Endpoints:Https:Certificate:Path"] = null;
+        builder.Configuration["Kestrel:Endpoints:Https:Certificate:Password"] = null;
+
+        // Also configure Kestrel to only listen on the HTTP endpoint
+        var httpUrl = builder.Configuration["Kestrel:Endpoints:Http:Url"] ?? "http://*:5000";
+        builder.WebHost.ConfigureKestrel(serverOptions =>
+        {
+            serverOptions.ListenAnyIP(new Uri(httpUrl).Port);
+        });
+    }
+}
+
 // Set maximum request body size for Kestrel and form options
 builder.Services.Configure<KestrelServerOptions>(options =>
 {
@@ -175,6 +201,11 @@ app.Lifetime.ApplicationStarted.Register(() =>
         }
         logger.LogInformation("╚════════════════════════════════════════════════════════════════╝");
         logger.LogInformation("");
+    }
+
+    if (httpsSkipped)
+    {
+        logger.LogWarning("HTTPS endpoint skipped — certificate not found at '{CertPath}'. To enable HTTPS, see docs/topics/16-tls-certificates.md", httpsCertPath);
     }
 });
 

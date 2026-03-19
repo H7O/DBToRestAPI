@@ -34,7 +34,7 @@ This document describes the caching implementation for API Gateway routes in DBT
 ```xml
 <hello_world_loopback_with_cache>
   <route>loopback/hello_world_with_cache</route>
-  <url>https://localhost:7054/hello_world</url>
+  <url>https://localhost:5001/hello_world</url>
   <excluded_headers>x-api-key,host</excluded_headers>
 
   <cache>
@@ -91,7 +91,7 @@ Cache keys respect wildcard routes:
 
 ### Test Endpoint Configuration
 The `hello_world_loopback_with_cache` route is configured for testing:
-- Calls back to the same service at `https://localhost:7054/hello_world`
+- Calls back to the same service at `https://localhost:5001/hello_world`
 - Returns timestamp in response (perfect for verifying caching)
 - Cache duration: 20 seconds
 - Invalidator: `name` parameter
@@ -101,53 +101,53 @@ The `hello_world_loopback_with_cache` route is configured for testing:
 #### Test 1: Basic caching (same name)
 ```powershell
 # First call - should hit the database, cache the response
-curl -X GET "https://localhost:7054/loopback/hello_world_with_cache?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world_with_cache?name=test"
 
 # Wait 1-2 seconds, then call again
-curl -X GET "https://localhost:7054/loopback/hello_world_with_cache?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world_with_cache?name=test"
 ```
 **Expected**: Same timestamp in both responses (cached)
 
 #### Test 2: Cache invalidation (different name)
 ```powershell
 # Call with name=test
-curl -X GET "https://localhost:7054/loopback/hello_world_with_cache?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world_with_cache?name=test"
 
 # Call with name=john (different invalidator)
-curl -X GET "https://localhost:7054/loopback/hello_world_with_cache?name=john"
+curl -X GET "https://localhost:5001/loopback/hello_world_with_cache?name=john"
 ```
 **Expected**: Different timestamps (different cache entries)
 
 #### Test 3: Cache expiration
 ```powershell
 # First call
-curl -X GET "https://localhost:7054/loopback/hello_world_with_cache?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world_with_cache?name=test"
 
 # Wait 21+ seconds (cache duration is 20 seconds)
 Start-Sleep -Seconds 21
 
 # Call again
-curl -X GET "https://localhost:7054/loopback/hello_world_with_cache?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world_with_cache?name=test"
 ```
 **Expected**: Different timestamps (cache expired)
 
 #### Test 4: No cache (different route)
 ```powershell
 # Call the regular loopback (no cache configured)
-curl -X GET "https://localhost:7054/loopback/hello_world?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world?name=test"
 
 # Call again immediately
-curl -X GET "https://localhost:7054/loopback/hello_world?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world?name=test"
 ```
 **Expected**: Different timestamps (no caching, streaming mode)
 
 #### Test 5: HTTP Method distinction
 ```powershell
 # GET request
-curl -X GET "https://localhost:7054/loopback/hello_world_with_cache?name=test"
+curl -X GET "https://localhost:5001/loopback/hello_world_with_cache?name=test"
 
 # POST request (same parameters)
-curl -X POST "https://localhost:7054/loopback/hello_world_with_cache?name=test"
+curl -X POST "https://localhost:5001/loopback/hello_world_with_cache?name=test"
 ```
 **Expected**: Different timestamps (different cache entries per method)
 

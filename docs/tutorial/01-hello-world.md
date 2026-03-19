@@ -29,8 +29,8 @@ You should see output indicating the application has started:
 
 ```
 info: Microsoft.Hosting.Lifetime[14]
-      Now listening on: https://localhost:7054
-      Now listening on: http://localhost:5165
+      Now listening on: https://localhost:5001
+      Now listening on: http://localhost:5000
 ```
 
 > **Tip:** The ports are configured in `Properties/launchSettings.json`. You can change them there if they conflict with other services.
@@ -42,7 +42,7 @@ Leave this terminal running. Open a **second terminal** for testing.
 The sample `sql.xml` that ships with the project already includes a `hello_world` endpoint. Let's try it:
 
 ```bash
-curl http://localhost:5165/hello_world
+curl http://localhost:5000/hello_world
 ```
 
 You should get back a JSON response like:
@@ -56,7 +56,7 @@ You should get back a JSON response like:
 Now try passing a name:
 
 ```bash
-curl "http://localhost:5165/hello_world?name=Alice"
+curl "http://localhost:5000/hello_world?name=Alice"
 ```
 
 Response:
@@ -202,7 +202,7 @@ Save the file. Remember — **hot-reload is automatic**. No need to restart the 
 Test it immediately:
 
 ```bash
-curl http://localhost:5165/server_time
+curl http://localhost:5000/server_time
 ```
 
 Response:
