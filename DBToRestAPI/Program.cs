@@ -208,7 +208,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
 
     if (httpsSkipped)
     {
-        logger.LogWarning("HTTPS endpoint skipped — certificate not found at '{CertPath}'. To enable HTTPS, see docs/topics/16-tls-certificates.md", httpsCertPath);
+        logger.LogWarning("HTTPS endpoint skipped — certificate not found at '{CertPath}'. Place your .pfx certificate there and restart to enable HTTPS. See docs/topics/16-tls-certificates.md", httpsCertPath);
     }
 });
 
