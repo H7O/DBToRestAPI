@@ -59,6 +59,25 @@ chmod +x DBToRestAPI
 ./DBToRestAPI
 ```
 
+**Or as a one-liner (Linux/macOS):**
+```bash
+curl -LO https://github.com/H7O/DBToRestAPI/releases/latest/download/DBToRestAPI-linux-x64.tar.gz \
+  && tar xzf DBToRestAPI-linux-x64.tar.gz && cd DBToRestAPI-linux-x64 \
+  && chmod +x DBToRestAPI && ./DBToRestAPI
+```
+
+The server starts on **http://localhost:5000**. You should see:
+
+```
+╔════════════════════════════════════════════════════════════════╗
+║  🚀 DB-to-REST API is up and running!                          ║
+╠════════════════════════════════════════════════════════════════╣
+║  ➜  http://*:5000                                             ║
+╚════════════════════════════════════════════════════════════════╝
+```
+
+Once you see this banner, you're ready to make your first request.
+
 ### 2. Test
 
 ```bash
