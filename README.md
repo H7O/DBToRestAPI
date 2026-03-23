@@ -280,7 +280,7 @@ All files support **hot-reload** — edit and save, changes apply immediately.
 
 ## License
 
-MIT
+[MIT](LICENSE) © Hussein Al Bayati
 
 ## Contributing
 
