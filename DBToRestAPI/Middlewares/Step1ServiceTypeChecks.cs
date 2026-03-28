@@ -208,7 +208,7 @@ public class Step1ServiceTypeChecks(
         // For OPTIONS requests, resolve ALL matching routes to get complete CORS info
         if (context.Request.Method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
         {
-            var allMatchingSections = this._queryRouteResolver.ResolveRoutes(route);
+            var allMatchingSections = this._queryRouteResolver.ResolveRoutes(route, context.Request.Host.Host);
 
             if (allMatchingSections == null || allMatchingSections.Count == 0)
             {
@@ -237,7 +237,7 @@ public class Step1ServiceTypeChecks(
         }
 
         // For non-OPTIONS requests, resolve single best matching route
-        var serviceQuerySection = this._queryRouteResolver.ResolveRoute(route, context.Request.Method);
+        var serviceQuerySection = this._queryRouteResolver.ResolveRoute(route, context.Request.Method, context.Request.Host.Host);
 
         if (serviceQuerySection == null || !serviceQuerySection.Exists())
         {

@@ -35,8 +35,8 @@ using System.Text.RegularExpressions;
 public class QueryRouteResolver
 {
 
-    private List<(string NormalizedRoute, HashSet<string> Verbs, IConfigurationSection Config)> _exactRoutes = new();
-    private List<(string NormalizedRoute, HashSet<string> Verbs, IConfigurationSection Config)> _routesWithVariables = new();
+    private List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)> _exactRoutes = new();
+    private List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)> _routesWithVariables = new();
     private readonly IEncryptedConfiguration _configuration;
 
 
@@ -66,8 +66,8 @@ public class QueryRouteResolver
             if (querySections == null || !querySections.Exists())
                 return;
 
-            var newExactRoutes = new List<(string NormalizedRoute, HashSet<string> Verbs, IConfigurationSection Config)>();
-            var newRoutesWithVariables = new List<(string NormalizedRoute, HashSet<string> Verbs, IConfigurationSection Config)>();
+            var newExactRoutes = new List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>();
+            var newRoutesWithVariables = new List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>();
             var newExactRouteVerbs = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var querySection in querySections.GetChildren())
@@ -110,15 +110,19 @@ public class QueryRouteResolver
                         DefaultRegex.DefaultRouteVariablesCompiledRegex
                         : new Regex(routeParameterPattern, RegexOptions.Compiled);
 
+                    // Read optional host pattern (e.g., "www.example.com" or "*.example.com")
+                    var hostPattern = endpointSection.GetValue<string>("host");
+                    if (string.IsNullOrWhiteSpace(hostPattern)) hostPattern = null;
+
                     if (routeParametersRegex.IsMatch(normalizedRoute))
                     {
                         // Store routes with variables separately
-                        newRoutesWithVariables.Add((normalizedRoute, verbs, endpointSection));
+                        newRoutesWithVariables.Add((normalizedRoute, verbs, hostPattern, endpointSection));
                     }
                     else
                     {
                         // Store exact routes separately
-                        newExactRoutes.Add((normalizedRoute, verbs, endpointSection));
+                        newExactRoutes.Add((normalizedRoute, verbs, hostPattern, endpointSection));
 
                         if (!newExactRouteVerbs.ContainsKey(normalizedRoute))
                         {
@@ -169,7 +173,7 @@ public class QueryRouteResolver
     }
 
 
-    public IConfigurationSection? ResolveRoute(string urlRoute, string verb)
+    public IConfigurationSection? ResolveRoute(string urlRoute, string verb, string? requestHost = null)
     {
         if (string.IsNullOrWhiteSpace(urlRoute) || string.IsNullOrWhiteSpace(verb))
             return null;
@@ -177,10 +181,14 @@ public class QueryRouteResolver
         // with the normalized routes in the config
         urlRoute = NormalizeRoute(urlRoute);
 
-        // Try exact match with both route and verb
-        var exactMatch = _exactRoutes.FirstOrDefault(rc =>
-            string.Equals(rc.NormalizedRoute, urlRoute, StringComparison.OrdinalIgnoreCase) &&
-            rc.Verbs.Contains(verb));
+        // Try exact match with both route and verb, prioritized by host specificity
+        var exactMatch = _exactRoutes
+            .Where(rc =>
+                string.Equals(rc.NormalizedRoute, urlRoute, StringComparison.OrdinalIgnoreCase)
+                && rc.Verbs.Contains(verb)
+                && MatchHost(rc.HostPattern, requestHost))
+            .OrderByDescending(rc => GetHostSpecificityScore(rc.HostPattern, requestHost))
+            .FirstOrDefault();
 
         if (exactMatch.Config != null)
         {
@@ -188,7 +196,7 @@ public class QueryRouteResolver
         }
 
         // If no exact match, try best matching route with variables
-        return GetBestMatchingRouteConfig(urlRoute, verb);
+        return GetBestMatchingRouteConfig(urlRoute, verb, requestHost);
     }
 
     /// <summary>
@@ -198,7 +206,7 @@ public class QueryRouteResolver
     /// </summary>
     /// <param name="urlRoute">The URL route path to match</param>
     /// <returns>List of all matching configuration sections for the route</returns>
-    public List<IConfigurationSection> ResolveRoutes(string urlRoute)
+    public List<IConfigurationSection> ResolveRoutes(string urlRoute, string? requestHost = null)
     {
         var results = new List<IConfigurationSection>();
 
@@ -208,15 +216,16 @@ public class QueryRouteResolver
         // Normalize inputs - remove leading/trailing slashes for consistent comparison
         urlRoute = NormalizeRoute(urlRoute);
 
-        // Find all exact route matches (regardless of verb)
+        // Find all exact route matches (regardless of verb), filtered by host
         var exactMatches = _exactRoutes
-            .Where(rc => string.Equals(rc.NormalizedRoute, urlRoute, StringComparison.OrdinalIgnoreCase))
+            .Where(rc => string.Equals(rc.NormalizedRoute, urlRoute, StringComparison.OrdinalIgnoreCase)
+                && MatchHost(rc.HostPattern, requestHost))
             .Select(rc => rc.Config);
 
         results.AddRange(exactMatches);
 
         // Find all matching parameterized routes
-        var parameterizedMatches = GetAllMatchingRouteConfigs(urlRoute);
+        var parameterizedMatches = GetAllMatchingRouteConfigs(urlRoute, requestHost);
         results.AddRange(parameterizedMatches);
 
         return results;
@@ -228,7 +237,7 @@ public class QueryRouteResolver
     /// </summary>
     /// <param name="normalizedUrlRoute">The normalized URL to match against config URLs</param>
     /// <returns>List of all matching route config sections</returns>
-    private List<IConfigurationSection> GetAllMatchingRouteConfigs(string normalizedUrlRoute)
+    private List<IConfigurationSection> GetAllMatchingRouteConfigs(string normalizedUrlRoute, string? requestHost = null)
     {
         var results = new List<IConfigurationSection>();
 
@@ -237,8 +246,11 @@ public class QueryRouteResolver
 
         var urlSegments = normalizedUrlRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        foreach (var (NormalizedConfigRoute, Verbs, Config) in _routesWithVariables)
+        foreach (var (NormalizedConfigRoute, Verbs, HostPattern, Config) in _routesWithVariables)
         {
+            if (!MatchHost(HostPattern, requestHost))
+                continue;
+
             // Direct comparison first for performance
             if (string.Equals(normalizedUrlRoute, NormalizedConfigRoute, StringComparison.OrdinalIgnoreCase))
             {
@@ -320,7 +332,8 @@ public class QueryRouteResolver
     /// <returns>The best matching route config Section (only if found, otherwise return null)</returns>
     private IConfigurationSection? GetBestMatchingRouteConfig(
         string normalizedUrlRoute,
-        string verb
+        string verb,
+        string? requestHost = null
         )
     {
         if (string.IsNullOrWhiteSpace(normalizedUrlRoute)
@@ -328,26 +341,34 @@ public class QueryRouteResolver
             || _routesWithVariables == null)
             return null;
 
-        // Filter by verb first for performance (case insensitive)
+        // Filter by verb and host for performance (case insensitive)
         var verbMatches = _routesWithVariables.Where(rc =>
-            rc.Verbs.Contains(verb));
+            rc.Verbs.Contains(verb) && MatchHost(rc.HostPattern, requestHost));
 
         if (!verbMatches.Any())
             return null;
 
         IConfigurationSection? bestMatch = null;
         var bestScore = -1;
+        var bestHostScore = -1;
 
 
         var urlSegments = normalizedUrlRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
 
-        foreach (var (NormalizedConfigRoute, Verbs, Config) in verbMatches)
+        foreach (var (NormalizedConfigRoute, Verbs, HostPattern, Config) in verbMatches)
         {
             // do a direct comparison first for performance
             if (string.Equals(normalizedUrlRoute, NormalizedConfigRoute, StringComparison.OrdinalIgnoreCase))
             {
-                return Config;
+                var hostScore = GetHostSpecificityScore(HostPattern, requestHost);
+                if (bestMatch == null || hostScore > bestHostScore)
+                {
+                    bestMatch = Config;
+                    bestHostScore = hostScore;
+                    bestScore = int.MaxValue; // exact route match is always best
+                }
+                continue;
             }
 
             var routeParameterPattern = Config.GetValue<string>("route_variable_pattern")
@@ -360,10 +381,16 @@ public class QueryRouteResolver
             // Calculate the match score for the route config
             var score = CalculateRouteMatchScore(urlSegments, NormalizedConfigRoute, routeParametersRegex);
 
-            if (score > bestScore)
+            if (score > 0)
             {
-                bestScore = score;
-                bestMatch = Config;
+                var hostScore = GetHostSpecificityScore(HostPattern, requestHost);
+                // Prefer higher route score, break ties with host specificity
+                if (score > bestScore || (score == bestScore && hostScore > bestHostScore))
+                {
+                    bestScore = score;
+                    bestHostScore = hostScore;
+                    bestMatch = Config;
+                }
             }
         }
 
@@ -429,6 +456,53 @@ public class QueryRouteResolver
             return string.Empty;
 
         return route.Trim('/');
+    }
+
+    /// <summary>
+    /// Determines whether a request host matches a configured host pattern.
+    /// Supports exact match ("www.example.com"), wildcard prefix ("*.example.com"),
+    /// and null/empty pattern (matches any host).
+    /// Comparison is case-insensitive. Port is expected to already be stripped by the caller.
+    /// </summary>
+    private static bool MatchHost(string? hostPattern, string? requestHost)
+    {
+        // No host constraint configured → matches every request
+        if (string.IsNullOrWhiteSpace(hostPattern))
+            return true;
+
+        // Host constraint is set but the request has no host → no match
+        if (string.IsNullOrWhiteSpace(requestHost))
+            return false;
+
+        // Wildcard: *.example.com → request host must end with .example.com
+        if (hostPattern.StartsWith("*."))
+        {
+            // The suffix to match, e.g. ".example.com"
+            var suffix = hostPattern.AsSpan(1); // skip the '*', keep ".example.com"
+            return requestHost.EndsWith(suffix.ToString(), StringComparison.OrdinalIgnoreCase)
+                && requestHost.Length > suffix.Length; // ensure there's at least one char before the suffix
+        }
+
+        // Exact host match
+        return string.Equals(hostPattern, requestHost, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Returns a specificity score for how well a host pattern matches the request host.
+    /// Higher scores mean more specific matches, used for tie-breaking when multiple
+    /// routes match the same path.
+    /// 
+    /// Scoring: exact host = 20, wildcard host = 10, no host constraint = 0.
+    /// </summary>
+    private static int GetHostSpecificityScore(string? hostPattern, string? requestHost)
+    {
+        if (string.IsNullOrWhiteSpace(hostPattern))
+            return 0;  // No constraint — least specific
+
+        if (hostPattern.StartsWith("*."))
+            return 10; // Wildcard — medium specificity
+
+        return 20;     // Exact — most specific
     }
 
 }
