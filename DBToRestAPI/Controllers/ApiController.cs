@@ -289,39 +289,13 @@ namespace DBToRestAPI.Controllers
             #region get the data from DB and return it
             try
             {
-                IActionResult response;
-
-                if (queries.Count == 1)
-                {
-                    // Single query: use existing GetResultFromDbAsync (backward compatible)
-                    var query = queries[0];
-                    DbConnection connection = string.IsNullOrWhiteSpace(query.ConnectionStringName) ?
-                        _dbConnectionFactory.Create() :
-                        _dbConnectionFactory.Create(query.ConnectionStringName);
-
-                    // Register connection for disposal when response completes
-                    // This ensures the connection is returned to the pool even if streaming fails
-                    HttpContext.Response.RegisterForDisposeAsync(connection);
-
-                    response = await _settings.CacheService
-                        .GetQueryResultAsActionAsync(
-                        section,
-                        qParams,
-                        disableDiffered => GetResultFromDbAsync(section, connection, query.QueryText, qParams, disableDiffered),
-                        HttpContext.RequestAborted
-                        );
-                }
-                else
-                {
-                    // Multiple queries: use chained query execution
-                    response = await _settings.CacheService
-                        .GetQueryResultAsActionAsync(
-                        section,
-                        qParams,
-                        disableDiffered => GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDiffered),
-                        HttpContext.RequestAborted
-                        );
-                }
+                var response = await _settings.CacheService
+                    .GetQueryResultAsActionAsync(
+                    section,
+                    qParams,
+                    disableDiffered => GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDiffered),
+                    HttpContext.RequestAborted
+                    );
 
                 return response;
 
@@ -655,291 +629,9 @@ namespace DBToRestAPI.Controllers
 
 
         /// <summary>
-        /// Executes a database query and returns the result as an <see cref="ObjectResult"/>.
-        /// </summary>
-        /// <param name="serviceQuerySection">The configuration section for the specific service query.</param>
-        /// <param name="query">The SQL query to be executed.</param>
-        /// <param name="qParams">A list of query parameters to be used in the query.</param>
-        /// <param name="disableDifferredExecution">For caching purposes, retrieves all records in memory if enabled so they could be placed in a cache mechanism</param>
-        /// <returns>An <see cref="ObjectResult"/> containing the result of the query execution.</returns>
-        public async Task<IActionResult> GetResultFromDbAsync(
-            IConfigurationSection serviceQuerySection,
-            DbConnection connection,
-            string query,
-            List<DbQueryParams> qParams,
-            bool disableDifferredExecution = false
-            )
-        {
-            int? dbCommandTimeout =
-                serviceQuerySection.GetValue<int?>("db_command_timeout") ??
-                this._configuration.GetValue<int?>("db_command_timeout");
-
-            // check if count query is defined
-            var countQuery = serviceQuerySection.GetSection("count_query")?.Value;
-
-            var customSuccessStatusCode = serviceQuerySection.GetValue<int?>("success_status_code") ??
-                this._configuration.GetValue<int?>("success_status_code") ?? 200;
-
-            // root node name for wrapping the result (if configured - helps with legacy APIs that wraps results within an object)
-            // this is experimential and may be removed in future releases in favor of 
-            // giving users more control over response structure by defining custom json templates
-            // and identifying where the results should be placed within the template
-            // for now we just support a single root node name for wrapping the result set
-            // This feature will be left undocumented in readme.md for now until the template feature is implemented
-            // to be used right now for only specific legacy use cases
-            string? rootNodeName = serviceQuerySection.GetValue<string?>("root_node")
-                ?? this._configuration.GetValue<string?>("root_node") ?? null;
-
-
-            if (string.IsNullOrWhiteSpace(countQuery))
-            {
-                var responseStructure = serviceQuerySection.GetValue<string>("response_structure")?.ToLower() ??
-                    this._configuration.GetValue<string>("response_structure")?.ToLower() ?? "auto";
-
-                // check if `response_structure` is valid (valid values are `array`, `single`, `auto`, `file`)
-                if (!_responseStructures.Contains(responseStructure, StringComparer.OrdinalIgnoreCase))
-                {
-                    return StatusCode(500, new
-                    {
-                        success = false,
-                        message = $"Invalid response structure `{responseStructure}` defined for route "
-                        + $"`{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                    });
-                }
-
-                query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
-
-                // Diagnostic: check if unresolved {http{ markers remain before SQL execution
-                if (query.Contains("{http{"))
-                {
-                    _logger.LogError(
-                        "{Time}: [SQL-PRE-EXEC] Route: {Route} — WARNING: Query still contains unresolved {{http{{}} markers before SQL execution! " +
-                        "This will cause SQL syntax errors. qParams count: {ParamCount}, qParams regexes: [{Regexes}]",
-                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                        HttpContext.Items.TryGetValue("route", out var preRoute) ? preRoute : "unknown",
-                        qParams.Count,
-                        string.Join("; ", qParams.Select((p, i) => $"#{i}: regex='{(p.QueryParamsRegex?.Length > 60 ? p.QueryParamsRegex[..60] + "..." : p.QueryParamsRegex)}' hasData={p.DataModel != null}")));
-                }
-
-                var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: dbCommandTimeout, cToken: HttpContext.RequestAborted);
-                // perhaps here is the right place to register for disposal
-                if (resultWithNoCount != null)
-                {
-                    HttpContext.Response.RegisterForDisposeAsync(resultWithNoCount);
-                }
-
-                HttpContext.RequestAborted.ThrowIfCancellationRequested();
-
-
-                if (responseStructure == "array")
-                {
-
-                    if (disableDifferredExecution)
-                    {
-                        if (!string.IsNullOrWhiteSpace(rootNodeName))
-                        {
-                            // wrap the result in an object with the root node name
-                            var wrappedResult = new ExpandoObject();
-                            wrappedResult.TryAdd(rootNodeName, resultWithNoCount?.AsEnumerable().ToArray());
-                            return StatusCode(customSuccessStatusCode, wrappedResult);
-                        }
-
-                        return StatusCode(customSuccessStatusCode,
-                            resultWithNoCount.AsEnumerable().ToArray());
-                    }
-                    if (!string.IsNullOrWhiteSpace(rootNodeName))
-                    {
-                        // wrap the result in an object with the root node name
-                        var wrappedResult = new ExpandoObject();
-                        wrappedResult.TryAdd(rootNodeName, resultWithNoCount);
-                        return StatusCode(customSuccessStatusCode, wrappedResult);
-                    }
-                    return StatusCode(customSuccessStatusCode, resultWithNoCount);
-
-                }
-                if (responseStructure == "single")
-                {
-                    // if response structure is single, then return the first record
-
-
-                    var singleResult = resultWithNoCount.AsEnumerable().FirstOrDefault();
-                    // close the reader
-                    await resultWithNoCount.CloseReaderAsync();
-                    if (!string.IsNullOrWhiteSpace(rootNodeName))
-                    {
-                        // wrap the result in an object with the root node name
-                        var wrappedResult = new ExpandoObject();
-                        wrappedResult.TryAdd(rootNodeName, (object?)singleResult);
-                        return StatusCode(customSuccessStatusCode, wrappedResult);
-                    }
-                    return StatusCode(customSuccessStatusCode, singleResult);
-                }
-
-                if (responseStructure == "file")
-                {
-                    return await ReturnFile(resultWithNoCount);
-                }
-                if (responseStructure == "auto")
-                {
-                    // if response structure is auto, then return an array if there are more than one record
-                    // and a single record if there is only one record
-                    // ToChamberedAsyncEnumerable is a custom extension method that returns an enumerable that have 
-                    // some of its items already read into memory. In the case below, the extension method is
-                    // instructed to read 2 items into memory and keep the remaining (if any) in the enumerable.
-                    // The returned enumerable from the extension method should have a `ChamberedCount` property
-                    // matching that of the items count its instructed to read into memory.
-                    // If the `ChamberedCount` is less than 2, then this indicates that there is only one (or zero) record
-                    // available in the enumerable (i.e., the enumerable is exhausted, in other words ran out of items to iterate through
-                    // before it got to our `ChamberedCount` limit).
-                    // In this case, we return the first record if it exists, or an empty resultWithNoCount.
-
-                    var chamberedResult = await resultWithNoCount.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
-
-                    HttpContext.RequestAborted.ThrowIfCancellationRequested();
-
-                    if (chamberedResult.WasExhausted(2))
-                    {
-                        var singleResult = chamberedResult.AsEnumerable().FirstOrDefault();
-                        // close the reader
-                        await resultWithNoCount.CloseReaderAsync();
-                        if (!string.IsNullOrWhiteSpace(rootNodeName))
-                        {
-                            // wrap the result in an object with the root node name
-                            var wrappedResult = new ExpandoObject();
-                            wrappedResult.TryAdd(rootNodeName, (object?)singleResult);
-                            return StatusCode(customSuccessStatusCode, wrappedResult);
-                        }
-
-                        return StatusCode(customSuccessStatusCode, singleResult);
-                    }
-                    else
-                    {
-                        if (!string.IsNullOrWhiteSpace(rootNodeName))
-                        {
-                            // wrap the result in an object with the root node name
-                            var wrappedResult = new ExpandoObject();
-                            wrappedResult.TryAdd(rootNodeName,
-                                disableDifferredExecution ?
-                                chamberedResult.AsEnumerable().ToArray()
-                                :
-                                chamberedResult);
-                            return StatusCode(customSuccessStatusCode, wrappedResult);
-                        }
-
-                        return StatusCode(customSuccessStatusCode,
-                            disableDifferredExecution ?
-                            chamberedResult.AsEnumerable().ToArray()
-                            :
-                            chamberedResult);
-                    }
-                }
-                return StatusCode(500, new
-                {
-                    success = false,
-                    message = $"Invalid response structure `{responseStructure}` defined for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                });
-            }
-
-            // Prepare embedded HTTP calls for count query (if any)
-            countQuery = await PrepareEmbeddedHttpCallsParamsIfAny(countQuery, qParams, serviceQuerySection);
-
-            var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: dbCommandTimeout, cToken: HttpContext.RequestAborted);
-            // Register for disposal to ensure DbDataReader is properly cleaned up
-            if (resultCount != null)
-            {
-                HttpContext.Response.RegisterForDisposeAsync(resultCount);
-            }
-
-            var rowCount = resultCount.AsEnumerable().FirstOrDefault();
-            HttpContext.RequestAborted.ThrowIfCancellationRequested();
-
-            if (rowCount == null)
-            {
-                return StatusCode(500, new
-                {
-                    success = false,
-                    message = $"Count query `{countQuery}` did not return any records for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                });
-            }
-            // Extract scalar value from single-column count result
-            // e.g. SELECT COUNT(*) returns {"COUNT(*)": 3} on SQLite, extract just 3
-            if (rowCount is IDictionary<string, object?> countDict && countDict.Count == 1)
-            {
-                rowCount = countDict.Values.First();
-            }
-            // close the reader for the count query
-            await resultCount.CloseReaderAsync();
-
-            // Prepare embedded HTTP calls for main query (if any)
-            query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
-
-            var result = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: dbCommandTimeout, cToken: HttpContext.RequestAborted);
-            // Register for disposal to ensure DbDataReader is properly cleaned up
-            if (result != null)
-            {
-                HttpContext.Response.RegisterForDisposeAsync(result);
-            }
-
-            HttpContext.RequestAborted.ThrowIfCancellationRequested();
-
-            if (disableDifferredExecution)
-            {
-
-                if (!string.IsNullOrWhiteSpace(rootNodeName))
-                {
-                    // wrap the result in an object with the root node name
-                    var wrappedResult = new ExpandoObject();
-                    wrappedResult.TryAdd(rootNodeName,
-                        new
-                        {
-                            success = true,
-                            count = rowCount,
-                            data = result.AsEnumerable().ToArray()
-                        }
-                        );
-                    return StatusCode(customSuccessStatusCode, wrappedResult);
-                }
-
-                // if disableDifferredExecution is true, then we want to read all records into memory
-                // so that we can cache them
-                return StatusCode(customSuccessStatusCode,
-                    new
-                    {
-                        success = true,
-                        count = rowCount,
-                        data = result.AsEnumerable().ToArray()
-                    });
-            }
-
-            if (!string.IsNullOrWhiteSpace(rootNodeName))
-            {
-                // wrap the result in an object with the root node name
-                var wrappedResult = new ExpandoObject();
-                wrappedResult.TryAdd(rootNodeName,
-                    new
-                    {
-                        success = true,
-                        count = rowCount,
-                        data = await result.ToChamberedEnumerableAsync()
-                    }
-                    );
-                return StatusCode(customSuccessStatusCode, wrappedResult);
-            }
-
-
-            return StatusCode(customSuccessStatusCode,
-                new
-                {
-                    success = true,
-                    count = rowCount,
-                    data = await result.ToChamberedEnumerableAsync()
-                });
-        }
-
-        /// <summary>
-        /// Executes a chain of database queries, passing results between them.
+        /// Executes one or more database queries, passing results between them when chained.
         /// Each query can target a different database via its ConnectionStringName.
-        /// Only the final query's result is returned to the client.
+        /// The final (or only) query's result is returned to the client.
         /// </summary>
         /// <param name="serviceQuerySection">The configuration section for the specific service query.</param>
         /// <param name="queries">List of query definitions to execute in sequence.</param>
@@ -1085,8 +777,8 @@ namespace DBToRestAPI.Controllers
         }
 
         /// <summary>
-        /// Executes the final query in a chain and builds the HTTP response.
-        /// This is a helper method that contains the response-building logic extracted from GetResultFromDbAsync.
+        /// Executes the final (or only) query and builds the HTTP response.
+        /// Handles response_structure, count_query, root_node, embedded HTTP calls, and caching.
         /// </summary>
         private async Task<IActionResult> GetResultFromDbFinalQueryAsync(
             IConfigurationSection serviceQuerySection,
@@ -1122,6 +814,18 @@ namespace DBToRestAPI.Controllers
 
                 // Prepare embedded HTTP calls for main query (if any)
                 query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
+
+                // Diagnostic: check if unresolved {http{ markers remain before SQL execution
+                if (query.Contains("{http{"))
+                {
+                    _logger.LogError(
+                        "{Time}: [SQL-PRE-EXEC] Route: {Route} — WARNING: Query still contains unresolved {{http{{}} markers before SQL execution! " +
+                        "This will cause SQL syntax errors. qParams count: {ParamCount}, qParams regexes: [{Regexes}]",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                        HttpContext.Items.TryGetValue("route", out var preRoute) ? preRoute : "unknown",
+                        qParams.Count,
+                        string.Join("; ", qParams.Select((p, i) => $"#{i}: regex='{(p.QueryParamsRegex?.Length > 60 ? p.QueryParamsRegex[..60] + "..." : p.QueryParamsRegex)}' hasData={p.DataModel != null}")));
+                }
 
                 var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
                 if (resultWithNoCount != null)
