@@ -27,7 +27,7 @@
     <path>config/regex.xml</path>
     <path>config/auth_providers.xml</path>
     <path>config/encryption_test.xml</path>
-    <path>config/sql_dev_scratchpad.xml</path>
+    <!-- <path>config/sql_dev_scratchpad.xml</path> -->
     <!--<path>config/test_auth_provider.xml</path>-->
     
     <!-- 
