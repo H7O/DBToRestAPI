@@ -60,6 +60,7 @@ Here's every tag you can use inside an endpoint definition:
       <!-- Routing -->
       <route>custom/path/{{id}}</route>
       <verb>GET</verb>
+      <host>www.example.com</host>
 
       <!-- Parameters -->
       <mandatory_parameters>id,name</mandatory_parameters>
@@ -108,6 +109,7 @@ Here's every tag you can use inside an endpoint definition:
 |-----|----------|---------|-------------|
 | `<route>` | No | XML tag name | URL path. Supports `{{param}}` placeholders. |
 | `<verb>` | No | Any verb | HTTP method: `GET`, `POST`, `PUT`, `DELETE`, `PATCH` |
+| `<host>` | No | Any host | Restrict endpoint to a hostname. Exact (`www.example.com`) or wildcard (`*.example.com`). Port is ignored. |
 | `<mandatory_parameters>` | No | None | Comma-separated params. Missing → HTTP 400. |
 | `<connection_string_name>` | No | `default` | Which connection string from settings.xml. |
 | `<query>` | **Yes** | — | SQL wrapped in `<![CDATA[...]]>`. |

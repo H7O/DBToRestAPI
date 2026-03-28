@@ -104,6 +104,9 @@ On first run, unencrypted values become `encrypted:CfDJ8NhY2kB...`
     <!-- Optional: HTTP method filter -->
     <verb>GET</verb>
     
+    <!-- Optional: Restrict to specific hostname -->
+    <host>www.example.com</host>
+    
     <!-- Optional: Required parameters -->
     <mandatory_parameters>id,name</mandatory_parameters>
     
@@ -134,6 +137,7 @@ On first run, unencrypted values become `encrypted:CfDJ8NhY2kB...`
 |-----|----------|---------|-------------|
 | `<route>` | No | Node name | URL path with `{{param}}` placeholders |
 | `<verb>` | No | Any | `GET`, `POST`, `PUT`, `DELETE`, or comma-separated |
+| `<host>` | No | Any host | Restrict to hostname. Exact: `www.example.com`, wildcard: `*.example.com`. Port is ignored. |
 | `<mandatory_parameters>` | No | None | Comma-separated required params |
 | `<success_status_code>` | No | `200` | HTTP status on success |
 | `<connection_string_name>` | No | `default` | Which connection string to use |
