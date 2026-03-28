@@ -72,53 +72,63 @@ public class QueryRouteResolver
 
             foreach (var querySection in querySections.GetChildren())
             {
-                var route = querySection.GetValue<string>("route") ?? querySection.Key;
-                if (string.IsNullOrWhiteSpace(route)) continue;
-                var normalizedRoute = NormalizeRoute(route);
-                if (string.IsNullOrWhiteSpace(normalizedRoute)) continue;
-
-                var verbString = querySection.GetValue<string>("verb");
-                var verbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                if (!string.IsNullOrWhiteSpace(verbString))
+                // Expand duplicate XML tags — .NET's XmlConfigurationProvider indexes
+                // same-name sibling elements as numeric sub-children (0, 1, 2, …).
+                // ExpandDuplicateXmlSections detects this and yields each sub-child
+                // individually; for normal (unique) sections it yields the section itself.
+                foreach (var endpointSection in ExpandDuplicateXmlSections(querySection))
                 {
-                    var splitVerbs = verbString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                    foreach (var v in splitVerbs) verbs.Add(v);
-                    // Ensure OPTIONS is present if specific verbs are defined
-                    verbs.Add("OPTIONS");
-                }
-                else
-                {
-                    // No verb defined -> implies all verbs
-                    foreach (var v in _allVerbs) verbs.Add(v);
-                }
+                    // For expanded duplicate sections the Key is a numeric index ("0", "1", …),
+                    // so fall back to the parent tag name when no explicit route is defined.
+                    var route = endpointSection.GetValue<string>("route")
+                        ?? (int.TryParse(endpointSection.Key, out _) ? querySection.Key : endpointSection.Key);
+                    if (string.IsNullOrWhiteSpace(route)) continue;
+                    var normalizedRoute = NormalizeRoute(route);
+                    if (string.IsNullOrWhiteSpace(normalizedRoute)) continue;
 
-                var routeParameterPattern =
-                querySection.GetValue<string>("route_variable_pattern")
-                ?? _configuration.GetValue<string>("route_variable_pattern");
+                    var verbString = endpointSection.GetValue<string>("verb");
+                    var verbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                var routeParametersRegex = string.IsNullOrWhiteSpace(routeParameterPattern) ?
-                    DefaultRegex.DefaultRouteVariablesCompiledRegex
-                    : new Regex(routeParameterPattern, RegexOptions.Compiled);
-
-                if (routeParametersRegex.IsMatch(normalizedRoute))
-                {
-                    // Store routes with variables separately
-                    newRoutesWithVariables.Add((normalizedRoute, verbs, querySection));
-                }
-                else
-                {
-                    // Store exact routes separately
-                    newExactRoutes.Add((normalizedRoute, verbs, querySection));
-
-                    if (!newExactRouteVerbs.ContainsKey(normalizedRoute))
+                    if (!string.IsNullOrWhiteSpace(verbString))
                     {
-                        newExactRouteVerbs[normalizedRoute] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var splitVerbs = verbString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                        foreach (var v in splitVerbs) verbs.Add(v);
+                        // Ensure OPTIONS is present if specific verbs are defined
+                        verbs.Add("OPTIONS");
+                    }
+                    else
+                    {
+                        // No verb defined -> implies all verbs
+                        foreach (var v in _allVerbs) verbs.Add(v);
                     }
 
-                    foreach (var v in verbs)
+                    var routeParameterPattern =
+                    endpointSection.GetValue<string>("route_variable_pattern")
+                    ?? _configuration.GetValue<string>("route_variable_pattern");
+
+                    var routeParametersRegex = string.IsNullOrWhiteSpace(routeParameterPattern) ?
+                        DefaultRegex.DefaultRouteVariablesCompiledRegex
+                        : new Regex(routeParameterPattern, RegexOptions.Compiled);
+
+                    if (routeParametersRegex.IsMatch(normalizedRoute))
                     {
-                        newExactRouteVerbs[normalizedRoute].Add(v);
+                        // Store routes with variables separately
+                        newRoutesWithVariables.Add((normalizedRoute, verbs, endpointSection));
+                    }
+                    else
+                    {
+                        // Store exact routes separately
+                        newExactRoutes.Add((normalizedRoute, verbs, endpointSection));
+
+                        if (!newExactRouteVerbs.ContainsKey(normalizedRoute))
+                        {
+                            newExactRouteVerbs[normalizedRoute] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        }
+
+                        foreach (var v in verbs)
+                        {
+                            newExactRouteVerbs[normalizedRoute].Add(v);
+                        }
                     }
                 }
             }
@@ -130,6 +140,31 @@ public class QueryRouteResolver
         finally
         {
             _reloadingGate.TryClose();
+        }
+    }
+
+    /// <summary>
+    /// Detects when an IConfiguration section represents a group of duplicate XML sibling elements.
+    /// .NET's XmlConfigurationProvider indexes same-name siblings with numeric keys (0, 1, 2, …),
+    /// so the section itself has no direct route/query values — they live under each numeric child.
+    /// For normal (unique) sections, yields the section as-is.
+    /// </summary>
+    private static IEnumerable<IConfigurationSection> ExpandDuplicateXmlSections(IConfigurationSection section)
+    {
+        var children = section.GetChildren().ToList();
+
+        if (children.Count > 0
+            && children.All(c => int.TryParse(c.Key, out _))
+            && children.Any(c => c.GetSection("query").Exists()))
+        {
+            foreach (var child in children)
+            {
+                yield return child;
+            }
+        }
+        else
+        {
+            yield return section;
         }
     }
 

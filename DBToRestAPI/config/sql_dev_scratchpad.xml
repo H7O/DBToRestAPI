@@ -1443,6 +1443,29 @@
         ]]>
       </query>
     </invalid_sql_test>
+
+
+    <repated_xml_tag_test>
+          <route>repeated_tag_1</route>
+          <query>
+            <![CDATA[
+            
+            select 'This is the first query with repeated XML tag' as message;
+            ]]>
+          </query>
+    </repated_xml_tag_test>
+
+    <repated_xml_tag_test>
+          <route>repeated_tag_2</route>
+          <query>
+            <![CDATA[
+            
+            select 'This is the second query with repeated XML tag' as message;
+            ]]>
+          </query>
+    </repated_xml_tag_test>
+
+
   </queries>
 
 </settings>
