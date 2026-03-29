@@ -22,6 +22,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML.
 - **Multi-query chaining** — Execute sequential queries across different databases in a single request.
 - **Embedded HTTP calls** — Call external APIs from within your SQL queries.
+- **Background processing / webhooks** — Accept requests instantly and process in the background using `no_wait`, with built-in retry and progress callbacks — no message queue needed.
 - **Settings variables** — Reference encrypted configuration values in queries with `{s{name}}`.
 - **Caching** — In-memory response caching with parameter-aware invalidation.
 - **Pagination** — Automatic `{count, data}` wrapping with `count_query`.
