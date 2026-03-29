@@ -442,22 +442,22 @@ namespace DBToRestAPI.Controllers
 
             // Phase 2: Execute all HTTP calls in parallel (fan-out)
             // Normal calls share the request's cancellation token.
-            // Fire-and-forget calls use the application stopping token so they survive after the response is sent.
+            // No-wait calls use the application stopping token so they survive after the response is sent.
             _logger.LogDebug(
                 "{Time}: [EmbeddedHTTP] Route: {Route} — Starting {Count} HTTP call(s) in parallel...",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, preparedCalls.Count);
             var phase2Stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            // Separate normal calls from fire-and-forget calls
+            // Separate normal calls from no-wait calls
             var results = new string?[preparedCalls.Count];
             var awaitableTasks = new List<(int Index, Task<string?> Task)>();
 
             for (int i = 0; i < preparedCalls.Count; i++)
             {
                 var call = preparedCalls[i];
-                if (IsFireAndForget(call.RequestDetails))
+                if (IsNoWait(call.RequestDetails))
                 {
-                    // Fire-and-forget: launch on a background thread with the app-lifetime token.
+                    // No-wait: launch on a background thread with the app-lifetime token.
                     // We don't await, the result is null (parameterized as DbNull in SQL).
                     results[i] = null;
                     var requestDetails = call.RequestDetails;
@@ -471,13 +471,13 @@ namespace DBToRestAPI.Controllers
                         catch (Exception ex)
                         {
                             _logger.LogWarning(ex,
-                                "{Time}: [EmbeddedHTTP] Route: {Route} — Fire-and-forget call #{Index} threw {ExType}. " +
+                                "{Time}: [EmbeddedHTTP] Route: {Route} — No-wait call #{Index} threw {ExType}. " +
                                 "This error is non-fatal as the response was already sent.",
                                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, callIndex, ex.GetType().Name);
                         }
                     }, _appLifetime.ApplicationStopping);
                     _logger.LogDebug(
-                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} launched as fire-and-forget.",
+                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} launched as no-wait.",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i);
                 }
                 else
@@ -486,7 +486,7 @@ namespace DBToRestAPI.Controllers
                 }
             }
 
-            // Await only the normal (non-fire-and-forget) calls
+            // Await only the normal (non-no-wait) calls
             if (awaitableTasks.Count > 0)
             {
                 var awaitedResults = await Task.WhenAll(awaitableTasks.Select(t => t.Task));
@@ -499,11 +499,11 @@ namespace DBToRestAPI.Controllers
             phase2Stopwatch.Stop();
 
             _logger.LogDebug(
-                "{Time}: [EmbeddedHTTP] Route: {Route} — All {Count} HTTP call(s) completed in {ElapsedMs}ms ({FireAndForgetCount} fire-and-forget). Results: [{ResultSummary}]",
+                "{Time}: [EmbeddedHTTP] Route: {Route} — All {Count} HTTP call(s) completed in {ElapsedMs}ms ({NoWaitCount} no-wait). Results: [{ResultSummary}]",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, results.Length, phase2Stopwatch.ElapsedMilliseconds,
                 preparedCalls.Count - awaitableTasks.Count,
                 string.Join(", ", results.Select((res, i) => res == null
-                    ? (IsFireAndForget(preparedCalls[i].RequestDetails) ? $"#{i}=FIRE_AND_FORGET" : $"#{i}=SKIPPED")
+                    ? (IsNoWait(preparedCalls[i].RequestDetails) ? $"#{i}=NO_WAIT" : $"#{i}=SKIPPED")
                     : $"#{i}={res.Length} chars")));
 
             // Phase 3: Apply results to query (sequential — no concurrency concerns)
@@ -529,12 +529,12 @@ namespace DBToRestAPI.Controllers
                 }
                 else
                 {
-                    // Skipped or fire-and-forget call — don't add to DataModel.
+                    // Skipped or no-wait call — don't add to DataModel.
                     // Com.H.Data.Common will parameterize it as DbNull.Value.
                     _logger.LogDebug(
                         "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} result is NULL ({Reason}). Marker will be parameterized as NULL.",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i,
-                        IsFireAndForget(preparedCalls[i].RequestDetails) ? "fire-and-forget" : "skipped");
+                        IsNoWait(preparedCalls[i].RequestDetails) ? "no-wait" : "skipped");
                 }
 
                 // Replace the original marker with an internally-replaced placeholder.
@@ -582,13 +582,13 @@ namespace DBToRestAPI.Controllers
         }
 
         /// <summary>
-        /// Determines whether an embedded HTTP call should be launched as fire-and-forget.
-        /// When true, the call is started on a background thread and the SQL parameter
-        /// receives NULL instead of waiting for the response.
+        /// Determines whether an embedded HTTP call should be launched without waiting
+        /// for its response ("no_wait"). When true, the call is started on a background
+        /// thread and the SQL parameter receives NULL.
         /// </summary>
-        internal static bool IsFireAndForget(string httpRequestDetailsJson)
+        internal static bool IsNoWait(string httpRequestDetailsJson)
         {
-            return CheckBooleanJsonProperty(httpRequestDetailsJson, "fire_and_forget");
+            return CheckBooleanJsonProperty(httpRequestDetailsJson, "no_wait");
         }
 
         /// <summary>

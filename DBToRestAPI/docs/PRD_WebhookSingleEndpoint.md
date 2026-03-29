@@ -45,9 +45,9 @@ Webhook patterns require three distinct phases:
 
 Currently, DBToRestAPI processes all queries in a chain synchronously and returns the final query's result as the HTTP response. There is no mechanism to return a response mid-chain and continue processing in the background.
 
-### 1.3 Relationship to `fire_and_forget`
+### 1.3 Relationship to `no_wait`
 
-The v1 `fire_and_forget` feature (shipped in v1.0.9+) provides the building block for launching background HTTP calls that survive after the response is sent. This proposal builds on that foundation by introducing the ability to **split a query chain** into a "response phase" and a "background phase," with `fire_and_forget` embedded HTTP calls serving as the notification mechanism in the background phase.
+The v1 `no_wait` feature (shipped in v1.0.9+) provides the building block for launching background HTTP calls that survive after the response is sent. This proposal builds on that foundation by introducing the ability to **split a query chain** into a "response phase" and a "background phase," with `no_wait` embedded HTTP calls serving as the notification mechanism in the background phase.
 
 ---
 
@@ -84,7 +84,7 @@ A single-endpoint solution eliminates all of this complexity.
 
 ## 3. Current State (v1): Two-Endpoint Workaround
 
-With `fire_and_forget` embedded HTTP calls, webhooks can be implemented today using **two endpoints**:
+With `no_wait` embedded HTTP calls, webhooks can be implemented today using **two endpoints**:
 
 ### Endpoint 1: Accept & Dispatch
 
@@ -99,13 +99,13 @@ With `fire_and_forget` embedded HTTP calls, webhooks can be implemented today us
   </query>
   <query>
     <![CDATA[
-      -- Fire-and-forget: trigger the background worker endpoint
+      -- no-wait: trigger the background worker endpoint
       SELECT 
         {http{
           {
             "url": "http://localhost:5000/api/webhook_worker?report_id={{report_id}}&callback_url={{callback_url}}&tracking_id={{tracking_id}}",
             "method": "POST",
-            "fire_and_forget": true
+            "no_wait": true
           }
         }http} AS ignored;
     ]]>
@@ -485,7 +485,7 @@ private void LaunchBackgroundQueries(
 The existing `PrepareEmbeddedHttpCallsParamsIfAny` uses `HttpContext` for logging and the request-scoped cancellation token. A background-safe variant is needed that:
 
 - Does **not** access `HttpContext` (it's disposed after response is sent)
-- Uses `_appLifetime.ApplicationStopping` for all HTTP calls (no fire-and-forget distinction needed — they're all background already)
+- Uses `_appLifetime.ApplicationStopping` for all HTTP calls (the `no_wait` distinction is irrelevant — they're all background already)
 - Takes the route string as a parameter instead of reading from `HttpContext.Items`
 
 #### 7.1.4 `DeepCopyQueryParams` — Parameter Snapshot
@@ -525,11 +525,11 @@ A queue-based approach (e.g., `BackgroundService` with `Channel<T>`) was conside
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| `Task.Run` + app lifetime token | Simple, no new abstractions, consistent with v1 fire-and-forget | No retry, no persistence |
+| `Task.Run` + app lifetime token | Simple, no new abstractions, consistent with v1 no-wait | No retry, no persistence |
 | `Channel<T>` + `BackgroundService` | Bounded concurrency, backpressure | New abstraction, config surface, still no persistence |
 | External queue (RabbitMQ, etc.) | Persistent, scalable, retries | External dependency, Docker complexity |
 
-`Task.Run` is chosen for consistency with the v1 `fire_and_forget` implementation and because DBToRestAPI is a configuration-driven proxy — it should remain lightweight. Users needing durable webhooks should use an external queue at the database or application level.
+`Task.Run` is chosen for consistency with the v1 `no_wait` implementation and because DBToRestAPI is a configuration-driven proxy — it should remain lightweight. Users needing durable webhooks should use an external queue at the database or application level.
 
 #### 7.2.3 Parameter Snapshot Timing
 
@@ -555,7 +555,7 @@ Request arrives
 ┌─────────────────────────────────┐
 │  Foreground Queries (1..N)      │  ← uses HttpContext.RequestAborted
 │  Embedded HTTP calls            │  ← uses HttpContext.RequestAborted (normal)
-│                                 │     or ApplicationStopping (fire_and_forget)
+│                                 │     or ApplicationStopping (no_wait)
 └─────────────────┬───────────────┘
                   │
                   ▼
@@ -814,7 +814,7 @@ Migrating a two-endpoint webhook to a single endpoint:
 <!-- Endpoint 1: accept -->
 <webhook_accept>
   <query>SELECT ... validation ...</query>
-  <query>SELECT {http{ {"url":"http://localhost/api/webhook_worker?...", "fire_and_forget":true} }http}</query>
+  <query>SELECT {http{ {"url":"http://localhost/api/webhook_worker?...", "no_wait":true} }http}</query>
   <query>SELECT ... response ...</query>
 </webhook_accept>
 
@@ -845,7 +845,7 @@ Migrating a two-endpoint webhook to a single endpoint:
 ### 12.2 Backward Compatibility
 
 - Endpoints without `<early_response_after>` behave identically to today.
-- The `fire_and_forget` property continues to work in both foreground and background phases.
+- The `no_wait` property continues to work in both foreground and background phases.
 - No breaking changes to existing XML configurations.
 
 ---
@@ -911,7 +911,7 @@ Limit the number of concurrent background query chains to prevent resource exhau
 | F5 | Embedded HTTP calls work in background queries | Must |
 | F6 | Endpoints without `<early_response_after>` behave unchanged | Must |
 | F7 | Invalid `early_response_after` values are logged and ignored gracefully | Must |
-| F8 | `fire_and_forget` still works independently in foreground queries | Must |
+| F8 | `no_wait` still works independently in foreground queries | Must |
 | F9 | `<response_status_code>` sets the HTTP status of the early response | Should |
 | F10 | Background queries support `db_command_timeout` at all levels | Should |
 
@@ -938,5 +938,5 @@ Limit the number of concurrent background query chains to prevent resource exhau
 | T6 | `DeepCopyQueryParams` — mutation isolation | Unit |
 | T7 | Background embedded HTTP calls use app lifetime token | Integration |
 | T8 | Application shutdown cancels background queries | Integration |
-| T9 | `fire_and_forget` in foreground queries still works with early response | Integration |
+| T9 | `no_wait` in foreground queries still works with early response | Integration |
 | T10 | Background failure does not crash the application | Integration |
