@@ -305,25 +305,32 @@ Content-Type: application/json
 
 ### Adding retry logic
 
-If the callback fails, you can add retry logic in the processing query:
+If the partner's callback URL is flaky, add the built-in `retry` property to
+the notification call.  The engine handles retries automatically with
+exponential backoff — no manual loops needed:
 
 ```sql
 DECLARE @notification NVARCHAR(MAX) = {http{
-  { "url": "{{callback_url}}", "method": "POST",
-    "body": { "request_id": "{{request_id}}", "status": "completed" } }
+  {
+    "url": "{{callback_url}}",
+    "method": "POST",
+    "body": {
+      "request_id": "{{request_id}}",
+      "status": "completed"
+    },
+    "retry": {
+      "max_attempts": 3,
+      "delay_seconds": 2,
+      "backoff_multiplier": 2.0,
+      "retry_on_status_codes": [500, 502, 503, 504]
+    }
+  }
 }http};
-
--- If callback failed, try once more
-IF CAST(JSON_VALUE(@notification, '$.status_code') AS INT) NOT BETWEEN 200 AND 299
-BEGIN
-    WAITFOR DELAY '00:00:05';  -- wait 5 seconds
-
-    SET @notification = {http{
-      { "url": "{{callback_url}}", "method": "POST",
-        "body": { "request_id": "{{request_id}}", "status": "completed" } }
-    }http};
-END
 ```
+
+This retries up to 3 times on server errors, waiting 2s → 4s → 8s between
+attempts.  See the [embedded HTTP calls reference](../topics/17-embedded-http-calls.md#retry-configuration)
+for all retry options.
 
 ### Status polling endpoint
 
