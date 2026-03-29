@@ -152,9 +152,24 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- Skip a call conditionally: "skip": "{{should_skip}}" (truthy = true/1/yes → variable receives NULL)
 -- Fire-and-forget: "no_wait": true → call runs on background thread, variable receives NULL immediately
 -- Database-driven skip: combine with query chaining — Query 1 outputs a flag column, Query 2 uses it as "skip": "{{flag}}"
--- Webhook pattern: use no_wait + multi-query chaining for accept→process→notify workflows (see tutorial 18-webhooks.md)
+-- Webhook pattern: use no_wait + multi-query chaining for accept→process→notify workflows (see below)
+-- Built-in retry: "retry": {"max_attempts": 3, "delay_seconds": 2, "backoff_multiplier": 2.0, "retry_on_status_codes": [500,502,503,504]}
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
+
+### Webhook Pattern (Two-Endpoint)
+Build webhook-style endpoints with two XML endpoints and zero code:
+1. **Accept endpoint** — validates, records request, fires Process endpoint via `no_wait`, returns `202 Accepted` immediately
+2. **Process & Notify endpoint** — protected by `api_keys_collections`, runs heavy work, calls partner callback URL
+
+Key architectural advantages:
+- **Validate before accepting**: place `no_wait` HTTP call in a later chained query — embedded HTTP calls are pre-processed per query, so the call only fires if all preceding validation queries succeed
+- **Cross-database validation**: each query in the Accept chain can target a different database (partner lookup, rate limiting, etc.) before committing to background work
+- **Progress callbacks**: the Process endpoint can send multiple callbacks at each processing stage using embedded HTTP calls in successive chained queries
+- **Built-in retry**: use the `retry` property on callback HTTP calls for automatic exponential backoff
+- **Internal API key security**: Process endpoint uses `api_keys_collections`, Accept sends `x-api-key` header via `{s{internal_api_key}}` settings variable
+
+See [tutorial 18-webhooks.md](docs/tutorial/18-webhooks.md) for complete XML examples.
 
 ### Cross-Database Query Chain
 ```xml
