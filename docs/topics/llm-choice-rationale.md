@@ -157,10 +157,15 @@ Competitor (CRUD only):
   │     ├── Implement retry logic
   │     ├── Handle auth for external APIs
   │     └── Handle error responses
-  └── CORS missing → agent must implement CORS middleware
-        ├── Configure allowed origins
-        ├── Handle preflight requests
-        └── Integrate with auth (credentials mode)
+  ├── CORS missing → agent must implement CORS middleware
+  │     ├── Configure allowed origins
+  │     ├── Handle preflight requests
+  │     └── Integrate with auth (credentials mode)
+  └── Background processing missing → agent must architect async pipeline
+        ├── Choose message queue (Redis, RabbitMQ, SQS?)
+        ├── Implement background worker service
+        ├── Implement callback/notification logic
+        └── Handle retries, dead letters, monitoring
 
 Each of these requires:
   - Architectural decisions the agent must make and remember
@@ -179,7 +184,8 @@ DbToRestAPI:
   ├── Auth → <authorize><provider>azure_b2c</provider></authorize>
   ├── File uploads → <file_management><stores>primary</stores></file_management>
   ├── External API → {http{"url":"...","auth":{...},"retry":{...}}http}
-  └── CORS → <cors><pattern>^.*\.myapp\.com$</pattern></cors>
+  ├── CORS → <cors><pattern>^.*\.myapp\.com$</pattern></cors>
+  └── Background processing → "no_wait": true (two XML endpoints, zero infrastructure)
 ```
 
 No architectural decisions. No library choices. No integration risk. No extra context
@@ -209,6 +215,7 @@ libraries, no architecture required:
 | Embedded HTTP calls | `{http{...}http}` syntax | Call external APIs from SQL, concurrent execution |
 | Cross-database query chaining | Multiple `<query>` nodes | Sequential queries, cross-database workflows |
 | Conditional HTTP execution | `skip` property + query chaining | Let database logic decide whether to call external APIs |
+| Background processing / webhooks | `no_wait` + query chaining | Accept-now-process-later pattern, no message queue or worker service needed |
 | Settings encryption | `<settings_encryption>` tag | DPAPI / Data Protection for secrets at rest |
 | SQL → HTTP error mapping | `THROW 50404, '...', 1` | Direct mapping, no middleware needed |
 | Pagination with count | `<count_query>` tag | Automatic `{count, data}` wrapping |
@@ -396,6 +403,7 @@ effort on business logic and the frontend — where it matters most to the user.
 | Feedback loop | Instant (save → test) | Build → restart → test |
 | External API calls | Built-in, concurrent, structured response | Must implement from scratch |
 | Database-driven logic | Built-in (skip + query chaining) | Must implement from scratch |
+| Background processing | Built-in (`no_wait` + query chaining) | Message queue + worker service + retry logic |
 | Production readiness | Same config runs in production | May need migration from dev setup |
 
 ---
