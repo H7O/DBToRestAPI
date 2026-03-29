@@ -47,7 +47,8 @@ namespace DBToRestAPI.Controllers
         SettingsService settingsService,
         IQueryConfigurationParser queryConfigurationParser,
         IHttpRequestExecutor httpRequestExecutor,
-        ILogger<ApiController> logger
+        ILogger<ApiController> logger,
+        IHostApplicationLifetime appLifetime
             ) : ControllerBase
     {
         private readonly IEncryptedConfiguration _configuration = configuration;
@@ -57,6 +58,8 @@ namespace DBToRestAPI.Controllers
         private readonly IHttpRequestExecutor _httpRequestExecutor = httpRequestExecutor;
 
         private readonly ILogger<ApiController> _logger = logger;
+
+        private readonly IHostApplicationLifetime _appLifetime = appLifetime;
 
 
         private readonly SettingsService _settings = settingsService;
@@ -438,23 +441,70 @@ namespace DBToRestAPI.Controllers
             }).ToList();
 
             // Phase 2: Execute all HTTP calls in parallel (fan-out)
-            // All calls share the same cancellation token so they all cancel if the request is aborted.
+            // Normal calls share the request's cancellation token.
+            // Fire-and-forget calls use the application stopping token so they survive after the response is sent.
             _logger.LogDebug(
                 "{Time}: [EmbeddedHTTP] Route: {Route} — Starting {Count} HTTP call(s) in parallel...",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, preparedCalls.Count);
             var phase2Stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            var tasks = preparedCalls.Select(call =>
-                ExecuteSingleEmbeddedHttpCallAsync(call.RequestDetails, this.HttpContext.RequestAborted)
-            ).ToArray();
+            // Separate normal calls from fire-and-forget calls
+            var results = new string?[preparedCalls.Count];
+            var awaitableTasks = new List<(int Index, Task<string?> Task)>();
 
-            var results = await Task.WhenAll(tasks);
+            for (int i = 0; i < preparedCalls.Count; i++)
+            {
+                var call = preparedCalls[i];
+                if (IsFireAndForget(call.RequestDetails))
+                {
+                    // Fire-and-forget: launch on a background thread with the app-lifetime token.
+                    // We don't await, the result is null (parameterized as DbNull in SQL).
+                    results[i] = null;
+                    var requestDetails = call.RequestDetails;
+                    var callIndex = i;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await ExecuteSingleEmbeddedHttpCallAsync(requestDetails, _appLifetime.ApplicationStopping);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex,
+                                "{Time}: [EmbeddedHTTP] Route: {Route} — Fire-and-forget call #{Index} threw {ExType}. " +
+                                "This error is non-fatal as the response was already sent.",
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, callIndex, ex.GetType().Name);
+                        }
+                    }, _appLifetime.ApplicationStopping);
+                    _logger.LogDebug(
+                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} launched as fire-and-forget.",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i);
+                }
+                else
+                {
+                    awaitableTasks.Add((i, ExecuteSingleEmbeddedHttpCallAsync(call.RequestDetails, this.HttpContext.RequestAborted)));
+                }
+            }
+
+            // Await only the normal (non-fire-and-forget) calls
+            if (awaitableTasks.Count > 0)
+            {
+                var awaitedResults = await Task.WhenAll(awaitableTasks.Select(t => t.Task));
+                for (int j = 0; j < awaitableTasks.Count; j++)
+                {
+                    results[awaitableTasks[j].Index] = awaitedResults[j];
+                }
+            }
+
             phase2Stopwatch.Stop();
 
             _logger.LogDebug(
-                "{Time}: [EmbeddedHTTP] Route: {Route} — All {Count} HTTP call(s) completed in {ElapsedMs}ms. Results: [{ResultSummary}]",
+                "{Time}: [EmbeddedHTTP] Route: {Route} — All {Count} HTTP call(s) completed in {ElapsedMs}ms ({FireAndForgetCount} fire-and-forget). Results: [{ResultSummary}]",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, results.Length, phase2Stopwatch.ElapsedMilliseconds,
-                string.Join(", ", results.Select((res, i) => res == null ? $"#{i}=SKIPPED" : $"#{i}={res.Length} chars")));
+                preparedCalls.Count - awaitableTasks.Count,
+                string.Join(", ", results.Select((res, i) => res == null
+                    ? (IsFireAndForget(preparedCalls[i].RequestDetails) ? $"#{i}=FIRE_AND_FORGET" : $"#{i}=SKIPPED")
+                    : $"#{i}={res.Length} chars")));
 
             // Phase 3: Apply results to query (sequential — no concurrency concerns)
             var dbQueryParams = new DbQueryParams()
@@ -479,11 +529,12 @@ namespace DBToRestAPI.Controllers
                 }
                 else
                 {
-                    // Skipped call — don't add to DataModel.
+                    // Skipped or fire-and-forget call — don't add to DataModel.
                     // Com.H.Data.Common will parameterize it as DbNull.Value.
                     _logger.LogDebug(
-                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} was skipped. Marker will be parameterized as NULL.",
-                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i);
+                        "{Time}: [EmbeddedHTTP] Route: {Route} — Call #{Index} result is NULL ({Reason}). Marker will be parameterized as NULL.",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, i,
+                        IsFireAndForget(preparedCalls[i].RequestDetails) ? "fire-and-forget" : "skipped");
                 }
 
                 // Replace the original marker with an internally-replaced placeholder.
@@ -527,24 +578,44 @@ namespace DBToRestAPI.Controllers
         /// </summary>
         internal static bool ShouldSkipHttpCall(string httpRequestDetailsJson)
         {
+            return CheckBooleanJsonProperty(httpRequestDetailsJson, "skip");
+        }
+
+        /// <summary>
+        /// Determines whether an embedded HTTP call should be launched as fire-and-forget.
+        /// When true, the call is started on a background thread and the SQL parameter
+        /// receives NULL instead of waiting for the response.
+        /// </summary>
+        internal static bool IsFireAndForget(string httpRequestDetailsJson)
+        {
+            return CheckBooleanJsonProperty(httpRequestDetailsJson, "fire_and_forget");
+        }
+
+        /// <summary>
+        /// Checks a boolean-like JSON property by name. Accepts bool, string ("true"/"1"/"yes"
+        /// case-insensitive), or non-zero number as truthy values.
+        /// Returns false if the property is absent, falsy, or the JSON is invalid.
+        /// </summary>
+        internal static bool CheckBooleanJsonProperty(string json, string propertyName)
+        {
             try
             {
-                using var doc = System.Text.Json.JsonDocument.Parse(httpRequestDetailsJson);
-                if (!doc.RootElement.TryGetProperty("skip", out var skipProp))
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty(propertyName, out var prop))
                     return false;
 
-                return skipProp.ValueKind switch
+                return prop.ValueKind switch
                 {
                     System.Text.Json.JsonValueKind.True => true,
                     System.Text.Json.JsonValueKind.False => false,
-                    System.Text.Json.JsonValueKind.String => skipProp.GetString() switch
+                    System.Text.Json.JsonValueKind.String => prop.GetString() switch
                     {
                         var s when string.Equals(s, "true", StringComparison.OrdinalIgnoreCase) => true,
                         var s when string.Equals(s, "1", StringComparison.Ordinal) => true,
                         var s when string.Equals(s, "yes", StringComparison.OrdinalIgnoreCase) => true,
                         _ => false
                     },
-                    System.Text.Json.JsonValueKind.Number => skipProp.TryGetInt32(out var n) && n != 0,
+                    System.Text.Json.JsonValueKind.Number => prop.TryGetInt32(out var n) && n != 0,
                     _ => false
                 };
             }
