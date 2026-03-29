@@ -209,6 +209,7 @@ libraries, no architecture required:
 | API key protection | `<api_keys_collections>` tag | Multiple named key collections |
 | Response caching | `<cache>` tag | In-memory, parameter-aware invalidation |
 | CORS | `<cors>` tag | Regex-based origin matching, automatic preflight |
+| Host-based routing | `<host>` tag | Exact or wildcard hostname matching, specificity-based priority for multi-tenant setups |
 | File uploads | `<file_management>` tag | Local + SFTP stores |
 | File downloads | `<response_structure>file</response_structure>` | Streaming from DB, local, SFTP, HTTP |
 | API gateway / proxy | `api_gateway.xml` | Proxy, cache, and protect external APIs |

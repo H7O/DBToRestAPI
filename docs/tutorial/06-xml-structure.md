@@ -122,6 +122,11 @@ Here's every tag you can use inside an endpoint definition:
 | `<cors>` | No | Global setting | Per-endpoint CORS override. |
 | `<file_management>` | No | None | File upload/download configuration. |
 
+> **Host priority:** When multiple endpoints share the same route and verb,
+> the engine picks the most specific host: exact (`www.example.com`) beats
+> wildcard (`*.example.com`), which beats no `<host>` tag. This lets you
+> serve different responses per domain from a single API instance.
+
 ## Connection Strings in settings.xml
 
 You can define multiple connection strings for different databases:

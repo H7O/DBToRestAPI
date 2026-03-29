@@ -88,7 +88,7 @@ Error codes 50000-51000 map to HTTP 0-1000.
 |-----|---------|
 | `<route>` | URL path with params: `users/{{id}}/orders` |
 | `<verb>` | HTTP method: `GET`, `POST`, `PUT`, `DELETE` |
-| `<host>` | Restrict to hostname: `www.example.com` or `*.example.com` |
+| `<host>` | Restrict to hostname: `www.example.com` or `*.example.com`. Priority: exact > wildcard > no constraint |
 | `<mandatory_parameters>` | Required params (returns 400 if missing) |
 | `<success_status_code>` | Success HTTP code (default: 200) |
 | `<query>` | SQL wrapped in `<![CDATA[...]]>` |

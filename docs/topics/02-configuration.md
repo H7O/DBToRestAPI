@@ -150,6 +150,46 @@ On first run, unencrypted values become `encrypted:CfDJ8NhY2kB...`
 | `<cache>` | No | None | Caching configuration |
 | `<file_management>` | No | None | File upload/download config |
 
+### Host-Based Routing
+
+The `<host>` tag lets you restrict an endpoint to a specific hostname — useful for multi-tenant APIs or serving different content per domain.
+
+**Exact match:**
+```xml
+<public_home>
+  <host>www.example.com</host>
+  <route>home</route>
+  <query><![CDATA[ SELECT 'Welcome to Example' AS message; ]]></query>
+</public_home>
+```
+
+**Wildcard match** (`*.example.com` matches any subdomain):
+```xml
+<tenant_home>
+  <host>*.example.com</host>
+  <route>home</route>
+  <query><![CDATA[ SELECT 'Welcome, tenant' AS message; ]]></query>
+</tenant_home>
+```
+
+**No host** (matches any hostname — the default):
+```xml
+<fallback_home>
+  <route>home</route>
+  <query><![CDATA[ SELECT 'Welcome' AS message; ]]></query>
+</fallback_home>
+```
+
+When multiple endpoints share the same route and verb, the engine picks the most specific host match:
+
+| Priority | Pattern | Example |
+|----------|---------|---------|
+| Highest | Exact host | `www.example.com` |
+| Medium | Wildcard | `*.example.com` |
+| Lowest | No `<host>` tag | Matches everything |
+
+Port numbers in the request are ignored during matching.
+
 ### Query Timeout
 
 ```xml
