@@ -379,6 +379,212 @@ SELECT '{{request_id}}' AS request_id, 'processing' AS status;
 
 ---
 
+## Going Further
+
+The two-endpoint pattern above is the simplest form.  The combination of
+[multi-query chaining](17-multi-query.md) and
+[embedded HTTP calls](16-http-from-sql.md) unlocks several powerful variations.
+
+### Validate Before Accepting
+
+The Accept endpoint doesn't have to blindly return `202`.  Because embedded
+HTTP calls are **pre-processed before the SQL runs**, you can place validation
+in an earlier query and only fire the `no_wait` call in a later one.
+If validation fails, the chain stops and the caller gets an error — the
+background work never starts:
+
+```xml
+<webhook_accept>
+  <route>webhooks/accept</route>
+  <verb>POST</verb>
+  <mandatory_parameters>callback_url,payload</mandatory_parameters>
+  <success_status_code>202</success_status_code>
+
+  <!-- Query 1: Validate the request (no HTTP calls here) -->
+  <query><![CDATA[
+    DECLARE @callback_url NVARCHAR(2000) = {{callback_url}};
+    DECLARE @payload NVARCHAR(MAX) = {{payload}};
+
+    -- Reject malformed payloads
+    IF ISJSON(@payload) = 0
+      THROW 50400, 'payload must be valid JSON', 1;
+
+    -- Reject unknown partners
+    IF NOT EXISTS (SELECT 1 FROM partners WHERE callback_url = @callback_url)
+      THROW 50403, 'Unregistered callback URL', 1;
+
+    -- Validation passed — record the request
+    INSERT INTO webhook_requests (callback_url, payload, status, created_at)
+    OUTPUT inserted.id AS request_id
+    VALUES (@callback_url, @payload, 'pending', GETUTCDATE());
+  ]]></query>
+
+  <!-- Query 2: Only runs if Query 1 succeeded -->
+  <query><![CDATA[
+    DECLARE @process NVARCHAR(MAX) = {http{
+      {
+        "url": "{s{base_url}}/webhooks/process",
+        "method": "POST",
+        "headers": { "x-api-key": "{s{internal_api_key}}" },
+        "body": { "request_id": "{{request_id}}" },
+        "no_wait": true
+      }
+    }http};
+
+    SELECT '{{request_id}}' AS request_id, 'pending' AS status;
+  ]]></query>
+</webhook_accept>
+```
+
+The key insight: because embedded HTTP calls are pre-processed at the query
+level, the `no_wait` call in Query 2 only fires if Query 1 completes without
+error.  This gives you full validation — including cross-database checks —
+before committing to background work.
+
+### Cross-Database Validation
+
+Since each query in a chain can target a different database, the Accept
+endpoint can validate across multiple systems before accepting:
+
+```xml
+<!-- Query 1: Check the partner exists (partners_db) -->
+<query connection_string_name="partners_db"><![CDATA[
+  IF NOT EXISTS (SELECT 1 FROM partners WHERE api_key = {{partner_key}})
+    THROW 50403, 'Invalid partner key', 1;
+
+  SELECT partner_id, partner_name, callback_url
+  FROM partners WHERE api_key = {{partner_key}};
+]]></query>
+
+<!-- Query 2: Check rate limits (main database) -->
+<query><![CDATA[
+  DECLARE @partner_id INT = {{partner_id}};
+  DECLARE @recent INT = (
+    SELECT COUNT(*) FROM webhook_requests
+    WHERE partner_id = @partner_id AND created_at > DATEADD(MINUTE, -1, GETUTCDATE())
+  );
+
+  IF @recent >= 100
+    THROW 50429, 'Rate limit exceeded', 1;
+
+  INSERT INTO webhook_requests (partner_id, callback_url, payload, status, created_at)
+  OUTPUT inserted.id AS request_id
+  VALUES (@partner_id, {{callback_url}}, {{payload}}, 'pending', GETUTCDATE());
+]]></query>
+
+<!-- Query 3: Fire background processing -->
+<query><![CDATA[
+  DECLARE @process NVARCHAR(MAX) = {http{
+    {
+      "url": "{s{base_url}}/webhooks/process",
+      "method": "POST",
+      "headers": { "x-api-key": "{s{internal_api_key}}" },
+      "body": { "request_id": "{{request_id}}" },
+      "no_wait": true
+    }
+  }http};
+
+  SELECT '{{request_id}}' AS request_id, 'pending' AS status;
+]]></query>
+```
+
+Two databases, three queries, full validation — and the caller still gets a
+fast `202` or an immediate error.
+
+### Progress Callbacks
+
+The Process endpoint isn't limited to a single callback at the end.  With
+chained queries, you can notify the partner at **each stage** of processing:
+
+```xml
+<webhook_process>
+  <route>webhooks/process</route>
+  <verb>POST</verb>
+  <mandatory_parameters>request_id</mandatory_parameters>
+  <api_keys_collections>internal_keys</api_keys_collections>
+
+  <!-- Query 1: Load request, notify "processing" -->
+  <query><![CDATA[
+    DECLARE @id INT = {{request_id}};
+    UPDATE webhook_requests SET status = 'processing' WHERE id = @id;
+
+    SELECT id AS request_id, callback_url, payload
+    FROM webhook_requests WHERE id = @id;
+  ]]></query>
+
+  <!-- Query 2: Stage 1 — validate, notify progress -->
+  <query><![CDATA[
+    DECLARE @callback_url NVARCHAR(2000) = {{callback_url}};
+
+    -- Notify: validation started
+    DECLARE @cb1 NVARCHAR(MAX) = {http{
+      {
+        "url": "{{callback_url}}",
+        "method": "POST",
+        "body": {
+          "request_id": "{{request_id}}",
+          "status": "validating",
+          "progress": 25
+        }
+      }
+    }http};
+
+    -- ... do validation work ...
+    UPDATE webhook_requests SET status = 'validated' WHERE id = {{request_id}};
+    SELECT {{request_id}} AS request_id, '{{callback_url}}' AS callback_url, '{{payload}}' AS payload;
+  ]]></query>
+
+  <!-- Query 3: Stage 2 — enrich, notify progress -->
+  <query><![CDATA[
+    DECLARE @cb2 NVARCHAR(MAX) = {http{
+      {
+        "url": "{{callback_url}}",
+        "method": "POST",
+        "body": {
+          "request_id": "{{request_id}}",
+          "status": "enriching",
+          "progress": 50
+        }
+      }
+    }http};
+
+    -- ... do enrichment work ...
+    UPDATE webhook_requests SET status = 'enriched' WHERE id = {{request_id}};
+    SELECT {{request_id}} AS request_id, '{{callback_url}}' AS callback_url;
+  ]]></query>
+
+  <!-- Query 4: Final — complete, notify done -->
+  <query><![CDATA[
+    DECLARE @cb3 NVARCHAR(MAX) = {http{
+      {
+        "url": "{{callback_url}}",
+        "method": "POST",
+        "body": {
+          "request_id": "{{request_id}}",
+          "status": "completed",
+          "progress": 100,
+          "result": "all stages complete"
+        }
+      }
+    }http};
+
+    UPDATE webhook_requests
+    SET status = 'completed', processed_at = GETUTCDATE()
+    WHERE id = {{request_id}};
+
+    SELECT {{request_id}} AS request_id, 'completed' AS status;
+  ]]></query>
+</webhook_process>
+```
+
+The partner receives three callbacks during processing — `validating` (25%),
+`enriching` (50%), and `completed` (100%) — giving them real-time visibility
+into the pipeline.  Each callback is a separate embedded HTTP call in its own
+chained query, so a failure at any stage stops the chain and prevents later
+callbacks from sending stale progress.
+
+---
+
 ## What You Learned
 
 - How to build a webhook pattern using two SQL-only endpoints.
@@ -390,6 +596,12 @@ SELECT '{{request_id}}' AS request_id, 'processing' AS status;
   private.
 - Multi-query chaining passes request data between the Accept and Process
   stages.
+- Because embedded HTTP calls are pre-processed per query, placing them in a
+  later chained query lets you validate first — the call only fires if all
+  preceding queries succeed.
+- Validation can span multiple databases using per-query connection strings.
+- The Process endpoint can send progress callbacks at each stage by placing
+  embedded HTTP calls in successive chained queries.
 - The same pattern works for any "accept now, process later" scenario:
   payment processing, order fulfillment, data imports, report generation.
 
