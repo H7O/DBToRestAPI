@@ -86,6 +86,9 @@ This endpoint does three things:
       {
         "url": "{s{base_url}}/webhooks/process",
         "method": "POST",
+        "headers": {
+          "x-api-key": "{s{internal_api_key}}"
+        },
         "body": {
           "request_id": "{{request_id}}"
         },
@@ -107,6 +110,9 @@ Key details:
 - **`"no_wait": true`** — the HTTP call to `/webhooks/process` fires on a
   background thread.  The SQL variable (`@process`) receives `NULL`
   immediately, and the response is sent to the caller without waiting.
+- **`"x-api-key": "{s{internal_api_key}}"`** — authenticates the background
+  call against the Process endpoint's `api_keys_collections` using a
+  settings variable, so the key never appears in plain text.
 - **`{s{base_url}}`** — a [settings variable](19-settings-vars.md) holding
   the root URL of your own API (e.g., `https://api.example.com`).
 - The `OUTPUT` clause on the `INSERT` returns the new `request_id`, which
@@ -227,20 +233,9 @@ And create an `internal_keys` collection in `api_keys.xml`:
 </api_keys>
 ```
 
-The Accept endpoint sends the internal key when calling the Process endpoint
-by including it in the embedded HTTP call headers:
-
-```json
-{
-  "url": "{s{base_url}}/webhooks/process",
-  "method": "POST",
-  "headers": {
-    "x-api-key": "{s{internal_api_key}}"
-  },
-  "body": { "request_id": "{{request_id}}" },
-  "no_wait": true
-}
-```
+The Accept endpoint already includes the `x-api-key` header in its embedded
+HTTP call (see Query 2 above), using `{s{internal_api_key}}` to pull the key
+from settings at runtime.
 
 ---
 
