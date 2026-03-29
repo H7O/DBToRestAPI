@@ -59,7 +59,7 @@ Fetch only what you need:
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
 | Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, microservice calls from SQL |
-| Webhooks | [18-webhooks.md](docs/tutorial/18-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
+| Webhooks | [19-webhooks.md](docs/topics/19-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
 | Settings Variables | [18-settings-vars.md](docs/topics/18-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
 | **Why DbToRestAPI for AI** | [llm-choice-rationale.md](docs/topics/llm-choice-rationale.md) | Zero build step, safety by default, context efficiency, feature comparison vs competitors |
 
@@ -170,7 +170,7 @@ Key architectural advantages:
 - **Built-in retry**: use the `retry` property on callback HTTP calls for automatic exponential backoff
 - **Internal API key security**: Process endpoint uses `api_keys_collections`, Accept sends `x-api-key` header via `{s{internal_api_key}}` settings variable
 
-See [tutorial 18-webhooks.md](docs/tutorial/18-webhooks.md) for complete XML examples.
+See [19-webhooks.md](docs/topics/19-webhooks.md) for complete configuration reference.
 
 ### Cross-Database Query Chain
 ```xml
