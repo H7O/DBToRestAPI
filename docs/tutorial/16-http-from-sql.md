@@ -398,6 +398,53 @@ The `skip` value is resolved **before** SQL runs, so it can't come from SQL in t
 
 This is especially useful for pay-per-call APIs, rate-limited services, or idempotent enrichment workflows. See the [full reference example](../topics/17-embedded-http-calls.md#conditionally-skipping-based-on-database-logic) for a complete walkthrough.
 
+## Fire-and-Forget with `no_wait`
+
+Sometimes you need to trigger an HTTP call but don't care about the response — fire off a webhook notification, enqueue a background job, or ping an analytics service. The `no_wait` property tells the engine to launch the call on a background thread and immediately continue SQL execution without waiting:
+
+```sql
+DECLARE @notify NVARCHAR(MAX) = {http{
+  {
+    "url": "https://hooks.slack.com/services/T00/B00/xxx",
+    "method": "POST",
+    "body": { "text": "Order {{order_id}} placed by {{email}}" },
+    "no_wait": true
+  }
+}http};
+
+-- @notify is always NULL — the call runs in the background
+-- SQL continues immediately without blocking
+SELECT 'Order created' AS status;
+```
+
+When `no_wait` is truthy, the SQL variable always receives `NULL` (same as a skipped call), and the HTTP request runs independently after the response is sent to the client. This is ideal for notifications where you don't need the result.
+
+### Truthy values
+
+The `no_wait` property accepts the same truthy values as `skip`: `true`, `"true"`, `"1"`, `"yes"` (case-insensitive), and non-zero numbers.
+
+### Combining `no_wait` with `skip`
+
+If both `skip` and `no_wait` are truthy, `skip` wins — the call is not made at all. This lets you conditionally disable a notification:
+
+```sql
+DECLARE @notify NVARCHAR(MAX) = {http{
+  {
+    "url": "https://hooks.example.com/notify",
+    "method": "POST",
+    "body": { "event": "signup", "user": "{{email}}" },
+    "no_wait": true,
+    "skip": "{{disable_notifications}}"
+  }
+}http};
+```
+
+### Use case: webhook patterns
+
+The `no_wait` property is a building block for webhook-style endpoints. See [Webhooks →](18-webhooks.md) for a complete two-endpoint pattern that combines `no_wait` with [multi-query chaining](17-multi-query.md) to build production webhook workflows.
+
+---
+
 ## Conditional Usage with IF Blocks
 
 All `{http{...}http}` calls execute during pre-processing regardless of SQL logic (unless `skip` is truthy) — because the engine processes them before the SQL even starts running. However, because results are delivered as parameterized SQL variables (not string-replaced), you can use `IF` blocks to control whether the result is actually assigned to your variables:

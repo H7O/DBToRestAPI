@@ -367,6 +367,6 @@ When the cache expires, all queries re-execute:
 
 ---
 
-**Next:** [Settings Variables →](18-settings-vars.md)
+**Next:** [Webhooks →](18-webhooks.md)
 
 [← Back to Index](index.md)

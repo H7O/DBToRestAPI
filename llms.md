@@ -58,7 +58,7 @@ Fetch only what you need:
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
-| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, structured response (status_code/headers/data/error), skip property, auth, retries, microservice calls from SQL |
+| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, microservice calls from SQL |
 | Settings Variables | [18-settings-vars.md](docs/topics/18-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
 | **Why DbToRestAPI for AI** | [llm-choice-rationale.md](docs/topics/llm-choice-rationale.md) | Zero build step, safety by default, context efficiency, feature comparison vs competitors |
 
@@ -150,7 +150,9 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- Check status: JSON_VALUE(@result, '$.status_code')
 -- On failure (status_code=0): JSON_VALUE(@result, '$.error.message')
 -- Skip a call conditionally: "skip": "{{should_skip}}" (truthy = true/1/yes → variable receives NULL)
+-- Fire-and-forget: "no_wait": true → call runs on background thread, variable receives NULL immediately
 -- Database-driven skip: combine with query chaining — Query 1 outputs a flag column, Query 2 uses it as "skip": "{{flag}}"
+-- Webhook pattern: use no_wait + multi-query chaining for accept→process→notify workflows (see tutorial 18-webhooks.md)
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 

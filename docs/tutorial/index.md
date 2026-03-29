@@ -80,16 +80,17 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 16 | [Embedded HTTP Calls](16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
+| 16 | [Embedded HTTP Calls](16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL, `skip`, `no_wait` |
 | 17 | [Multi-Query Chaining](17-multi-query.md) | Cross-database workflows, parameter passing between queries |
-| 18 | [Settings Variables](18-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
+| 18 | [Webhooks](18-webhooks.md) | Two-endpoint webhook pattern, accept & process, `no_wait` |
+| 19 | [Settings Variables](19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
 
 ### Going to Production
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 19 | [Production & Deployment](19-production.md) | Environment config, TLS, Docker, reverse proxy |
-| 20 | [What's Next?](20-whats-next.md) | Further resources and community |
+| 20 | [Production & Deployment](20-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 21 | [What's Next?](21-whats-next.md) | Further resources and community |
 
 ---
 
