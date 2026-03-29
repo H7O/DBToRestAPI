@@ -112,9 +112,10 @@ Key details:
   immediately, and the response is sent to the caller without waiting.
 - **`"x-api-key": "{s{internal_api_key}}"`** — authenticates the background
   call against the Process endpoint's `api_keys_collections` using a
-  settings variable, so the key never appears in plain text.
-- **`{s{base_url}}`** — a [settings variable](19-settings-vars.md) holding
-  the root URL of your own API (e.g., `https://api.example.com`).
+  [settings variable](19-settings-vars.md), so the key never appears in
+  plain text.
+- **`{s{base_url}}`** — another settings variable holding the root URL of
+  your own API (e.g., `https://api.example.com`).
 - The `OUTPUT` clause on the `INSERT` returns the new `request_id`, which
   flows into Query 2 as `{{request_id}}` via
   [multi-query chaining](17-multi-query.md).
