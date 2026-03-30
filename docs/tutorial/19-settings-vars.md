@@ -241,6 +241,6 @@ DECLARE @request_id NVARCHAR(100) = {h{X-Request-Id}};
 
 ---
 
-**Next:** [Production & Deployment →](20-production.md)
+**Next:** [OpenAPI & Swagger UI →](20-openapi.md)
 
 **[Back to Tutorial Index](index.md)**

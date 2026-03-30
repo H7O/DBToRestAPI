@@ -249,8 +249,9 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | 16 | [Embedded HTTP Calls](docs/tutorial/16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
 | 17 | [Multi-Query Chaining](docs/tutorial/17-multi-query.md) | Cross-database workflows, parameter passing between queries |
 | 19 | [Settings Variables](docs/tutorial/19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
-| 19 | [Production & Deployment](docs/tutorial/19-production.md) | Environment config, TLS, Docker, reverse proxy |
-| 20 | [What's Next?](docs/tutorial/20-whats-next.md) | Further resources and community |
+| 20 | [OpenAPI & Swagger UI](docs/tutorial/20-openapi.md) | Auto-generated spec, Swagger UI, enrichment, selective exposure |
+| 21 | [Production & Deployment](docs/tutorial/21-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 22 | [What's Next?](docs/tutorial/22-whats-next.md) | Further resources and community |
 
 ### Reference Documentation
 

@@ -1,4 +1,4 @@
-# 20 — Production & Deployment Tips
+# 21 — Production & Deployment Tips
 
 You have been running DBToRestAPI on `localhost` throughout this tutorial.  This
 chapter covers the adjustments you should make before deploying to a real
@@ -311,6 +311,6 @@ Use this quick reference before going live:
 
 ---
 
-**Next:** [What's Next? →](21-whats-next.md)
+**Next:** [What's Next? →](22-whats-next.md)
 
 [← Back to Index](index.md)

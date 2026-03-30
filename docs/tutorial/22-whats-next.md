@@ -1,4 +1,4 @@
-# 21 — What's Next?
+# 22 — What's Next?
 
 Congratulations — you have worked through the entire DBToRestAPI tutorial, from
 a bare "Hello World" endpoint to multi-query chaining, file management, and
@@ -112,8 +112,9 @@ Here is the full learning path you completed:
 | 17 | [Multi-Query Chaining](17-multi-query.md) | Sequential queries, cross-database |
 | 18 | [Webhooks](18-webhooks.md) | Two-endpoint webhook pattern, `no_wait` |
 | 19 | [Settings Variables](19-settings-vars.md) | `{s{}}`, `<vars>` config, encrypted secrets |
-| 20 | [Production Tips](20-production.md) | Security, encryption, deployment checklist |
-| 21 | What's Next? | ← You are here |
+| 20 | [OpenAPI & Swagger UI](20-openapi.md) | Auto-generated spec, Swagger UI, enrichment |
+| 21 | [Production Tips](21-production.md) | Security, encryption, deployment checklist |
+| 22 | What's Next? | ← You are here |
 
 ---
 

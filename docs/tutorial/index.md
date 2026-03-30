@@ -85,12 +85,13 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 | 18 | [Webhooks](18-webhooks.md) | Two-endpoint webhook pattern, accept & process, `no_wait` |
 | 19 | [Settings Variables](19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
 
-### Going to Production
+### OpenAPI & Production
 
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
-| 20 | [Production & Deployment](20-production.md) | Environment config, TLS, Docker, reverse proxy |
-| 21 | [What's Next?](21-whats-next.md) | Further resources and community |
+| 20 | [OpenAPI & Swagger UI](20-openapi.md) | Auto-generated spec, Swagger UI, enrichment tags, selective exposure |
+| 21 | [Production & Deployment](21-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 22 | [What's Next?](22-whats-next.md) | Further resources and community |
 
 ---
 
