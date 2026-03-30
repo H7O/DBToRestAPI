@@ -23,6 +23,7 @@ namespace DBToRestAPI.Services;
 public class OpenApiDocumentBuilder
 {
     private byte[] _cachedDocument = [];
+    private byte[] _cachedSwaggerUiHtml = [];
     private bool _enabled;
     private readonly IEncryptedConfiguration _configuration;
     private readonly ILogger<OpenApiDocumentBuilder> _logger;
@@ -49,6 +50,12 @@ public class OpenApiDocumentBuilder
     /// Empty if disabled or no endpoints configured.
     /// </summary>
     public byte[] GetDocument() => _cachedDocument;
+
+    /// <summary>
+    /// Returns the cached Swagger UI HTML page as a byte array.
+    /// Empty if disabled.
+    /// </summary>
+    public byte[] GetSwaggerUiHtml() => _cachedSwaggerUiHtml;
 
     /// <summary>
     /// Whether OpenAPI is enabled in the current configuration.
@@ -96,12 +103,17 @@ public class OpenApiDocumentBuilder
             if (!_enabled)
             {
                 _cachedDocument = [];
+                _cachedSwaggerUiHtml = [];
                 return;
             }
 
             var doc = BuildDocument(globalEnabled);
             _cachedDocument = JsonSerializer.SerializeToUtf8Bytes(doc,
                 new JsonSerializerOptions { WriteIndented = true });
+
+            var title = _configuration.GetSection("openapi")?.GetValue<string>("title")
+                ?? "DBToRestAPI";
+            _cachedSwaggerUiHtml = System.Text.Encoding.UTF8.GetBytes(BuildSwaggerUiHtml(title));
         }
         catch (Exception ex)
         {
@@ -112,7 +124,43 @@ public class OpenApiDocumentBuilder
             _reloadingGate.TryClose();
         }
     }
-
+    private static string BuildSwaggerUiHtml(string title)
+    {
+        var encodedTitle = System.Net.WebUtility.HtmlEncode(title);
+        return
+$$"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{encodedTitle}} - Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    html { box-sizing: border-box; overflow-y: scroll; }
+    *, *::before, *::after { box-sizing: inherit; }
+    body { margin: 0; background: #fafafa; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: '/openapi.json',
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIBundle.SwaggerUIStandalonePreset
+      ],
+      layout: 'BaseLayout'
+    });
+  </script>
+</body>
+</html>
+""";
+    }
     private Dictionary<string, object> BuildDocument(bool globalEnabled)
     {
         var openApiSection = _configuration.GetSection("openapi");

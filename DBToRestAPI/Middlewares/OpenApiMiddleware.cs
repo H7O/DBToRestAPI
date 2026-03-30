@@ -3,9 +3,10 @@ namespace DBToRestAPI.Middlewares;
 using DBToRestAPI.Services;
 
 /// <summary>
-/// Short-circuits requests to /openapi.json and /swagger.json, returning the
-/// cached OpenAPI document from OpenApiDocumentBuilder.
-/// Registered before Step1ServiceTypeChecks so spec requests bypass the full pipeline.
+/// Short-circuits requests to OpenAPI spec URLs (/openapi.json, /swagger.json)
+/// and Swagger UI URLs (/swagger, /swagger/index.html, /api-docs), returning
+/// cached content from OpenApiDocumentBuilder.
+/// Registered before Step1ServiceTypeChecks so these requests bypass the full pipeline.
 /// </summary>
 public class OpenApiMiddleware
 {
@@ -21,9 +22,15 @@ public class OpenApiMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var path = context.Request.Path.Value;
-        if (path != null
-            && (path.Equals("/openapi.json", StringComparison.OrdinalIgnoreCase)
-                || path.Equals("/swagger.json", StringComparison.OrdinalIgnoreCase)))
+        if (path == null)
+        {
+            await _next(context);
+            return;
+        }
+
+        // OpenAPI JSON spec
+        if (path.Equals("/openapi.json", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/swagger.json", StringComparison.OrdinalIgnoreCase))
         {
             if (!_builder.IsEnabled)
             {
@@ -35,6 +42,24 @@ public class OpenApiMiddleware
             context.Response.ContentType = "application/json";
             context.Response.ContentLength = doc.Length;
             await context.Response.Body.WriteAsync(doc);
+            return;
+        }
+
+        // Swagger UI
+        if (path.Equals("/swagger", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/swagger/index.html", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api-docs", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!_builder.IsEnabled)
+            {
+                context.Response.StatusCode = 404;
+                return;
+            }
+
+            var html = _builder.GetSwaggerUiHtml();
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.ContentLength = html.Length;
+            await context.Response.Body.WriteAsync(html);
             return;
         }
 

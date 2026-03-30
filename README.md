@@ -29,7 +29,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **Nested JSON** — Embeds `FOR JSON` results as real JSON, not escaped strings.
 - **CORS** — Regex-based origin matching, per-endpoint or global, with automatic preflight handling.
 - **Host-based routing** — Serve different endpoints per hostname with exact (`www.example.com`) or wildcard (`*.example.com`) matching and specificity-based priority.
-- **OpenAPI / Swagger** — Auto-generated OpenAPI 3.0 spec at `/openapi.json` from your XML config. Secure by default (opt-in globally or per-endpoint), hot-reloads on config change, supports custom summaries, descriptions, tags, and response schemas.
+- **OpenAPI / Swagger** — Auto-generated OpenAPI 3.0 spec at `/openapi.json` with built-in Swagger UI at `/swagger`. Secure by default (opt-in globally or per-endpoint), hot-reloads on config change, supports custom summaries, descriptions, tags, and response schemas.
 - **Encryption at rest** — Automatically encrypt connection strings and secrets in your config files.
 
 ## Quick Start

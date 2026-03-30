@@ -644,4 +644,81 @@ public class OpenApiDocumentBuilderTests
         Assert.Equal("inventory", tags[0].GetString());
         Assert.Equal("public", tags[1].GetString());
     }
+
+    // --- Swagger UI HTML tests ---
+
+    [Fact]
+    public void SwaggerUiHtml_EmptyWhenDisabled()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["queries:hello:route"] = "hello",
+            ["queries:hello:query"] = "SELECT 1"
+        });
+
+        Assert.False(builder.IsEnabled);
+        Assert.Empty(builder.GetSwaggerUiHtml());
+    }
+
+    [Fact]
+    public void SwaggerUiHtml_ReturnedWhenEnabled()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:hello:route"] = "hello",
+            ["queries:hello:query"] = "SELECT 1"
+        });
+
+        var html = builder.GetSwaggerUiHtml();
+        Assert.NotEmpty(html);
+        var htmlStr = System.Text.Encoding.UTF8.GetString(html);
+        Assert.Contains("swagger-ui", htmlStr);
+        Assert.Contains("/openapi.json", htmlStr);
+    }
+
+    [Fact]
+    public void SwaggerUiHtml_ContainsConfiguredTitle()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["openapi:title"] = "My Cool API",
+            ["queries:hello:route"] = "hello",
+            ["queries:hello:query"] = "SELECT 1"
+        });
+
+        var htmlStr = System.Text.Encoding.UTF8.GetString(builder.GetSwaggerUiHtml());
+        Assert.Contains("My Cool API", htmlStr);
+    }
+
+    [Fact]
+    public void SwaggerUiHtml_DefaultsTitleWhenNotConfigured()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:hello:route"] = "hello",
+            ["queries:hello:query"] = "SELECT 1"
+        });
+
+        var htmlStr = System.Text.Encoding.UTF8.GetString(builder.GetSwaggerUiHtml());
+        Assert.Contains("DBToRestAPI", htmlStr);
+    }
+
+    [Fact]
+    public void SwaggerUiHtml_HtmlEncodesTitle()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["openapi:title"] = "<script>alert(1)</script>",
+            ["queries:hello:route"] = "hello",
+            ["queries:hello:query"] = "SELECT 1"
+        });
+
+        var htmlStr = System.Text.Encoding.UTF8.GetString(builder.GetSwaggerUiHtml());
+        Assert.DoesNotContain("<script>alert(1)</script>", htmlStr);
+        Assert.Contains("&lt;script&gt;", htmlStr);
+    }
 }

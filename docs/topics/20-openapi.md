@@ -10,8 +10,11 @@ The spec rebuilds automatically on every config change (hot-reload) and is serve
 |-----|---------|
 | `/openapi.json` | OpenAPI 3.0.3 JSON spec |
 | `/swagger.json` | Same content (alias for legacy tool compatibility) |
+| `/swagger` | Built-in Swagger UI (interactive browser) |
+| `/swagger/index.html` | Same Swagger UI (alternate URL) |
+| `/api-docs` | Same Swagger UI (alternate URL) |
 
-Both return 404 when OpenAPI is not enabled.
+All URLs return 404 when OpenAPI is not enabled. The Swagger UI loads assets from [unpkg.com CDN](https://unpkg.com/swagger-ui-dist@5/) — no files are bundled in the binary.
 
 ## Enabling OpenAPI
 
@@ -172,6 +175,6 @@ Security schemes are added to `components/securitySchemes` only when actually us
 ## Architecture Notes
 
 - **Hot-reload** — the spec rebuilds automatically when any config file changes
-- **Short-circuit** — `/openapi.json` and `/swagger.json` are handled by early middleware before the main pipeline, so there's zero overhead on normal API requests
+- **Short-circuit** — `/openapi.json`, `/swagger.json`, `/swagger`, `/swagger/index.html`, and `/api-docs` are all handled by early middleware before the main pipeline, so there's zero overhead on normal API requests
 - **No external dependencies** — built with `System.Text.Json`, no NuGet packages added
 - **Thread-safe** — uses the same `AtomicGate` pattern as the route resolver
