@@ -19,7 +19,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration
     .SetBasePath(AppContext.BaseDirectory)
-    .AddXmlFile("config/settings.xml", optional: false, reloadOnChange: true)
+    .AddResilientXmlFile("config/settings.xml", optional: false, reloadOnChange: true)
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
     // Load additional configuration files specified in "additional_configurations:path"
     .AddDynamicConfigurationFiles(builder.Configuration)

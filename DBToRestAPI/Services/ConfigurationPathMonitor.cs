@@ -34,7 +34,7 @@ public static class ConfigurationExtensions
             
             if (extension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
             {
-                configurationBuilder.AddXmlFile(path, optional: false, reloadOnChange: true);
+                configurationBuilder.AddResilientXmlFile(path, optional: false, reloadOnChange: true);
             }
             else if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
             {
