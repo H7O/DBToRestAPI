@@ -186,7 +186,7 @@ DbToRestAPI:
   ├── External API → {http{"url":"...","auth":{...},"retry":{...}}http}
   ├── CORS → <cors><pattern>^.*\.myapp\.com$</pattern></cors>
   ├── Background processing → "no_wait": true (two XML endpoints, zero infrastructure)
-  └── OpenAPI spec → <openapi><enabled>true</enabled></openapi> (auto-generated from config)
+  └── OpenAPI spec + Swagger UI → <openapi><enabled>true</enabled></openapi> (auto-generated from config)
 ```
 
 No architectural decisions. No library choices. No integration risk. No extra context
@@ -218,7 +218,7 @@ libraries, no architecture required:
 | Cross-database query chaining | Multiple `<query>` nodes | Sequential queries, cross-database workflows |
 | Conditional HTTP execution | `skip` property + query chaining | Let database logic decide whether to call external APIs |
 | Background processing / webhooks | `no_wait` + query chaining | Accept-now-process-later pattern, no message queue or worker service needed |
-| OpenAPI / Swagger | `<openapi>` tag (global + per-endpoint) | Auto-generated spec at `/openapi.json`, secure by default, per-endpoint opt-in |
+| OpenAPI / Swagger | `<openapi>` tag (global + per-endpoint) | Auto-generated spec at `/openapi.json`, built-in Swagger UI at `/swagger`, secure by default, per-endpoint opt-in |
 | Settings encryption | `<settings_encryption>` tag | DPAPI / Data Protection for secrets at rest |
 | SQL → HTTP error mapping | `THROW 50404, '...', 1` | Direct mapping, no middleware needed |
 | Pagination with count | `<count_query>` tag | Automatic `{count, data}` wrapping |
@@ -407,7 +407,7 @@ effort on business logic and the frontend — where it matters most to the user.
 | External API calls | Built-in, concurrent, structured response | Must implement from scratch |
 | Database-driven logic | Built-in (skip + query chaining) | Must implement from scratch |
 | Background processing | Built-in (`no_wait` + query chaining) | Message queue + worker service + retry logic |
-| OpenAPI / Swagger | Built-in (auto-generated from config) | Must install + configure Swagger package |
+| OpenAPI / Swagger | Built-in (auto-generated from config + Swagger UI) | Must install + configure Swagger package |
 | Production readiness | Same config runs in production | May need migration from dev setup |
 
 ---

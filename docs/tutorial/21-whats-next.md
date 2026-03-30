@@ -33,7 +33,7 @@ feature.  Use them when you need quick lookups:
 | Error Handling | [docs/topics/15-error-handling.md](../topics/15-error-handling.md) |
 | Debug Mode | [docs/topics/16-debug-mode.md](../topics/16-debug-mode.md) |
 | Embedded HTTP Calls | [docs/topics/17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) |
-| Settings Variables | [docs/topics/18-settings-vars.md](../topics/18-settings-vars.md) |
+| Settings Variables | [docs/topics/21-settings-vars.md](../topics/21-settings-vars.md) |
 
 ---
 

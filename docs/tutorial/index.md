@@ -115,7 +115,7 @@ For quick lookups and comprehensive details on any feature, see the [reference t
 - [15-encryption.md](../topics/15-encryption.md) — Encryption reference
 - [16-tls-certificates.md](../topics/16-tls-certificates.md) — TLS/HTTPS setup
 - [17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) — HTTP calls reference
-- [18-settings-vars.md](../topics/18-settings-vars.md) — Settings variables reference
+- [21-settings-vars.md](../topics/21-settings-vars.md) — Settings variables reference
 
 ---
 

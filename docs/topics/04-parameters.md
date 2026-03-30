@@ -208,4 +208,4 @@ WHERE id IN (
 - [CRUD Operations](03-crud-operations.md) - Using parameters in queries
 - [Authentication](12-authentication.md) - JWT claim parameters
 - [Query Chaining](14-query-chaining.md) - Parameter passing between queries
-- [Settings Variables](18-settings-vars.md) - Configuration values in queries
+- [Settings Variables](21-settings-vars.md) - Configuration values in queries

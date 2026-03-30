@@ -66,7 +66,7 @@ Partner                     Your API
 Key properties:
 - `<success_status_code>202</success_status_code>` — returns `202 Accepted`
 - `"no_wait": true` — fires on background thread, variable receives `NULL`
-- `"x-api-key": "{s{internal_api_key}}"` — authenticates via [settings variable](18-settings-vars.md)
+- `"x-api-key": "{s{internal_api_key}}"` — authenticates via [settings variable](21-settings-vars.md)
 - Validation in Query 1 prevents the `no_wait` call in Query 2 from firing on invalid input (embedded HTTP calls are pre-processed per query)
 
 ## Process & Notify Endpoint
