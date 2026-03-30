@@ -121,6 +121,7 @@ Here's every tag you can use inside an endpoint definition:
 | `<cache>` | No | None | Response caching settings. |
 | `<cors>` | No | Global setting | Per-endpoint CORS override. |
 | `<file_management>` | No | None | File upload/download configuration. |
+| `<openapi>` | No | None | Per-endpoint OpenAPI enrichment: `<enabled>`, `<summary>`, `<description>`, `<tags>`, `<response_schema>`. See [OpenAPI topic](../topics/20-openapi.md). |
 
 > **Host priority:** When multiple endpoints share the same route and verb,
 > the engine picks the most specific host: exact (`www.example.com`) beats

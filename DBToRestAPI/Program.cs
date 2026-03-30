@@ -63,6 +63,8 @@ builder.Services.AddSingleton<ApiKeysService>();
 
 builder.Services.AddSingleton<IQueryConfigurationParser, QueryConfigurationParser>();
 
+builder.Services.AddSingleton<OpenApiDocumentBuilder>();
+
 
 
 
@@ -165,6 +167,7 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+app.UseMiddleware<OpenApiMiddleware>();              // 0. OpenAPI spec (short-circuit, no pipeline overhead)
 app.UseMiddleware<Step1ServiceTypeChecks>();        // 1. Route resolution & service type determination
 app.UseMiddleware<Step2CorsCheck>();                // 2. CORS headers (must be before auth for preflight)
 app.UseMiddleware<Step3ApiKeysCheck>();             // 3. Local API key validation
