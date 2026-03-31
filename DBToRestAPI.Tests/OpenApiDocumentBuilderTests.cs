@@ -348,9 +348,15 @@ public class OpenApiDocumentBuilderTests
             .GetProperty("schema");
         Assert.Equal("object", schema.GetProperty("type").GetString());
         var props = schema.GetProperty("properties");
+        Assert.True(props.TryGetProperty("success", out var success));
         Assert.True(props.TryGetProperty("count", out _));
         Assert.True(props.TryGetProperty("data", out var data));
+        Assert.Equal("boolean", success.GetProperty("type").GetString());
         Assert.Equal("array", data.GetProperty("type").GetString());
+        var required = schema.GetProperty("required");
+        Assert.Contains(required.EnumerateArray(), item => item.GetString() == "success");
+        Assert.Contains(required.EnumerateArray(), item => item.GetString() == "count");
+        Assert.Contains(required.EnumerateArray(), item => item.GetString() == "data");
     }
 
     [Fact]

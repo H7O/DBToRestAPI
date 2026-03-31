@@ -571,13 +571,15 @@ $$"""
                 ["type"] = "object",
                 ["properties"] = new Dictionary<string, object>
                 {
+                    ["success"] = new Dictionary<string, object> { ["type"] = "boolean" },
                     ["count"] = new Dictionary<string, object> { ["type"] = "integer" },
                     ["data"] = new Dictionary<string, object>
                     {
                         ["type"] = "array",
                         ["items"] = itemSchema
                     }
-                }
+                },
+                ["required"] = new[] { "success", "count", "data" }
             };
         }
 
