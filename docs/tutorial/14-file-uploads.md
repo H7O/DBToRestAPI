@@ -13,6 +13,17 @@ Client sends file(s) → Application saves to configured store(s)
 
 The application handles the file storage. Your SQL handles the metadata.
 
+## Rollback Behavior and Request Atomicity
+
+Uploaded files are written to the configured store(s) before your SQL query runs, but the request still behaves atomically from the caller's perspective:
+
+- If the downstream SQL step succeeds and the request returns a success status, the uploaded files remain in place.
+- If the SQL step throws an exception, or the request ends with a `4xx` or `5xx` response, the application automatically deletes the files that were uploaded for that request.
+- Rollback uses the full generated `relative_path`, so nested folder structures created by `<relative_file_path_structure>` are cleaned up correctly.
+- Stores marked `<optional>true</optional>` can still be skipped if unavailable; rollback only applies to stores where the file was actually written.
+
+This means your SQL can safely reject the request, for example with `THROW 50404, 'Contact not found', 1;`, without leaving orphaned files behind.
+
 ## Step 1: Configure File Stores
 
 Define where files are stored in `/config/file_management.xml`:
@@ -75,6 +86,8 @@ When you specify multiple stores, the file is saved to **all** of them. This pro
 - **Redundancy** — local + SFTP backup
 - **Regional access** — same file in multiple locations
 - Stores marked `<optional>true</optional>` don't cause failures if unavailable
+
+If the request later fails during SQL execution, any files that were successfully written to the non-optional or optional stores are rolled back automatically.
 
 ## Step 2: Create an Upload Endpoint
 
@@ -209,6 +222,7 @@ CREATE TABLE contact_files (
 - How to create upload endpoints with `<file_management>` settings
 - Two upload methods: JSON/base64 and multipart form data
 - How the application generates file metadata JSON for your SQL
+- How uploaded files are rolled back automatically when SQL execution fails or the request returns an error status
 - How to store file metadata in the database
 
 ---

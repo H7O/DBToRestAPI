@@ -19,7 +19,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
 - **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc.), and SQL injection protection via parameterised queries.
 - **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
-- **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML.
+- **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML, with automatic rollback of uploaded files when the downstream request fails.
 - **Multi-query chaining** — Execute sequential queries across different databases in a single request.
 - **Embedded HTTP calls** — Call external APIs from within your SQL queries.
 - **Background processing / webhooks** — Accept requests instantly and process in the background using `no_wait`, with built-in retry and progress callbacks — no message queue needed.
