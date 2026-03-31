@@ -20,6 +20,7 @@ namespace DBToRestAPI.Middlewares
     {
         public IConfigurationSection Config { get; }
         public bool? WasSuccessful { get; set; }
+        public List<string> StoredRelativePaths { get; } = [];
         public StoreOperationTracker(IConfigurationSection config)
         {
             Config = config;
@@ -183,13 +184,99 @@ namespace DBToRestAPI.Middlewares
                     Port = s.Config.GetValue<int>("port", 22),
                     Username = s.Config.GetValue<string>("username"),
                     Password = s.Config.GetValue<string>("password")
-                });
+                })
+                .ToList();
 
             if (!localStores.Any() && !groupedSftpStores.Any())
             {
                 // No valid stores found, proceed to next middleware
                 await this._next(context);
                 return;
+            }
+
+            async Task RollbackUploadedFilesAsync(string rollbackReason)
+            {
+                this._logger.LogWarning("{time}: Rolling back uploaded files in Step6FileManagement middleware due to {rollbackReason}",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                    rollbackReason);
+
+                foreach (var entry in localStores.Where(x => x.StoredRelativePaths.Count > 0))
+                {
+                    var localPath = entry.Config.GetValue<string>("base_path");
+                    if (string.IsNullOrWhiteSpace(localPath))
+                        continue;
+
+                    foreach (var relativePath in entry.StoredRelativePaths)
+                    {
+                        try
+                        {
+                            var destinationPath = Path.Combine(localPath, relativePath);
+                            if (File.Exists(destinationPath))
+                            {
+                                File.Delete(destinationPath);
+                                this._logger.LogDebug("{time}: Deleted file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware",
+                                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                    destinationPath,
+                                    entry.Config.Key);
+                            }
+                        }
+                        catch (Exception ex2)
+                        {
+                            this._logger.LogWarning("{time}: Failed to delete file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware"
+                                + Environment.NewLine
+                                + " error: {errorMessage}"
+                                ,
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                relativePath,
+                                entry.Config.Key,
+                                ex2.Message
+                                );
+                        }
+                    }
+                }
+
+                foreach (var group in groupedSftpStores)
+                {
+                    using Com.H.Net.Ssh.SFtpClient sftpClient = new SFtpClient(
+                        group.Key.Host!,
+                        group.Key.Port!,
+                        group.Key.Username!,
+                        group.Key.Password!
+                        );
+
+                    foreach (var entry in group.Where(x => x.StoredRelativePaths.Count > 0))
+                    {
+                        var remotePath = entry.Config.GetValue<string>("base_path", string.Empty);
+                        foreach (var relativePath in entry.StoredRelativePaths)
+                        {
+                            try
+                            {
+                                var destinationPath = Path.Combine(remotePath, relativePath)
+                                    .UnifyPathSeperator().Replace("\\", "/");
+                                await sftpClient.DeleteAsync(destinationPath);
+                                this._logger.LogDebug("{time}: Deleted file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware",
+                                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                    destinationPath,
+                                    entry.Config.Key);
+                            }
+                            catch (Exception ex2)
+                            {
+                                this._logger.LogWarning("{time}: Failed to delete file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware"
+                                    + Environment.NewLine
+                                    + " error: {errorMessage}"
+                                    ,
+                                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                    relativePath,
+                                    entry.Config.Key,
+                                    ex2.Message
+                                    );
+                            }
+                        }
+                    }
+                }
+
+                this._logger.LogDebug("{time}: files rolled back in Step6FileManagement middleware",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
             }
 
             try
@@ -230,13 +317,15 @@ namespace DBToRestAPI.Middlewares
                                 await sourceStream.CopyToAsync(destStream, context.RequestAborted);
                             }
 
-                            entry.WasSuccessful = true;
+                            entry.StoredRelativePaths.Add(file.Value.RelativePath);
                             this._logger.LogDebug("{time}: Copied temp file '{tempFile}' to local store ({local_store_name})  at '{destinationPath}' in Step6FileManagement middleware",
                                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
                                 file.Key,
                                 entry.Config.Key,
                                 destinationPath);
                         }
+
+                        entry.WasSuccessful = true;
                     }
                     catch (Exception ex)
                     {
@@ -307,13 +396,15 @@ namespace DBToRestAPI.Middlewares
                                     await sftpClient.UploadAsync(fileStream, destinationPath);
                                 }
 
-                                entry.WasSuccessful = true;
+                                entry.StoredRelativePaths.Add(file.Value.RelativePath);
                                 this._logger.LogDebug("{time}: Uploaded temp file '{tempFile}' to SFTP store ({sftp_store_name}) at '{destinationPath}' in Step6FileManagement middleware",
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
                                     file.Key,
                                     entry.Config.Key,
                                     destinationPath);
                             }
+
+                            entry.WasSuccessful = true;
                         }
                         catch (Exception ex)
                         {
@@ -347,6 +438,11 @@ namespace DBToRestAPI.Middlewares
 
                 // Proceed to the next middleware
                 await this._next(context);
+
+                if (context.Response.StatusCode >= StatusCodes.Status400BadRequest)
+                {
+                    await RollbackUploadedFilesAsync($"HTTP {context.Response.StatusCode}");
+                }
             }
             catch (Exception ex)
             {
@@ -354,93 +450,7 @@ namespace DBToRestAPI.Middlewares
                     _errorCode,
                     ex.Message);
 
-
-                // rollback local store files
-                if (localStores != null)
-                {
-                    foreach (var entry in localStores.Where(x => x?.WasSuccessful == true))
-                    {
-                        // delete the files copied to local store
-                        var localPath = entry.Config.GetValue<string>("base_path");
-                        if (string.IsNullOrWhiteSpace(localPath))
-                            continue;
-                        foreach (var file in tempFilesTracker.GetLocalFiles())
-                        {
-                            try
-                            {
-                                var destinationPath = Path.Combine(localPath, Path.GetFileName(file.Value.RelativePath));
-                                if (File.Exists(destinationPath))
-                                {
-                                    File.Delete(destinationPath);
-                                    this._logger.LogDebug("{time}: Deleted file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware",
-                                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                        destinationPath,
-                                        entry.Config.Key);
-                                }
-                            }
-                            catch (Exception ex2)
-                            {
-                                this._logger.LogWarning("{time}: Failed to delete file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware"
-                                    + Environment.NewLine
-                                    + " error: {errorMessage}"
-                                    ,
-                                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                    file.Key,
-                                    entry.Config.Key,
-                                    ex2.Message
-                                    );
-                            }
-                        }
-                    }
-                }
-                // rollback SFTP store files
-                if (groupedSftpStores != null)
-                {
-                    foreach (var group in groupedSftpStores)
-                    {
-                        using Com.H.Net.Ssh.SFtpClient sftpClient = new SFtpClient(
-                            group.Key.Host!,
-                            group.Key.Port!,
-                            group.Key.Username!,
-                            group.Key.Password!
-                            );
-                        // sftpClient.Connect();
-                        foreach (var entry in group.Where(x => x?.WasSuccessful == true))
-                        {
-                            // remote path can be empty, in which case files are uploaded to the user's home directory
-                            var remotePath = entry.Config.GetValue<string>("base_path", string.Empty);
-                            foreach (var file in tempFilesTracker.GetLocalFiles())
-                            {
-                                try
-                                {
-                                    var destinationPath = Path.Combine(remotePath, Path.GetFileName(file.Value.RelativePath))
-                                        .UnifyPathSeperator().Replace("\\", "/");
-                                    await sftpClient.DeleteAsync(destinationPath);
-                                    this._logger.LogDebug("{time}: Deleted file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware",
-                                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                        destinationPath,
-                                        entry.Config.Key);
-                                }
-                                catch (Exception ex2)
-                                {
-                                    this._logger.LogWarning("{time}: Failed to delete file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware"
-                                        + Environment.NewLine
-                                        + " error: {errorMessage}"
-                                        ,
-                                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                        file.Key,
-                                        entry.Config.Key,
-                                        ex2.Message
-                                        );
-                                }
-                            }
-                        }
-                    }
-                }
-
-
-                this._logger.LogDebug("{time}: files rolled back in Step6FileManagement middleware",
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
+                await RollbackUploadedFilesAsync(ex.Message);
 
 
                 // Check if this is a "file already exists" error - return 409 Conflict
