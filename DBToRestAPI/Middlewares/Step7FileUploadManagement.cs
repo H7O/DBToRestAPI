@@ -206,6 +206,9 @@ namespace DBToRestAPI.Middlewares
                     if (string.IsNullOrWhiteSpace(localPath))
                         continue;
 
+                    // Rollback removes files written by this request, but intentionally
+                    // does not prune parent directories. Folder trees may be shared by
+                    // concurrent uploads, and GUID segments can be caller-defined or omitted.
                     foreach (var relativePath in entry.StoredRelativePaths)
                     {
                         try

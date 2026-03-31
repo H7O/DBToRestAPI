@@ -21,8 +21,11 @@ Uploaded files are written to the configured store(s) before your SQL query runs
 - If the SQL step throws an exception, or the request ends with a `4xx` or `5xx` response, the application automatically deletes the files that were uploaded for that request.
 - Rollback uses the full generated `relative_path`, so nested folder structures created by `<relative_file_path_structure>` are cleaned up correctly.
 - Stores marked `<optional>true</optional>` can still be skipped if unavailable; rollback only applies to stores where the file was actually written.
+- Empty parent directories are intentionally left in place.
 
 This means your SQL can safely reject the request, for example with `THROW 50404, 'Contact not found', 1;`, without leaving orphaned files behind.
+
+Why not remove empty folders too? Because this API engine is expected to handle many concurrent uploads, and multiple requests may share the same directory tree. In addition, GUID path segments can be caller-defined or omitted, so the engine cannot reliably prove that a folder belongs only to the failed request.
 
 ## Step 1: Configure File Stores
 
