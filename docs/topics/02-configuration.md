@@ -312,15 +312,59 @@ Reference in sql.xml:
 
 ## Environment Variables
 
-Override settings via environment variables:
+Any XML or JSON setting can be overridden by an environment variable.  Environment
+variables are loaded **last** in the configuration chain, so they take precedence
+over everything in config files.
+
+The full override chain (last wins):
+
+```
+appsettings.json → appsettings.{Environment}.json → settings.xml → additional XML files → environment variables
+```
+
+### Mapping convention
+
+Use `__` (double underscore) as the hierarchy separator:
+
+| Config path | Environment variable |
+|---|---|
+| `ConnectionStrings:default` | `ConnectionStrings__default` |
+| `debug_mode_header_value` | `debug_mode_header_value` |
+| `settings_encryption:data_protection_key_path` | `settings_encryption__data_protection_key_path` |
+| `Kestrel:Endpoints:Http:Url` | `Kestrel__Endpoints__Http__Url` |
+| `Logging:LogLevel:Default` | `Logging__LogLevel__Default` |
+
+> On Windows and in the Azure App Service portal, both `:` and `__` work as
+> separators (e.g., `ConnectionStrings:default` or `ConnectionStrings__default`).
+> On Linux, use `__` because `:` is not valid in environment variable names on
+> some shells.
+
+### Examples
 
 ```bash
-# Connection string
+# Override the default connection string
 ConnectionStrings__default="Server=prod;Database=app;..."
 
-# Encryption key path
+# Encryption key path (also read directly via Environment.GetEnvironmentVariable)
 DATA_PROTECTION_KEY_PATH=./keys/
+
+# Set the ASP.NET Core environment
+ASPNETCORE_ENVIRONMENT=Production
+
+# Override logging level
+Logging__LogLevel__Default=Warning
 ```
+
+### Cloud deployment platforms
+
+This is the standard mechanism for per-environment configuration on platforms like
+Azure App Service, Docker, AWS ECS, and Kubernetes.  For example, on Azure App
+Service you can set `ConnectionStrings__default` in the portal under
+*Configuration → Application settings* and remove the connection string from
+`settings.xml` entirely.
+
+See the [Production & Deployment](../tutorial/21-production.md) tutorial for more
+deployment-specific examples.
 
 ## Related Topics
 

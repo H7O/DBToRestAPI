@@ -223,6 +223,7 @@ libraries, no architecture required:
 | SQL → HTTP error mapping | `THROW 50404, '...', 1` | Direct mapping, no middleware needed |
 | Pagination with count | `<count_query>` tag | Automatic `{count, data}` wrapping |
 | Nested JSON | `{type{json{field}}}` decorator | Embeds FOR JSON results as real objects |
+| Environment variable overrides | `.AddEnvironmentVariables()` | Any setting overridable via env vars — cloud-native deployment on Azure App Service, Docker, AWS, K8s |
 
 ---
 

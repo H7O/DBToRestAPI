@@ -87,7 +87,7 @@ public class DbConnectionFactory
         var connection = factory.CreateConnection()
             ?? throw new InvalidOperationException($"Failed to create connection for provider '{provider}'");
 
-        connection.ConnectionString = connectionString;
+        connection.ConnectionString = NormalizeConnectionStringPaths(provider, connectionString);
 
         // Wrap connection to track disposal
         var trackedConnection = new TrackedDbConnection(connection, _logger, connectionStringName);
@@ -108,6 +108,40 @@ public class DbConnectionFactory
     public static int ActiveConnectionCount => _activeConnectionCount;
 
     internal static void DecrementConnectionCount() => Interlocked.Decrement(ref _activeConnectionCount);
+
+    internal static string NormalizeConnectionStringPaths(string provider, string connectionString)
+    {
+        if (provider == "Microsoft.Data.Sqlite")
+        {
+            var builder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString);
+            var dataSource = builder.DataSource;
+
+            if (!string.IsNullOrWhiteSpace(dataSource)
+                && dataSource != ":memory:"
+                && !dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                && !Path.IsPathRooted(dataSource))
+            {
+                builder.DataSource = Path.Combine(AppContext.BaseDirectory, dataSource);
+            }
+
+            return builder.ToString();
+        }
+
+        if (provider == "Microsoft.Data.SqlClient")
+        {
+            var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString);
+
+            if (!string.IsNullOrWhiteSpace(builder.AttachDBFilename)
+                && !Path.IsPathRooted(builder.AttachDBFilename))
+            {
+                builder.AttachDBFilename = Path.Combine(AppContext.BaseDirectory, builder.AttachDBFilename);
+            }
+
+            return builder.ConnectionString;
+        }
+
+        return connectionString;
+    }
 
     private static string? InferProviderFromConnectionString(string connectionString)
     {

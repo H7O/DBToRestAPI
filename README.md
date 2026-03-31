@@ -30,6 +30,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **CORS** — Regex-based origin matching, per-endpoint or global, with automatic preflight handling.
 - **Host-based routing** — Serve different endpoints per hostname with exact (`www.example.com`) or wildcard (`*.example.com`) matching and specificity-based priority.
 - **OpenAPI / Swagger** — Auto-generated OpenAPI 3.0 spec at `/openapi.json` with built-in Swagger UI at `/swagger`. Secure by default (opt-in globally or per-endpoint), hot-reloads on config change, supports custom summaries, descriptions, tags, and response schemas.
+- **Environment variable overrides** — Any XML or JSON setting can be overridden via environment variables (e.g., `ConnectionStrings__default`), making it easy to configure per-environment on Azure App Service, Docker, AWS, or any deployment platform — no config file changes needed.
 - **Encryption at rest** — Automatically encrypt connection strings and secrets in your config files.
 
 ## Quick Start
@@ -75,10 +76,20 @@ curl -LO https://github.com/H7O/DBToRestAPI/releases/latest/download/DBToRestAPI
 docker run -p 5000:5000 ghcr.io/h7o/dbtorestapi
 ```
 
-To persist your config changes, mount the config directory:
+To persist your config changes with a bind mount, copy the bundled config out of the image first. Mounting an empty directory over `/app/config` hides the default files and the app will not start.
 ```bash
-docker run -p 5000:5000 -v ./my-config:/app/config ghcr.io/h7o/dbtorestapi
+docker create --name dbtorestapi-config ghcr.io/h7o/dbtorestapi
+mkdir -p my-config
+docker cp dbtorestapi-config:/app/config/. ./my-config
+docker rm dbtorestapi-config
+
+docker run -p 5000:5000 \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/my-config:/app/config" \
+  ghcr.io/h7o/dbtorestapi
 ```
+
+On Windows, copy the config directory out in the same way and ensure the mounted folder is writable by the container process.
 
 The server starts on **http://localhost:5000**. You should see:
 

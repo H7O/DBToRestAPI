@@ -115,6 +115,13 @@ Error codes 50000-51000 map to HTTP 0-1000.
 | `/config/auth_providers.xml` | OIDC provider configurations |
 | `/config/regex.xml` | Shared regex patterns for parameter delimiters |
 
+### Environment Variable Overrides
+
+Any setting can be overridden via environment variables (loaded last, highest priority).
+Use `__` as hierarchy separator: `ConnectionStrings__default`, `Logging__LogLevel__Default`.
+This enables cloud-native deployment on Azure App Service, Docker, AWS, Kubernetes, etc.
+without modifying config files.
+
 ## Common Patterns
 
 ### Pagination with Count

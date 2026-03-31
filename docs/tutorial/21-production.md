@@ -259,7 +259,84 @@ alerting and troubleshooting.
 
 ---
 
-## 11. Hosting Options
+## 11. Environment Variable Overrides
+
+Every XML or JSON setting can be overridden by an environment variable — no config
+file changes needed.  This is the standard way to configure applications on cloud
+platforms like Azure App Service, Docker, AWS ECS, and Kubernetes.
+
+The mapping convention uses `__` (double underscore) as the hierarchy separator:
+
+| Config path | Environment variable |
+|---|---|
+| `ConnectionStrings:default` | `ConnectionStrings__default` |
+| `debug_mode_header_value` | `debug_mode_header_value` |
+| `settings_encryption:data_protection_key_path` | `settings_encryption__data_protection_key_path` |
+| `Kestrel:Endpoints:Http:Url` | `Kestrel__Endpoints__Http__Url` |
+| `Logging:LogLevel:Default` | `Logging__LogLevel__Default` |
+
+Environment variables are loaded **last** in the configuration chain, so they
+override everything in XML and JSON files.
+
+> **Note:** The colon (`:`) separator also works — for example,
+> `ConnectionStrings:default` is a valid environment variable name and is
+> equivalent to `ConnectionStrings__default`.  The `__` form is recommended for
+> portability because `:` is not supported in environment variable names on some
+> Linux shells.  On Windows and in the Azure App Service portal, both forms work.
+
+### Practical examples
+
+**Azure App Service** — In the portal, go to *Configuration → Application settings*
+and add:
+
+| Name | Value |
+|---|---|
+| `ConnectionStrings__default` | `Server=prod.database.windows.net;...` |
+| `ASPNETCORE_ENVIRONMENT` | `Production` |
+
+You can remove the `<default>` node from `settings.xml` entirely — the environment
+variable takes its place.
+
+**Docker:**
+
+```bash
+docker run -p 5000:5000 \
+  -e ConnectionStrings__default="Server=prod;Database=app;..." \
+  -e ASPNETCORE_ENVIRONMENT=Production \
+  ghcr.io/h7o/dbtorestapi
+```
+
+**Docker Compose:**
+
+```yaml
+environment:
+  - ConnectionStrings__default=Server=prod;Database=app;...
+  - ASPNETCORE_ENVIRONMENT=Production
+```
+
+**Linux / systemd:**
+
+```ini
+[Service]
+Environment=ConnectionStrings__default=Server=prod;Database=app;...
+Environment=ASPNETCORE_ENVIRONMENT=Production
+```
+
+> **Tip:** On Windows and in the Azure App Service portal, both `:` and `__`
+> work as separators (e.g., `ConnectionStrings:default` or
+> `ConnectionStrings__default`).  On Linux, use `__` because `:` is not valid in
+> environment variable names on some shells.
+
+This works for **any** setting — connection strings, CORS patterns, logging levels,
+Kestrel URLs, encryption paths, and more.  The full override chain is:
+
+```
+appsettings.json → appsettings.{Environment}.json → settings.xml → additional XML files → environment variables
+```
+
+---
+
+## 12. Hosting Options
 
 DBToRestAPI is a standard ASP.NET Core application.  Common hosting patterns:
 
@@ -278,7 +355,8 @@ dotnet publish -c Release -o ./publish
 ```
 
 The `publish` folder contains everything needed.  Copy your `config/` folder
-into it (or mount it as a volume in Docker) to provide your XML configuration.
+into it (or mount a pre-populated, writable `config/` volume in Docker) to
+provide your XML configuration.
 
 ---
 
@@ -297,6 +375,7 @@ Use this quick reference before going live:
 - [ ] Database timeouts reviewed
 - [ ] Caching enabled for read-heavy endpoints
 - [ ] Logging level set to Warning or Error
+- [ ] Environment variables used for platform-specific overrides (connection strings, secrets)
 - [ ] `config/` folder deployed alongside the application
 
 ---
@@ -306,6 +385,7 @@ Use this quick reference before going live:
 - How to disable debug mode and hide SQL errors in production.
 - How to encrypt connection strings and other secrets at rest.
 - How to lock down CORS, enforce HTTPS, and set timeouts.
+- How to override any setting via environment variables for cloud deployments.
 - How to audit endpoint protection and organise configuration files.
 - Hosting options and a pre-deployment checklist.
 
