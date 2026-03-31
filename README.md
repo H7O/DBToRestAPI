@@ -2,6 +2,8 @@
 
 > **LLM / AI agents**: For a structured, token-efficient overview of this project, see [llms.txt](llms.txt) (plain text) or [llms.md](llms.md) (markdown with full documentation links).
 
+> **Why this works well for AI-assisted development**: DbToRestAPI keeps backend authoring close to SQL + declarative XML, both of which are highly familiar and token-efficient for LLMs. With hot-reload and built-in auth, caching, file handling, external API integration, and OpenAPI generation, agents can spend more of their context budget on product logic instead of framework plumbing. For the full rationale, see [Why DbToRestAPI for AI-Assisted Development](docs/topics/llm-choice-rationale.md).
+
 A no-code solution that turns your SQL queries into RESTful APIs — no API coding required.
 
 If you can write basic SQL, you can build safe, secure REST APIs in minutes.
