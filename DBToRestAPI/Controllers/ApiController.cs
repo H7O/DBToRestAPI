@@ -82,7 +82,7 @@ namespace DBToRestAPI.Controllers
         /// <param name="errorNumber">The extracted error number (50000-51000 range)</param>
         /// <param name="errorMessage">The extracted error message</param>
         /// <returns>True if a custom error was found in the valid range; otherwise false</returns>
-        private static bool TryGetCustomDbError(Exception exception, out int errorNumber, out string errorMessage)
+        internal static bool TryGetCustomDbError(Exception exception, out int errorNumber, out string errorMessage)
         {
             errorNumber = 0;
             errorMessage = string.Empty;
