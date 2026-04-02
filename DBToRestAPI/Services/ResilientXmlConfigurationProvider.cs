@@ -73,6 +73,7 @@ public static class ResilientXmlConfigurationExtensions
             s.Path = path;
             s.Optional = optional;
             s.ReloadOnChange = reloadOnChange;
+            s.ResolveFileProvider();
         });
     }
 }
