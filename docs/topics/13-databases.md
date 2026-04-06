@@ -1,6 +1,6 @@
 # Multi-Database Support
 
-Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, and IBM DB2 — even within the same API.
+Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, and any ODBC or OleDb data source — even within the same API.
 
 ## Supported Databases
 
@@ -12,6 +12,10 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, and IBM DB2 — even w
 | SQLite | `Microsoft.Data.Sqlite` | ✅ |
 | Oracle | `Oracle.ManagedDataAccess.Core` | ✅ |
 | IBM DB2 | `Net.IBM.Data.Db2` | ✅ |
+| ODBC | `System.Data.Odbc` | ✅ |
+| OleDb | `System.Data.OleDb` | ✅ |
+
+> **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
 ## Connection String Configuration
 
@@ -36,6 +40,12 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, and IBM DB2 — even w
   
   <!-- IBM DB2 -->
   <db2 provider="Net.IBM.Data.Db2"><![CDATA[Server=localhost:50000;Database=mainframe;UID=admin;PWD=pass;]]></db2>
+  
+  <!-- ODBC -->
+  <odbc_source provider="System.Data.Odbc"><![CDATA[Driver={ODBC Driver 18 for SQL Server};Server=myserver;Database=mydb;Uid=user;Pwd=pass;]]></odbc_source>
+  
+  <!-- OleDb -->
+  <oledb_source provider="System.Data.OleDb"><![CDATA[Provider=MSOLEDBSQL;Server=myserver;Database=mydb;Trusted_Connection=yes;]]></oledb_source>
 </ConnectionStrings>
 ```
 
@@ -186,8 +196,10 @@ Auto-detection examines connection string patterns:
 - `Data Source=*.db` → SQLite
 - `:1521` or `SERVICE_NAME` → Oracle
 - `:50000` → DB2
+- `Driver=` → ODBC
+- `Provider=` (OleDb-specific providers) → OleDb
 
-**Recommendation:** Explicitly specify `provider` attribute in production.
+**Recommendation:** Explicitly specify `provider` attribute in production — especially for ODBC and OleDb connections.
 
 ## Related Topics
 

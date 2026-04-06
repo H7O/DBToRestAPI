@@ -164,6 +164,10 @@ If omitted, the `default` connection string is used. The supported database prov
 | SQLite | `Microsoft.Data.Sqlite` | Yes |
 | Oracle | `Oracle.ManagedDataAccess.Core` | Yes |
 | IBM DB2 | `Net.IBM.Data.Db2` | Yes |
+| ODBC | `System.Data.Odbc` | Yes |
+| OleDb | `System.Data.OleDb` | Yes |
+
+> **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
 ## Global Settings in settings.xml
 

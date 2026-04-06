@@ -8,7 +8,7 @@ DbToRestAPI is a no-code solution that converts SQL queries into RESTful APIs. W
 
 - **SQL-First**: Your SQL runs as-is. No abstraction layer, no translation.
 - **Configuration-Driven**: Define endpoints in XML files. Hot-reload on changes.
-- **Database Agnostic**: SQL Server, PostgreSQL, MySQL, SQLite, Oracle, DB2
+- **Database Agnostic**: SQL Server, PostgreSQL, MySQL, SQLite, Oracle, DB2, ODBC, OleDb
 - **Production-Ready**: Authentication, caching, file handling, CORS built-in
 
 ### Use Cases
@@ -24,7 +24,7 @@ DbToRestAPI is a no-code solution that converts SQL queries into RESTful APIs. W
 ### Prerequisites
 
 - .NET 10+ runtime
-- A database (SQL Server, PostgreSQL, MySQL, SQLite, Oracle, or DB2)
+- A database (SQL Server, PostgreSQL, MySQL, SQLite, Oracle, DB2, or any ODBC/OleDb data source)
 
 ### Step 1: Create Test Database
 

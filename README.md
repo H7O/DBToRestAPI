@@ -10,14 +10,14 @@ If you can write basic SQL, you can build safe, secure REST APIs in minutes.
 
 It supports a range of use cases out of the box: public APIs, B2B APIs with API key authentication, or full-stack applications with JWT/OIDC authentication. With built-in support for OAuth 2.0/OIDC providers (Azure B2C, Google, Auth0, and others), you can build complete front-end applications in React, Angular, or Vue that communicate directly with your database through secure, authenticated REST APIs.
 
-Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, and IBM DB2 — with automatic provider detection.
+Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2, and any ODBC or OleDb data source — with automatic provider detection.
 
 > **Note**: For .NET developers looking to extend the solution with custom features, the codebase is fully accessible under MIT license.
 
 ## Key Features
 
 - **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step. Call stored procedures, functions, CTEs — anything your database supports.
-- **6 database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2 with automatic provider detection.
+- **8+ database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2, plus any ODBC or OleDb data source — with automatic provider detection. Named `{{parameter}}` syntax works even on positional-parameter databases (ODBC/OleDb).
 - **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
 - **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc.), and SQL injection protection via parameterised queries.
 - **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
@@ -171,8 +171,12 @@ When you're ready, swap the default connection string in `config/settings.xml` t
 | SQLite | `Microsoft.Data.Sqlite` | ✅ |
 | Oracle | `Oracle.ManagedDataAccess.Core` | ✅ |
 | IBM DB2 | `Net.IBM.Data.Db2` | ✅ |
+| ODBC | `System.Data.Odbc` | ✅ |
+| OleDb | `System.Data.OleDb` | ✅ |
 
-All providers work cross-platform (Windows, Linux, macOS).
+> **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters, so you write the same friendly parameter syntax for all databases.
+
+All providers work cross-platform (Windows, Linux, macOS). ODBC and OleDb are primarily available on Windows; ODBC is also available on Linux/macOS with the appropriate driver manager installed.
 
 Define connection strings in `config/settings.xml`. Use the `provider` attribute for explicit selection, or let the engine auto-detect:
 

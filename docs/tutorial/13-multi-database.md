@@ -32,8 +32,12 @@ In `/config/settings.xml`, each connection string gets a unique name:
 | SQLite | `Microsoft.Data.Sqlite` | Yes |
 | Oracle | `Oracle.ManagedDataAccess.Core` | Yes |
 | IBM DB2 | `Net.IBM.Data.Db2` | Yes |
+| ODBC | `System.Data.Odbc` | Yes |
+| OleDb | `System.Data.OleDb` | Yes |
 
-> **Auto-detection**: SQL Server, PostgreSQL, MySQL, and SQLite connection strings are recognized automatically. For Oracle and DB2, its best to always specify the `provider` attribute explicitly despite auto-detection to avoid any ambiguity in some edge cases.
+> **Auto-detection**: SQL Server, PostgreSQL, MySQL, and SQLite connection strings are recognized automatically. For Oracle, DB2, ODBC, and OleDb, it's best to always specify the `provider` attribute explicitly despite auto-detection to avoid any ambiguity in some edge cases.
+
+> **ODBC & OleDb named parameters**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — you write the same friendly parameter syntax for all databases.
 
 ## Routing Queries to a Specific Database
 

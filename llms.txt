@@ -8,7 +8,7 @@ DbToRestAPI automatically exposes your SQL queries as REST endpoints. Write SQL,
 
 - **SQL-First Philosophy**: Your SQL expertise translates directly to API development
 - **Configuration-Driven**: Define endpoints in XML, queries execute as-is
-- **Multi-Database**: SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2
+- **Multi-Database**: SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, plus any ODBC or OleDb data source. Named `{{parameter}}` syntax works even on positional-parameter databases (ODBC/OleDb) — the engine transparently converts them.
 - **Production-Ready**: Built-in auth, caching, file handling, CORS, encryption
 
 ## Core Architecture
