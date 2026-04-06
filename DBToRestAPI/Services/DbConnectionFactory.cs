@@ -43,6 +43,12 @@ public class DbConnectionFactory
             "Oracle.ManagedDataAccess.Core",
             Oracle.ManagedDataAccess.Client.OracleClientFactory.Instance);
 
+        DbProviderFactories.RegisterFactory(
+            "System.Data.Odbc",
+            System.Data.Odbc.OdbcFactory.Instance);
+
+        RegisterOleDbProvider();
+
         // DB2 - Register based on current OS (only one package is included per platform)
         RegisterDb2Provider();
 
@@ -62,6 +68,22 @@ public class DbConnectionFactory
         {
             // DB2 provider not available on this platform or not included - that's OK
             // Users who don't need DB2 won't have the package
+        }
+    }
+
+    private static void RegisterOleDbProvider()
+    {
+        try
+        {
+#pragma warning disable CA1416 // Platform compatibility - handled by try/catch
+            DbProviderFactories.RegisterFactory(
+                "System.Data.OleDb",
+                System.Data.OleDb.OleDbFactory.Instance);
+#pragma warning restore CA1416
+        }
+        catch
+        {
+            // OleDb provider not available on this platform (primarily Windows-only)
         }
     }
 
@@ -170,6 +192,16 @@ public class DbConnectionFactory
             (cs.Contains(":50000") || cs.Contains("protocol=tcpip"))) ||
             (cs.Contains("database=") && cs.Contains("uid=") && cs.Contains("pwd=")))
             return "Net.IBM.Data.Db2";
+
+        // ODBC - detect by Driver= keyword
+        if (cs.Contains("driver="))
+            return "System.Data.Odbc";
+
+        // OleDb - detect by Provider= keyword with known OleDb providers
+        if (cs.Contains("provider=") && (cs.Contains("oledb") || cs.Contains("msoledbsql") ||
+            cs.Contains("sqloledb") || cs.Contains("microsoft.ace") || cs.Contains("microsoft.jet") ||
+            cs.Contains("msdaora") || cs.Contains("oraoledb")))
+            return "System.Data.OleDb";
 
         // SQL Server (most common)
         if (cs.Contains("initial catalog=") || cs.Contains("integrated security=") ||
