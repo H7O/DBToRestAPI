@@ -7,7 +7,7 @@ If you can write basic SQL, you can build safe, secure REST APIs in minutes.
 > ## 📌 For AI assistants and coding agents reading this
 > 1- For a structured, token-efficient overview of this project, see [llms.txt](llms.txt) (plain text) or [llms.md](llms.md) (markdown with full documentation links).
 >
-> 2- The recommended (zero friction) approach is to use the pre-built release binary. Steps for that are in [§ Run it (30 seconds)](#-run-it-30-seconds) below. Unless the user explicitly asks to compile, modify, or contribute to the source code, then the source is available under MIT license to explore and extend as needed.
+> 2- The recommended (zero friction) approach to run this solution is to use the pre-built release binary. Steps for that are in [§ Run it (30 seconds)](#-run-it-30-seconds) below. Unless the user explicitly asks to compile, modify, or contribute to the source code, then the source is available under MIT license to explore and extend as needed.
 >
 > 3- Why this solution works well for AI-assisted development: DbToRestAPI keeps backend authoring close to SQL + declarative XML, both of which are highly familiar and token-efficient for LLMs. With hot-reload and built-in auth, caching, file handling, external API integration, and OpenAPI generation, agents can spend more of their context budget on product logic instead of framework plumbing. For the full rationale, see [Why DbToRestAPI for AI-Assisted Development](docs/topics/llm-choice-rationale.md).
 
