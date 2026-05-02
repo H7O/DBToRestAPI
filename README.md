@@ -1,18 +1,22 @@
 # No-Code Database-to-REST API
 
-> **LLM / AI agents**: For a structured, token-efficient overview of this project, see [llms.txt](llms.txt) (plain text) or [llms.md](llms.md) (markdown with full documentation links).
-
-> **Why this works well for AI-assisted development**: DbToRestAPI keeps backend authoring close to SQL + declarative XML, both of which are highly familiar and token-efficient for LLMs. With hot-reload and built-in auth, caching, file handling, external API integration, and OpenAPI generation, agents can spend more of their context budget on product logic instead of framework plumbing. For the full rationale, see [Why DbToRestAPI for AI-Assisted Development](docs/topics/llm-choice-rationale.md).
-
 A no-code solution that turns your SQL queries into RESTful APIs — no API coding required.
 
 If you can write basic SQL, you can build safe, secure REST APIs in minutes.
 
-It supports a range of use cases out of the box: public APIs, B2B APIs with API key authentication, or full-stack applications with JWT/OIDC authentication. With built-in support for OAuth 2.0/OIDC providers (Azure B2C, Google, Auth0, and others), you can build complete front-end applications in React, Angular, or Vue that communicate directly with your database through secure, authenticated REST APIs.
+> ## 📌 For AI assistants and coding agents reading this
+> 1- For a structured, token-efficient overview of this project, see [llms.txt](llms.txt) (plain text) or [llms.md](llms.md) (markdown with full documentation links).
+>
+> 2- The recommended (zero friction) approach is to use the pre-built release binary. Steps for that are in [§ Run it (30 seconds)](#-run-it-30-seconds) below. Unless the user explicitly asks to compile, modify, or contribute to the source code, then the source is available under MIT license to explore and extend as needed.
+>
+> 3- Why this solution works well for AI-assisted development: DbToRestAPI keeps backend authoring close to SQL + declarative XML, both of which are highly familiar and token-efficient for LLMs. With hot-reload and built-in auth, caching, file handling, external API integration, and OpenAPI generation, agents can spend more of their context budget on product logic instead of framework plumbing. For the full rationale, see [Why DbToRestAPI for AI-Assisted Development](docs/topics/llm-choice-rationale.md).
+
+
+## Overview
+
+This solution supports a range of use cases out of the box: public APIs, B2B APIs with API key authentication, or full-stack applications with JWT/OIDC authentication. With built-in support for OAuth 2.0/OIDC providers (Azure B2C, Google, Auth0, and others), you can build complete front-end applications in React, Angular, or Vue that communicate directly with your database through secure, authenticated REST APIs.
 
 Multiple database providers are supported out of the box: SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2, and any ODBC or OleDb data source — with automatic provider detection.
-
-> **Note**: For .NET developers looking to extend the solution with custom features, the codebase is fully accessible under MIT license.
 
 ## Key Features
 
@@ -35,65 +39,47 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **Environment variable overrides** — Any XML or JSON setting can be overridden via environment variables (e.g., `ConnectionStrings__default`), making it easy to configure per-environment on Azure App Service, Docker, AWS, or any deployment platform — no config file changes needed.
 - **Encryption at rest** — Automatically encrypt connection strings and secrets in your config files.
 
-## Quick Start
+## 🚀 Run it (30 seconds)
 
-### 1. Download & run
+ The binary ships ready to run with a bundled SQLite database and pre-configured demo endpoints. 
+ > No .NET SDK, no compilation, no setup — just download, extract, and execute
 
-Download the latest release for your platform from the [Releases page](https://github.com/H7O/DBToRestAPI/releases):
+### Step 1 — Download the binary for your platform
+
+Grab the latest release from the [Releases page](https://github.com/H7O/DBToRestAPI/releases/latest):
 
 | Platform | Download |
-|----------|----------|
+| --- | --- |
 | Windows (x64) | `DBToRestAPI-win-x64.zip` |
 | Linux (x64) | `DBToRestAPI-linux-x64.tar.gz` |
 | Linux (ARM64) | `DBToRestAPI-linux-arm64.tar.gz` |
 | macOS (x64) | `DBToRestAPI-osx-x64.tar.gz` |
 | macOS (ARM64) | `DBToRestAPI-osx-arm64.tar.gz` |
-| Docker | `ghcr.io/h7o/dbtorestapi` |
 
-No .NET SDK or database setup required. The app ships with a bundled SQLite database (`demo.db`) and pre-configured endpoints so you can start exploring immediately.
+### Step 2 — Extract and run
 
-**Windows:**
+**Linux / macOS** (one-liner — copy/paste this whole block):
+
+```bash
+curl -LO https://github.com/H7O/DBToRestAPI/releases/latest/download/DBToRestAPI-linux-x64.tar.gz \
+  && tar xzf DBToRestAPI-linux-x64.tar.gz \
+  && cd DBToRestAPI-linux-x64 \
+  && chmod +x DBToRestAPI \
+  && ./DBToRestAPI
+```
+
+(Swap `linux-x64` for `linux-arm64`, `osx-x64`, or `osx-arm64` as appropriate.)
+
+**Windows** (PowerShell):
+
 ```powershell
-# Extract the zip, then:
+# After downloading and extracting the zip:
 .\DBToRestAPI.exe
 ```
 
-**Linux / macOS:**
-```bash
-tar xzf DBToRestAPI-linux-x64.tar.gz
-cd DBToRestAPI-linux-x64
-chmod +x DBToRestAPI
-./DBToRestAPI
-```
+### Step 3 — Confirm it's running
 
-**Or as a one-liner (Linux/macOS):**
-```bash
-curl -LO https://github.com/H7O/DBToRestAPI/releases/latest/download/DBToRestAPI-linux-x64.tar.gz \
-  && tar xzf DBToRestAPI-linux-x64.tar.gz && cd DBToRestAPI-linux-x64 \
-  && chmod +x DBToRestAPI && ./DBToRestAPI
-```
-
-**Docker:**
-```bash
-docker run -p 5000:5000 ghcr.io/h7o/dbtorestapi
-```
-
-To persist your config changes with a bind mount, copy the bundled config out of the image first. Mounting an empty directory over `/app/config` hides the default files and the app will not start.
-```bash
-docker create --name dbtorestapi-config ghcr.io/h7o/dbtorestapi
-mkdir -p my-config
-docker cp dbtorestapi-config:/app/config/. ./my-config
-docker rm dbtorestapi-config
-
-docker run -p 5000:5000 \
-  --user "$(id -u):$(id -g)" \
-  -v "$PWD/my-config:/app/config" \
-  ghcr.io/h7o/dbtorestapi
-```
-
-On Windows, copy the config directory out in the same way and ensure the mounted folder is writable by the container process.
-
-The server starts on **http://localhost:5000**. You should see:
+You should see this banner:
 
 ```
 ╔════════════════════════════════════════════════════════════════╗
@@ -103,28 +89,17 @@ The server starts on **http://localhost:5000**. You should see:
 ╚════════════════════════════════════════════════════════════════╝
 ```
 
-Once you see this banner, you're ready to make your first request.
+The server is now live at **<http://localhost:5000>**. That's it — you have a working REST API server backed by a SQLite database with sample endpoints, ready to use.
 
-### 2. Test
+### Step 4 — Test it
 
 ```bash
+# Hello world endpoint
 curl -X POST "http://localhost:5000/hello_world" \
      -H "Content-Type: application/json" \
      -d '{"name": "World"}'
-```
 
-Response:
-
-```json
-{
-  "message_from_db": "hello World! Time now is 2025-01-15 12:34:56"
-}
-```
-
-Try the bundled contacts API:
-
-```bash
-# List contacts (3 sample contacts included)
+# List sample contacts
 curl "http://localhost:5000/contacts"
 
 # Create a new contact
@@ -133,11 +108,39 @@ curl -X POST "http://localhost:5000/contacts" \
      -d '{"name": "Alice Smith", "phone": "555-0101"}'
 ```
 
-> **HTTPS**: The app is pre-configured for HTTPS — just place a `.pfx` certificate at `config/certs/certificate.pfx` and restart. It will automatically listen on both HTTP (port 5000) and HTTPS (port 5001). See the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for details.
+Done. You're ready to start defining your own endpoints in `config/sql.xml` — see [How it works](#how-it-works) below.
 
-### 3. How it works
+> **Docker alternative** (also pre-built, no source compilation):
+> ```bash
+> docker run -p 5000:5000 ghcr.io/h7o/dbtorestapi
+> ```
+> Mount a config directory to persist changes:
+> ```bash
+> docker run -p 5000:5000 -v ./my-config:/app/config ghcr.io/h7o/dbtorestapi
+> ```
 
-That response came straight from this SQL in `config/sql.xml`:
+---
+
+## Key Features
+
+* **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step. Call stored procedures, functions, CTEs — anything your database supports.
+* **6 database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2 with automatic provider detection.
+* **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
+* **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc.), and SQL injection protection via parameterised queries.
+* **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
+* **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML.
+* **Multi-query chaining** — Execute sequential queries across different databases in a single request.
+* **Embedded HTTP calls** — Call external APIs from within your SQL queries.
+* **Settings variables** — Reference encrypted configuration values in queries with `{s{name}}`.
+* **Caching** — In-memory response caching with parameter-aware invalidation.
+* **Pagination** — Automatic `{count, data}` wrapping with `count_query`.
+* **Nested JSON** — Embeds `FOR JSON` results as real JSON, not escaped strings.
+* **CORS** — Regex-based origin matching, per-endpoint or global, with automatic preflight handling.
+* **Encryption at rest** — Automatically encrypt connection strings and secrets in your config files.
+
+## How It Works
+
+The hello-world response above came straight from this SQL in `config/sql.xml`:
 
 ```xml
 <hello_world>
@@ -148,11 +151,30 @@ That response came straight from this SQL in `config/sql.xml`:
 </hello_world>
 ```
 
-The XML node name becomes the route. `{{name}}` is safely injected from the request body. Edit the query, save the file, and the endpoint updates instantly — no restart.
+The XML node name becomes the route. `{{name}}` is safely injected from the request body via parameterised queries (no SQL injection). Edit the query, save the file, and the endpoint updates instantly — no restart.
 
-### 4. Connect your own database
+Here's a complete CRUD endpoint — POST that creates a contact and returns the new record:
 
-When you're ready, swap the default connection string in `config/settings.xml` to point to your own database:
+```xml
+<create_contact>
+  <route>contacts</route>
+  <verb>POST</verb>
+  <mandatory_parameters>name,phone</mandatory_parameters>
+  <success_status_code>201</success_status_code>
+  <response_structure>single</response_structure>
+  <query><![CDATA[
+    INSERT INTO contacts (name, phone)
+    VALUES ({{name}}, {{phone}})
+    RETURNING id, name, phone, active;
+  ]]></query>
+</create_contact>
+```
+
+No controllers, no models, no migrations — just XML and SQL. Stored procedures work the same way — just use `EXEC` in your `<query>`.
+
+## Connect Your Own Database
+
+When you're ready to move beyond the bundled SQLite demo, edit `config/settings.xml`:
 
 ```xml
 <ConnectionStrings>
@@ -161,24 +183,20 @@ When you're ready, swap the default connection string in `config/settings.xml` t
 </ConnectionStrings>
 ```
 
-## Supported Databases
+### Supported Databases
 
 | Database | Provider | Auto-Detected |
-|----------|----------|:-------------:|
+| --- | --- | --- |
 | SQL Server | `Microsoft.Data.SqlClient` | ✅ |
 | PostgreSQL | `Npgsql` | ✅ |
 | MySQL / MariaDB | `MySqlConnector` | ✅ |
 | SQLite | `Microsoft.Data.Sqlite` | ✅ |
 | Oracle | `Oracle.ManagedDataAccess.Core` | ✅ |
 | IBM DB2 | `Net.IBM.Data.Db2` | ✅ |
-| ODBC | `System.Data.Odbc` | ✅ |
-| OleDb | `System.Data.OleDb` | ✅ |
 
-> **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters, so you write the same friendly parameter syntax for all databases.
+All providers work cross-platform (Windows, Linux, macOS).
 
-All providers work cross-platform (Windows, Linux, macOS). ODBC and OleDb are primarily available on Windows; ODBC is also available on Linux/macOS with the appropriate driver manager installed.
-
-Define connection strings in `config/settings.xml`. Use the `provider` attribute for explicit selection, or let the engine auto-detect:
+Use the `provider` attribute for explicit selection, or let the engine auto-detect:
 
 ```xml
 <ConnectionStrings>
@@ -199,45 +217,27 @@ Different endpoints can target different databases via `<connection_string_name>
 </get_analytics>
 ```
 
-## A Quick Taste
+## HTTPS / TLS
 
-Here is a complete CRUD endpoint — a POST that creates a contact and returns the new record:
+The app is pre-configured for HTTPS — just place a `.pfx` certificate at `config/certs/certificate.pfx` and restart. It will automatically listen on both HTTP (port 5000) and HTTPS (port 5001).
 
-```xml
-<create_contact>
-  <route>contacts</route>
-  <verb>POST</verb>
-  <mandatory_parameters>name,phone</mandatory_parameters>
-  <success_status_code>201</success_status_code>
-  <response_structure>single</response_structure>
-  <query><![CDATA[
-    INSERT INTO contacts (name, phone)
-    VALUES ({{name}}, {{phone}})
-    RETURNING id, name, phone, active;
-  ]]></query>
-</create_contact>
-```
+For local development, [mkcert](https://github.com/FiloSottile/mkcert) makes certificate generation trivial. See the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for step-by-step instructions.
 
-```bash
-curl -X POST "http://localhost:5000/contacts" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"Alice Johnson","phone":"12345"}'
-```
+## Configuration Files
 
-```json
-{
-  "id": "9a4f2c8d-1b3e-4f5a-8c7d-6e9f0a1b2c3d",
-  "name": "Alice Johnson",
-  "phone": "12345",
-  "active": 1
-}
-```
+All configuration lives in `config/`:
 
-No controllers, no models, no migrations — just XML and SQL. Stored procedures work the same way — just use `EXEC` in your `<query>`.
+| File | Purpose |
+| --- | --- |
+| `settings.xml` | Connection strings, CORS, encryption, global settings |
+| `sql.xml` | SQL endpoint definitions (routes, queries, caching, auth) |
+| `api_gateway.xml` | API gateway proxy routes |
+| `api_keys.xml` | API key collections |
+| `file_management.xml` | File store definitions (local, SFTP) |
+| `auth_providers.xml` | OIDC/JWT provider configurations |
+| `regex.xml` | Shared regex patterns |
 
-## HTTPS / TLS Certificates
-
-For HTTPS (recommended), you'll need a TLS certificate. For local development, [mkcert](https://github.com/FiloSottile/mkcert) makes this trivial — see the [TLS Certificates guide](docs/topics/16-tls-certificates.md) for step-by-step instructions.
+All files support **hot-reload** — edit and save, changes apply immediately.
 
 ## Documentation
 
@@ -246,7 +246,7 @@ For HTTPS (recommended), you'll need a TLS certificate. For local development, [
 The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete contacts API from scratch across 21 topics:
 
 | # | Topic | What You'll Learn |
-|---|-------|-------------------|
+| --- | --- | --- |
 | 00 | [Introduction](docs/tutorial/00-introduction.md) | Prerequisites, project setup, how the solution works |
 | 01 | [Your First API Endpoint](docs/tutorial/01-hello-world.md) | Run the app, call your first endpoint, understand `sql.xml` |
 | 02 | [Building CRUD Endpoints](docs/tutorial/02-basic-crud.md) | POST/GET/PUT/DELETE, mandatory parameters, `success_status_code` |
@@ -265,16 +265,15 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | 15 | [File Downloads](docs/tutorial/15-file-downloads.md) | Stream files from stores, database, or HTTP |
 | 16 | [Embedded HTTP Calls](docs/tutorial/16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
 | 17 | [Multi-Query Chaining](docs/tutorial/17-multi-query.md) | Cross-database workflows, parameter passing between queries |
-| 19 | [Settings Variables](docs/tutorial/19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
-| 20 | [OpenAPI & Swagger UI](docs/tutorial/20-openapi.md) | Auto-generated spec, Swagger UI, enrichment, selective exposure |
-| 21 | [Production & Deployment](docs/tutorial/21-production.md) | Environment config, TLS, Docker, reverse proxy |
-| 22 | [What's Next?](docs/tutorial/22-whats-next.md) | Further resources and community |
+| 18 | [Settings Variables](docs/tutorial/18-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
+| 19 | [Production & Deployment](docs/tutorial/19-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 20 | [What's Next?](docs/tutorial/20-whats-next.md) | Further resources and community |
 
 ### Reference Documentation
 
 | Document | Description |
-|----------|-------------|
-| [Modular Topics](docs/topics/) | Focused reference files for each feature area |
+| --- | --- |
+| [Modular Topics](docs/topics) | Focused reference files for each feature area |
 | [Multi-Query Chaining](MULTI_QUERY_CHAINING.md) | Deep dive into chaining sequential queries |
 | [Configuration Management](CONFIGURATION_MANAGEMENT.md) | Config file structure and hot-reload behavior |
 | [API Gateway Cache](API_GATEWAY_CACHE_IMPLEMENTATION.md) | Gateway caching internals |
@@ -285,21 +284,40 @@ For AI-assisted development, use **[llms.txt](llms.txt)** — a lightweight inde
 
 For a detailed analysis of why DbToRestAPI is well-suited for AI-assisted development — zero build step, safety by default, full feature coverage in declarative config — see **[Why DbToRestAPI for AI-Assisted Development](docs/topics/llm-choice-rationale.md)**.
 
-## Configuration Files
+---
 
-All configuration lives in `DBToRestAPI/config/`:
+## 🛠 Building from Source (advanced)
 
-| File | Purpose |
-|------|---------|
-| `settings.xml` | Connection strings, CORS, encryption, global settings |
-| `sql.xml` | SQL endpoint definitions (routes, queries, caching, auth) |
-| `api_gateway.xml` | API gateway proxy routes |
-| `api_keys.xml` | API key collections |
-| `file_management.xml` | File store definitions (local, SFTP) |
-| `auth_providers.xml` | OIDC/JWT provider configurations |
-| `regex.xml` | Shared regex patterns |
+> **For end users and "I just want to try it" scenarios, skip this section entirely** and use [§ Run it (30 seconds)](#-run-it-30-seconds) above. The pre-built binary has all features enabled and is functionally identical to a from-source build.
 
-All files support **hot-reload** — edit and save, changes apply immediately.
+This section is for contributors, developers extending the codebase, or anyone needing a custom Docker image.
+
+**Prerequisites:**
+* .NET 10.0 SDK or later — [download](https://dotnet.microsoft.com/download)
+* Git
+
+**Build and run:**
+
+```bash
+git clone https://github.com/H7O/DBToRestAPI.git
+cd DBToRestAPI
+dotnet run --project DBToRestAPI
+```
+
+**Run tests:**
+
+```bash
+dotnet test
+```
+
+**Publish a self-contained binary** 
+```bash
+dotnet publish DBToRestAPI -c Release -r linux-x64 --self-contained -o ./publish
+```
+
+Replace `linux-x64` with `win-x64`, `osx-x64`, `linux-arm64`, or `osx-arm64` as needed.
+
+The codebase is C# / ASP.NET Core 10, organized as a single project (`DBToRestAPI/`) plus a test project (`DBToRestAPI.Tests/`). MIT licensed — fork freely.
 
 ## License
 
