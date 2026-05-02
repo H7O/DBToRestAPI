@@ -121,23 +121,6 @@ Done. You're ready to start defining your own endpoints in `config/sql.xml` — 
 
 ---
 
-## Key Features
-
-* **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step. Call stored procedures, functions, CTEs — anything your database supports.
-* **6 database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2 with automatic provider detection.
-* **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
-* **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc.), and SQL injection protection via parameterised queries.
-* **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
-* **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML.
-* **Multi-query chaining** — Execute sequential queries across different databases in a single request.
-* **Embedded HTTP calls** — Call external APIs from within your SQL queries.
-* **Settings variables** — Reference encrypted configuration values in queries with `{s{name}}`.
-* **Caching** — In-memory response caching with parameter-aware invalidation.
-* **Pagination** — Automatic `{count, data}` wrapping with `count_query`.
-* **Nested JSON** — Embeds `FOR JSON` results as real JSON, not escaped strings.
-* **CORS** — Regex-based origin matching, per-endpoint or global, with automatic preflight handling.
-* **Encryption at rest** — Automatically encrypt connection strings and secrets in your config files.
-
 ## How It Works
 
 The hello-world response above came straight from this SQL in `config/sql.xml`:
@@ -193,6 +176,10 @@ When you're ready to move beyond the bundled SQLite demo, edit `config/settings.
 | SQLite | `Microsoft.Data.Sqlite` | ✅ |
 | Oracle | `Oracle.ManagedDataAccess.Core` | ✅ |
 | IBM DB2 | `Net.IBM.Data.Db2` | ✅ |
+| ODBC (any ODBC-compliant data source) | `System.Data.Odbc` | Explicit `provider="Odbc"` |
+| OleDb (any OleDb-compliant data source) | `System.Data.OleDb` | Explicit `provider="OleDb"` |
+
+> **Note on ODBC / OleDb**: These are generic providers that work with any ODBC- or OleDb-compatible data source (Access, Excel, legacy enterprise databases, niche systems without native .NET drivers, etc.). Auto-detection isn't possible since the connection string format is provider-specific to the underlying data source — specify `provider="Odbc"` or `provider="OleDb"` explicitly. Named `{{parameter}}` syntax still works even though the underlying drivers use positional parameters.
 
 All providers work cross-platform (Windows, Linux, macOS).
 
