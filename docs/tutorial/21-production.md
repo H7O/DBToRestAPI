@@ -391,6 +391,6 @@ Use this quick reference before going live:
 
 ---
 
-**Next:** [What's Next? →](22-whats-next.md)
+**Next:** [Static Files →](22-static-files.md)
 
 [← Back to Index](index.md)

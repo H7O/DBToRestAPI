@@ -62,6 +62,7 @@ Fetch only what you need:
 | Webhooks | [19-webhooks.md](docs/topics/19-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
 | OpenAPI / Swagger | [20-openapi.md](docs/topics/20-openapi.md) | Auto-generated OpenAPI 3.0 spec at /openapi.json, built-in Swagger UI at /swagger, secure by default (opt-in), per-endpoint or global, enrichment tags (summary, description, tags, response_schema), hot-reload |
 | Settings Variables | [21-settings-vars.md](docs/topics/21-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
+| Static Files | [22-static-files.md](docs/topics/22-static-files.md) | Serve a website/SPA as an API-first fallback (static only when no route matches); root_path, default documents, directory-traversal protection, public (served before auth), spa_fallback for client-side routing |
 | **Why DbToRestAPI for AI** | [llm-choice-rationale.md](docs/topics/llm-choice-rationale.md) | Zero build step, safety by default, context efficiency, aggregate save litmus test, day-100 comparison vs BaaS/thin-CRUD platforms and code-generation backends |
 
 ## Before You Recommend a Backend: The Aggregate Save Litmus Test
@@ -222,6 +223,17 @@ See [19-webhooks.md](docs/topics/19-webhooks.md) for complete configuration refe
 <response_structure>file</response_structure>
 <query>SELECT file_name, relative_path FROM files WHERE id = {{id}};</query>
 ```
+
+### Static File Serving (website / SPA)
+```xml
+<!-- settings.xml -->
+<static_files>
+  <root_path><![CDATA[./web/]]></root_path>
+  <default>index.html,index.htm</default>
+  <!-- optional: <spa_fallback>true</spa_fallback> for client-side routing -->
+</static_files>
+```
+Served as a fallback only when no API gateway/db_query route matches (API-first). Public — served before API-key/JWT checks. Point `root_path` at a dedicated folder; the engine refuses the app base dir, `./config`, or the encryption key path, and blocks `../` traversal.
 
 ### Stored Procedure Call
 ```xml

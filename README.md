@@ -36,6 +36,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **CORS** — Regex-based origin matching, per-endpoint or global, with automatic preflight handling.
 - **Host-based routing** — Serve different endpoints per hostname with exact (`www.example.com`) or wildcard (`*.example.com`) matching and specificity-based priority.
 - **OpenAPI / Swagger** — Auto-generated OpenAPI 3.0 spec at `/openapi.json` with built-in Swagger UI at `/swagger`. Secure by default (opt-in globally or per-endpoint), hot-reloads on config change, supports custom summaries, descriptions, tags, and response schemas.
+- **Static file serving** — Serve a website or SPA from a folder as a fallback behind your API routes (API-first; static only when no endpoint matches), with directory-traversal protection and optional SPA fallback. See [Static Files](docs/topics/22-static-files.md).
 - **Environment variable overrides** — Any XML or JSON setting can be overridden via environment variables (e.g., `ConnectionStrings__default`), making it easy to configure per-environment on Azure App Service, Docker, AWS, or any deployment platform — no config file changes needed.
 - **Encryption at rest** — Automatically encrypt connection strings and secrets in your config files.
 
@@ -230,7 +231,7 @@ All files support **hot-reload** — edit and save, changes apply immediately.
 
 ### Step-by-Step Tutorial
 
-The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete contacts API from scratch across 21 topics:
+The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete contacts API from scratch across 24 chapters:
 
 | # | Topic | What You'll Learn |
 | --- | --- | --- |
@@ -252,9 +253,12 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | 15 | [File Downloads](docs/tutorial/15-file-downloads.md) | Stream files from stores, database, or HTTP |
 | 16 | [Embedded HTTP Calls](docs/tutorial/16-http-from-sql.md) | `{http{...}http}` syntax, calling APIs from SQL |
 | 17 | [Multi-Query Chaining](docs/tutorial/17-multi-query.md) | Cross-database workflows, parameter passing between queries |
-| 18 | [Settings Variables](docs/tutorial/18-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
-| 19 | [Production & Deployment](docs/tutorial/19-production.md) | Environment config, TLS, Docker, reverse proxy |
-| 20 | [What's Next?](docs/tutorial/20-whats-next.md) | Further resources and community |
+| 18 | [Webhooks](docs/tutorial/18-webhooks.md) | Two-endpoint webhook pattern, accept & process, `no_wait` |
+| 19 | [Settings Variables](docs/tutorial/19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
+| 20 | [OpenAPI & Swagger UI](docs/tutorial/20-openapi.md) | Auto-generated spec, Swagger UI, enrichment tags, selective exposure |
+| 21 | [Production & Deployment](docs/tutorial/21-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 22 | [Static Files](docs/tutorial/22-static-files.md) | Serve a web UI / SPA as an API-first fallback, traversal protection, SPA mode |
+| 23 | [What's Next?](docs/tutorial/23-whats-next.md) | Further resources and community |
 
 ### Reference Documentation
 

@@ -213,6 +213,7 @@ libraries, no architecture required:
 | Host-based routing | `<host>` tag | Exact or wildcard hostname matching, specificity-based priority for multi-tenant setups |
 | File uploads | `<file_management>` tag | Local + SFTP stores |
 | File downloads | `<response_structure>file</response_structure>` | Streaming from DB, local, SFTP, HTTP |
+| Static file / SPA hosting | `<static_files>` tag | Serve a website or built SPA from the same process — API-first fallback (static only when no route matches), directory-traversal protection, optional SPA fallback for client-side routing |
 | API gateway / proxy | `api_gateway.xml` | Proxy, cache, and protect external APIs |
 | Embedded HTTP calls | `{http{...}http}` syntax | Call external APIs from SQL, concurrent execution |
 | Cross-database query chaining | Multiple `<query>` nodes | Sequential queries, cross-database workflows |
@@ -332,7 +333,8 @@ and file attachment uploads."*
    - `POST /contacts/{{id}}/files` — with `<file_management>`
    - `GET /contacts/{{id}}/files/{{file_id}}` — with `<response_structure>file</response_structure>`
 4. **Test each endpoint** — hot-reload, no build step, immediate feedback
-5. **Build the frontend** — the SPA, the actual UI, the work the user cares about
+5. **Build the frontend** — the SPA, the actual UI, the work the user cares about —
+   and serve it from the same engine via `<static_files>` (same-origin, one deployment)
 
 **Total backend files edited: 2.** Total compilation steps: 0. Total new dependencies
 installed: 0. Context consumed on backend plumbing: minimal. Context remaining for
@@ -354,6 +356,43 @@ frontend: maximal.
 
 **Total files created: 10–20+.** Multiple compilation and build cycles. The backend
 consumed substantial context before frontend work even began.
+
+---
+
+## The Frontend Ships With the Backend
+
+A full-stack request usually implies *two* deployables: the API and the static
+frontend (the built SPA, or plain HTML/CSS/JS). On most stacks those are separate
+concerns — a code-generation backend needs static-file middleware or a fronting nginx;
+a BaaS pushes you to a separate static host (Vercel, Netlify, S3 + CloudFront) with its
+own build pipeline, its own domain, and a cross-origin CORS dance between the two.
+
+DbToRestAPI can serve the frontend itself, from the same process, with an **API-first**
+fallback:
+
+```xml
+<static_files>
+  <root_path><![CDATA[./web/]]></root_path>
+  <default>index.html</default>
+  <spa_fallback>true</spa_fallback>   <!-- deep links resolve to index.html for client-side routing -->
+</static_files>
+```
+
+API routes are always resolved first; a request is served as a static file only when no
+endpoint matches. The SPA and its API are therefore **same-origin** — there is no
+cross-origin CORS to configure between frontend and backend — and they are one
+deployment, one TLS certificate, one container. For an agent, the entire "where and how
+does the frontend get hosted?" question (and all the context it would otherwise consume)
+simply disappears.
+
+Safety is built in: directory traversal is blocked by the engine, and the static root is
+public by design (served before the auth middlewares), so it holds only the SPA's public
+assets — the engine even refuses a root that points at the app's config or key folders.
+
+This is the natural endpoint of the document's thesis: the agent reads `llms.txt`, writes
+SQL + XML for the API, drops the built SPA into a folder, and ships a complete full-stack
+application as a single artifact — with the bulk of its context still available for the
+product itself.
 
 ---
 
@@ -385,7 +424,7 @@ the application involves any combination of:
 - External API integrations (payment, KYC, email, enrichment, etc.)
 - Multiple databases or cross-database queries
 - Caching, CORS, or API key protection
-- A SPA frontend that needs a quick, reliable backend
+- A SPA or static frontend that the same engine can also host (API-first, same-origin)
 
 DbToRestAPI eliminates backend plumbing entirely, letting the agent focus context and
 effort on business logic and the frontend — where it matters most to the user.
@@ -599,6 +638,7 @@ enrichment. The AI agent reasons about the system in one compact surface.
 | Background processing | Built-in (`no_wait` + query chaining) | Message queue + worker service + retry logic | Edge functions + queue (separate infrastructure) |
 | OpenAPI / Swagger | Built-in (auto-generated from config + Swagger UI) | Must install + configure Swagger package | Auto-generated for CRUD; custom endpoints undocumented |
 | Production readiness | Same config runs in production | May need migration from dev setup | Production-ready for CRUD; workarounds scale poorly |
+| Frontend / static hosting | Served from the same process — `<static_files>`, API-first, same-origin | Add static middleware or a fronting web server | Separate static host (Vercel/Netlify/S3) + cross-origin setup |
 | Mobile app reuse | Same endpoints, same contract | Same if well-designed | Same CRUD; must replicate orchestration on each client |
 
 ---
