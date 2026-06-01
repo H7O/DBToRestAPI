@@ -29,7 +29,8 @@ public class Step1ServiceTypeChecks(
     ILogger<Step1ServiceTypeChecks> logger,
     RouteConfigResolver routeConfigResolver,
     QueryRouteResolver queryRouteResolver,
-    IEncryptedConfiguration settingsEncryptionService
+    IEncryptedConfiguration settingsEncryptionService,
+    StaticFileFallbackService staticFileFallback
         )
 {
 
@@ -39,6 +40,8 @@ public class Step1ServiceTypeChecks(
     private readonly RouteConfigResolver _routeConfigResolver = routeConfigResolver;
     private readonly QueryRouteResolver _queryRouteResolver = queryRouteResolver;
     private readonly IEncryptedConfiguration _configuration = settingsEncryptionService;
+    // Serves static content as a fallback when no API gateway/db_query route matches.
+    private readonly StaticFileFallbackService _staticFileFallback = staticFileFallback;
     private readonly HashSet<string> _acceptableContentTypes = new HashSet<string>
     {
         "application/json",
@@ -128,6 +131,9 @@ public class Step1ServiceTypeChecks(
 
         if (string.IsNullOrWhiteSpace(route))
         {
+            // No API endpoint specified (e.g. a request to `/`). Fall back to static content —
+            // this is where the configured default document (index.html) gets served.
+            if (await _staticFileFallback.TryServeAsync(context)) return;
 
             await context.Response.DeferredWriteAsJsonAsync(
                 new ObjectResult(
@@ -189,6 +195,8 @@ public class Step1ServiceTypeChecks(
 
         if (queries == null || !queries.Exists())
         {
+            // No DB query endpoints configured at all — still allow a pure static-content deployment.
+            if (await _staticFileFallback.TryServeAsync(context)) return;
 
             await context.Response.DeferredWriteAsJsonAsync(
                 new ObjectResult(
@@ -241,6 +249,9 @@ public class Step1ServiceTypeChecks(
 
         if (serviceQuerySection == null || !serviceQuerySection.Exists())
         {
+            // No API gateway route and no DB query route matched — the primary static fallback point.
+            if (await _staticFileFallback.TryServeAsync(context)) return;
+
             await context.Response.DeferredWriteAsJsonAsync(
                 new ObjectResult(
                     new

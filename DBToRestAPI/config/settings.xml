@@ -133,9 +133,43 @@
         this value will be used as the `Access-Control-Allow-Origin` header in the response.
         If the caller's origin domain matches the regex pattern above, 
         the CORS headers will be set to match the caller's origin domain.
+        If `fallback_origin` is not defined, the system will default to allowing all origins (i.e., `*`) for requests that don't match the regex pattern.
         -->
+    <!--
     <fallback_origin><![CDATA[www.example.com]]></fallback_origin>
+    -->
   </cors>
+
+
+  <!--
+  Static file serving (optional).
+
+  When this block is present, the engine serves static content (HTML/CSS/JS/images, etc.)
+  as a FALLBACK: API gateway routes and database-query routes are resolved first, and only
+  when no API route matches is the request served from `root_path`. If no file matches either,
+  the normal 404 is returned.
+
+  Static content is PUBLIC — it is served before the API-key/JWT checks. Do not place sensitive
+  files in `root_path`. Always point `root_path` at a DEDICATED folder (e.g. ./web/) that holds only
+  public assets. The engine refuses (logs an error and stays disabled) a root that resolves to the
+  app base directory or an ancestor of it, the ./config folder, or the encryption key path — so a
+  mistyped root can't leak secrets. The folder rooting also blocks directory traversal (../ escapes
+  resolve to 404). Note the guard protects against a bad root location, not against sensitive files
+  you place inside an otherwise-legitimate root.
+
+  Uncomment to enable (a demo page ships in ./web/):
+
+  <static_files>
+    <root_path><![CDATA[./web/]]></root_path>
+    <default>index.html,index.htm</default>
+
+    (the four settings below are all optional)
+    <enabled>true</enabled>
+    <cache_control_max_age_seconds>3600</cache_control_max_age_seconds>
+    <serve_unknown_file_types>false</serve_unknown_file_types>
+    <spa_fallback>false</spa_fallback>
+  </static_files>
+  -->
 
 
 </settings>

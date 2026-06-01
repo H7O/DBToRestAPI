@@ -59,6 +59,10 @@ builder.Services.AddSingleton<RouteConfigResolver>();
 builder.Services.AddSingleton<QueryRouteResolver>();
 builder.Services.AddSingleton<ParametersBuilder>();
 
+// Serves static content (web/ folder) as a fallback when no API route matches.
+// Driven by the optional `static_files` block in settings.xml; no-op when absent.
+builder.Services.AddSingleton<StaticFileFallbackService>();
+
 builder.Services.AddSingleton<ApiKeysService>();
 
 builder.Services.AddSingleton<IQueryConfigurationParser, QueryConfigurationParser>();
