@@ -57,9 +57,9 @@
 
     <!-- DB2 - Platform-specific (only the matching package is included in build output) -->
     <!-- ExcludeAssets prevents the package's .targets from adding TestConn files to the project -->
-    <PackageReference Include="Net.IBM.Data.Db2" Version="*" Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" />
-    <PackageReference Include="Net.IBM.Data.Db2-lnx" Version="*" Condition="$([MSBuild]::IsOSPlatform('Linux')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" />
-    <PackageReference Include="Net.IBM.Data.Db2-osx" Version="*" Condition="$([MSBuild]::IsOSPlatform('OSX')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" />
+    <PackageReference Include="Net.IBM.Data.Db2" Version="*" Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" GeneratePathProperty="true" />
+    <PackageReference Include="Net.IBM.Data.Db2-lnx" Version="*" Condition="$([MSBuild]::IsOSPlatform('Linux')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" GeneratePathProperty="true" />
+    <PackageReference Include="Net.IBM.Data.Db2-osx" Version="*" Condition="$([MSBuild]::IsOSPlatform('OSX')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" GeneratePathProperty="true" />
 
 
   </ItemGroup>
@@ -91,56 +91,27 @@
   </PropertyGroup>
 
   <!--
-    DB2 CLI driver post-build copy:
-    The NuGet package places clidriver files in a versioned subfolder, but the runtime expects them
-    in the root 'clidriver' folder. This target copies files from the highest version and cleans up.
+    Copy the DB2 native CLI driver (clidriver) from the NuGet package into the build output so a
+    self-contained build can connect to DB2. Uses the package's generated path property (reliable
+    across OSes — the previous $(NuGetPackageRoot) + shell approach silently produced nothing on Linux)
+    and a cross-platform MSBuild <Copy>, copying only the clidriver subtree. Gated by _Db2NativeOsMatch
+    (win-x64 / linux-x64 only). A loud warning fires if the driver can't be found, so it never silently
+    goes missing again.
   -->
   <Target Name="CopyDb2CliDriver" AfterTargets="Build" Condition="'$(_Db2NativeOsMatch)' == 'true'">
-    <!-- Windows -->
-    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-      <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2</Db2PackagePath>
-    </PropertyGroup>
-    <!-- Linux -->
-    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
-      <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2-lnx</Db2PackagePath>
-    </PropertyGroup>
-    <!-- macOS -->
-    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-      <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2-osx</Db2PackagePath>
-    </PropertyGroup>
-
-    <!-- Find all version folders and pick the highest one (sorted descending, first item) -->
-    <ItemGroup>
-      <Db2VersionFolders Include="$([System.IO.Directory]::GetDirectories('$(Db2PackagePath)'))" />
-    </ItemGroup>
     <PropertyGroup>
-      <Db2LatestVersion>@(Db2VersionFolders-&gt;Reverse()-&gt;DirectoryName())</Db2LatestVersion>
+      <_Db2ClidriverSource Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(PkgNet_IBM_Data_Db2)/buildTransitive/clidriver</_Db2ClidriverSource>
+      <_Db2ClidriverSource Condition="$([MSBuild]::IsOSPlatform('Linux'))">$(PkgNet_IBM_Data_Db2_lnx)/buildTransitive/clidriver</_Db2ClidriverSource>
     </PropertyGroup>
-
-    <!-- Get the highest version folder path -->
     <ItemGroup>
-      <Db2SortedVersions Include="@(Db2VersionFolders)" />
+      <_Db2ClidriverFiles Include="$(_Db2ClidriverSource)/**/*" />
     </ItemGroup>
-
-    <!-- Copy clidriver contents from the NuGet package to output -->
-    <ItemGroup>
-      <Db2CliDriverFiles Include="$(Db2PackagePath)\**\buildTransitive\clidriver\**\*.*" />
-    </ItemGroup>
-
-    <Message Importance="high" Text="Copying DB2 CLI driver files to $(OutputPath)clidriver\" />
-
-    <!-- Use Robocopy on Windows for reliable folder copy -->
-    <Exec Command="robocopy &quot;$(Db2PackagePath)&quot; &quot;$(OutputPath)clidriver&quot; /S /NFL /NDL /NJH /NJS /NC /NS /NP /XD &quot;$(Db2PackagePath)&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" IgnoreExitCode="true" ContinueOnError="true" />
-
-    <!-- PowerShell approach: Find highest version, copy clidriver contents, remove versioned folders -->
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$versions = Get-ChildItem -Path '$(Db2PackagePath)' -Directory | Sort-Object { [Version]$_.Name } -Descending; if ($versions) { $latest = $versions[0].FullName; $src = Join-Path $latest 'buildTransitive\clidriver'; if (Test-Path $src) { Copy-Item -Path (Join-Path $src '*') -Destination '$(OutputPath)clidriver' -Recurse -Force } }&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
-    
-    <Exec Command="bash -c &quot;latest=\$(ls -v '$(Db2PackagePath)' | tail -1); src='$(Db2PackagePath)'/\$latest/buildTransitive/clidriver; if [ -d \&quot;\$src\&quot; ]; then mkdir -p '$(OutputPath)clidriver' &amp;&amp; cp -r \$src/* '$(OutputPath)clidriver/'; fi&quot;" Condition="!$([MSBuild]::IsOSPlatform('Windows'))" ContinueOnError="true" />
-
-    <!-- Clean up versioned folders from output (remove folders that look like version numbers) -->
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -Path '$(OutputPath)clidriver' -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
-    
-    <Exec Command="bash -c &quot;find '$(OutputPath)clidriver' -maxdepth 1 -type d -regex '.*/[0-9]+\.[0-9]+\.[0-9]+.*' -exec rm -rf {} + 2&gt;/dev/null || true&quot;" Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
+    <Message Importance="high" Text="DB2: copying clidriver from '$(_Db2ClidriverSource)' to '$(OutputPath)clidriver'" />
+    <Warning Condition="'@(_Db2ClidriverFiles)' == ''" Text="DB2: no clidriver files found at '$(_Db2ClidriverSource)' — the DB2 native driver will be MISSING from the output." />
+    <Copy Condition="'@(_Db2ClidriverFiles)' != ''"
+          SourceFiles="@(_Db2ClidriverFiles)"
+          DestinationFiles="@(_Db2ClidriverFiles->'$(OutputPath)clidriver/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <!--
