@@ -403,6 +403,21 @@ Use this quick reference before going live:
 - [ ] `config/` folder deployed alongside the application
 - [ ] On low-RAM hosts: Workstation GC (`DOTNET_gcServer=0`); portable build for a smaller download
 
+### Turn off the demo switches — by what each one reveals
+
+The shipped config is a **demo**. Its defaults are deliberately scaled to *how much each feature
+discloses if you forget to turn it off* — so the bar for "ship it on" matches the blast radius:
+
+| Demo switch | Shipped default | If left as-is in production | Severity |
+|---|---|---|---|
+| Static page at `/` (`<static_files>`) | **On** — serves the demo dashboard | A stray welcome page; **no API surface revealed** | Low / informational |
+| OpenAPI / Swagger (`<openapi>`) | **Off** (opt-in) | A **machine-readable map** of every endpoint, parameter, and response shape — reconnaissance for an attacker | Medium |
+| Debug mode (`debug_mode_header_value`) | Set to a **demo value** (`54321`) | **Raw SQL and stack traces** in error responses to anyone who sends the header | High |
+
+Rule of thumb: **the more a feature reveals, the more deliberate enabling it should be.** Replace or
+remove the demo `web/` folder, leave OpenAPI off unless you intend to publish an API spec, and change
+`debug_mode_header_value` to a long secret (or remove the tag) so debug output is never reachable.
+
 ---
 
 ## What You Learned
