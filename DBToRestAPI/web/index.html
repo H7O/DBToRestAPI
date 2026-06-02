@@ -3,29 +3,104 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DB-to-REST API — Static Files</title>
+  <title>DB-to-REST API — Demo</title>
   <style>
-    :root { color-scheme: light dark; }
+    :root { color-scheme: light dark; --accent: #2d7ff9; --ok: #1a9e5c; --muted: #8a8a8a; }
+    * { box-sizing: border-box; }
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      max-width: 44rem; margin: 4rem auto; padding: 0 1.25rem; line-height: 1.6;
+      max-width: 52rem; margin: 2.5rem auto; padding: 0 1.25rem; line-height: 1.55;
     }
-    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
-    code { background: rgba(127,127,127,0.18); padding: 0.1rem 0.35rem; border-radius: 4px; }
-    .hint { opacity: 0.8; font-size: 0.95rem; }
+    h1 { font-size: 1.7rem; margin: 0 0 .2rem; }
+    h2 { font-size: 1.05rem; margin: 2rem 0 .6rem; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
+    .sub { opacity: .8; margin-top: 0; }
+    .badge { display: inline-block; font-size: .8rem; color: var(--ok); border: 1px solid var(--ok);
+             border-radius: 999px; padding: .05rem .5rem; vertical-align: middle; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    code { background: rgba(127,127,127,.16); padding: .1rem .35rem; border-radius: 4px; font-size: .9em; }
+    pre { background: rgba(127,127,127,.12); padding: .7rem .9rem; border-radius: 8px; overflow-x: auto; margin: 0; }
+    table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+    th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid rgba(127,127,127,.2); }
+    th { opacity: .7; font-weight: 600; }
+    .verb { font-weight: 700; font-size: .8rem; }
+    .GET { color: var(--ok); } .POST { color: var(--accent); } .PUT { color: #c47f17; } .DELETE { color: #cc4b4b; }
+    a { color: var(--accent); }
+    .card { border: 1px solid rgba(127,127,127,.25); border-radius: 10px; padding: .9rem 1rem; margin-top: .6rem; }
+    .hint { opacity: .75; font-size: .9rem; }
+    footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid rgba(127,127,127,.2); font-size: .9rem; opacity: .8; }
   </style>
 </head>
 <body>
-  <h1>🚀 Static file serving works</h1>
-  <p>
-    This page is being served by the DB-to-REST API engine's static-file fallback —
-    from the folder configured in <code>config/settings.xml</code> under
-    <code>static_files &gt; root_path</code>.
-  </p>
-  <p class="hint">
-    API gateway and database-query routes are resolved first; this file was served only because
-    no API route matched the request path. Replace the contents of the <code>web/</code> folder
-    with your own static site.
-  </p>
+  <h1>🚀 DB-to-REST API <span class="badge">running</span></h1>
+  <p class="sub">This page is served by the engine's <strong>static-file fallback</strong> — the same engine that serves the API, same-origin. API routes are resolved first; this page is served only because <code>/</code> matched no endpoint.</p>
+
+  <h2>Live from the API</h2>
+  <p class="hint">Fetched from this page on load, proving the static frontend and the API work together.</p>
+  <div class="card">
+    <strong><code>GET /server_time</code></strong>
+    <pre id="time">loading…</pre>
+  </div>
+  <div class="card">
+    <strong><code>GET /contacts</code></strong>
+    <pre id="contacts">loading…</pre>
+  </div>
+
+  <h2>Demo endpoints</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td><code>/server_time</code></td><td>Current server time</td></tr>
+      <tr><td><span class="verb GET">GET&nbsp;/&nbsp;POST</span></td><td><code>/hello_world</code></td><td><code>?name=Alice</code> or <code>{"name":"Alice"}</code></td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td><code>/contacts</code></td><td>List/search (<code>?name=</code>, <code>?take=</code>, <code>?skip=</code>)</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td><code>/contacts</code></td><td>Create — <code>{"name":"Alice","phone":"555-0101"}</code></td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td><code>/contacts/{id}</code></td><td>One contact</td></tr>
+      <tr><td><span class="verb PUT">PUT</span></td><td><code>/contacts/{id}</code></td><td>Update</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td><code>/contacts/{id}</code></td><td>Delete</td></tr>
+    </tbody>
+  </table>
+  <p class="hint">Endpoints are defined in <code>config/sql.xml</code> — edit and save, changes apply instantly (hot-reload).</p>
+
+  <h2>Interactive API explorer</h2>
+  <div class="card" id="swagger-card">
+    <span class="hint">checking…</span>
+  </div>
+
+  <footer>
+    <a href="https://github.com/H7O/DBToRestAPI">GitHub</a> ·
+    <a href="https://github.com/H7O/DBToRestAPI#-run-it-30-seconds">Docs</a> ·
+    Replace the <code>web/</code> folder with your own site, or remove the <code>&lt;static_files&gt;</code> block in <code>settings.xml</code> to disable this page.
+  </footer>
+
+  <script>
+    const show = (id, value) => { document.getElementById(id).textContent = value; };
+    const pretty = (o) => JSON.stringify(o, null, 2);
+
+    fetch('/server_time')
+      .then(r => r.json())
+      .then(d => show('time', pretty(d)))
+      .catch(e => show('time', 'Could not reach the API: ' + e));
+
+    fetch('/contacts')
+      .then(r => r.json())
+      .then(d => {
+        const rows = Array.isArray(d) ? d : (d.data || []);
+        show('contacts', rows.length ? pretty(rows) : 'No contacts yet. Create one:\n\ncurl -X POST http://localhost:5000/contacts \\\n  -H "Content-Type: application/json" \\\n  -d \'{"name":"Alice","phone":"555-0101"}\'');
+      })
+      .catch(e => show('contacts', 'Could not reach the API: ' + e));
+
+    // OpenAPI is opt-in. Show the Swagger link only if it's actually enabled.
+    const card = document.getElementById('swagger-card');
+    fetch('/openapi.json', { method: 'HEAD' })
+      .then(r => {
+        if (r.ok) {
+          card.innerHTML = '✅ OpenAPI is enabled — <a href="/swagger">open Swagger UI →</a>';
+        } else { throw new Error(); }
+      })
+      .catch(() => {
+        card.innerHTML = 'Swagger UI is off by default (OpenAPI is secure-by-default). Enable it by adding ' +
+          '<code>&lt;openapi&gt;&lt;enabled&gt;true&lt;/enabled&gt;&lt;/openapi&gt;</code> to <code>config/settings.xml</code>, ' +
+          'then reload — a browsable API explorer appears at <code>/swagger</code>.';
+      });
+  </script>
 </body>
 </html>

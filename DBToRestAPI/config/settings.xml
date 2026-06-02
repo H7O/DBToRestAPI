@@ -142,34 +142,26 @@
 
 
   <!--
-  Static file serving (optional).
+  Static file serving (optional; ENABLED below to serve the demo dashboard at "/").
 
-  When this block is present, the engine serves static content (HTML/CSS/JS/images, etc.)
-  as a FALLBACK: API gateway routes and database-query routes are resolved first, and only
-  when no API route matches is the request served from `root_path`. If no file matches either,
-  the normal 404 is returned.
+  Serves static content (HTML/CSS/JS/images) as a FALLBACK: API gateway and database-query routes are
+  resolved first, and only when none match is the request served from `root_path`. If no file matches
+  either, the normal 404 is returned. Set <enabled>false</enabled> to turn it off, or remove the block.
 
-  Static content is PUBLIC — it is served before the API-key/JWT checks. Do not place sensitive
-  files in `root_path`. Always point `root_path` at a DEDICATED folder (e.g. ./web/) that holds only
-  public assets. The engine refuses (logs an error and stays disabled) a root that resolves to the
-  app base directory or an ancestor of it, the ./config folder, or the encryption key path — so a
-  mistyped root can't leak secrets. The folder rooting also blocks directory traversal (../ escapes
-  resolve to 404). Note the guard protects against a bad root location, not against sensitive files
-  you place inside an otherwise-legitimate root.
-
-  Uncomment to enable (a demo page ships in ./web/):
-
+  Content is PUBLIC — it is served before the API-key/JWT checks. So `root_path` must be a DEDICATED
+  folder of public assets: the engine refuses (logs an error and stays disabled) a root that resolves
+  to the app base directory or an ancestor of it, the ./config folder, or the encryption key path — so
+  a mistyped root can't leak secrets — and the folder rooting blocks directory traversal (../ → 404).
+  The guard protects against a bad root location, not against sensitive files placed inside the root.
+  The demo page lives in ./web/.
+  -->
   <static_files>
     <root_path><![CDATA[./web/]]></root_path>
     <default>index.html,index.htm</default>
-
-    (the four settings below are all optional)
     <enabled>true</enabled>
-    <cache_control_max_age_seconds>3600</cache_control_max_age_seconds>
-    <serve_unknown_file_types>false</serve_unknown_file_types>
-    <spa_fallback>false</spa_fallback>
+    <!-- Optional: <cache_control_max_age_seconds>3600</cache_control_max_age_seconds>,
+         <serve_unknown_file_types>false</serve_unknown_file_types>, <spa_fallback>false</spa_fallback> -->
   </static_files>
-  -->
 
 
 </settings>

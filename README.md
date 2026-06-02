@@ -58,7 +58,7 @@ Grab the latest release from the [Releases page](https://github.com/H7O/DBToRest
 | macOS (x64) | `DBToRestAPI-osx-x64.tar.gz` |
 | macOS (ARM64) | `DBToRestAPI-osx-arm64.tar.gz` |
 
-> These archives are **self-contained** — the .NET runtime is bundled, so nothing else to install. If your host already has the [ASP.NET Core 10 runtime](https://dotnet.microsoft.com/download) (check with `dotnet --version`), the smaller **`DBToRestAPI-portable`** archive (~60 MB, runs on any platform) is an alternative.
+> **Recommended: the self-contained archive above.** The .NET runtime is bundled, so there's nothing to install *and* the engine is pinned to the exact runtime it was tested against — a later system `dotnet` upgrade can't silently change its behavior. **Prefer it even if .NET is already installed**, unless you deliberately want a single shared runtime across apps — in which case the smaller **`DBToRestAPI-portable`** archive (~60 MB, needs the [ASP.NET Core 10 runtime](https://dotnet.microsoft.com/download)) is the framework-dependent alternative.
 
 ### Step 2 — Extract and run
 
@@ -93,24 +93,31 @@ You should see this banner:
 ╚════════════════════════════════════════════════════════════════╝
 ```
 
-The server is now live at **<http://localhost:5000>**. That's it — you have a working REST API server backed by a SQLite database with sample endpoints, ready to use.
+The server is now live at **<http://localhost:5000>**. Open that URL in a browser for a **live demo dashboard** that lists every sample endpoint and calls them for you — or hit the API directly with curl below.
 
 ### Step 4 — Test it
 
+The bundled SQLite demo ships these endpoints (defined in `config/sql.xml`):
+
 ```bash
-# Hello world endpoint
+# Current server time
+curl "http://localhost:5000/server_time"
+
+# Hello world (GET or POST)
 curl -X POST "http://localhost:5000/hello_world" \
      -H "Content-Type: application/json" \
      -d '{"name": "World"}'
 
-# List sample contacts
+# List / search contacts  (?name=  ?take=  ?skip=)
 curl "http://localhost:5000/contacts"
 
-# Create a new contact
+# Create a contact  (also: GET/PUT/DELETE /contacts/{id})
 curl -X POST "http://localhost:5000/contacts" \
      -H "Content-Type: application/json" \
      -d '{"name": "Alice Smith", "phone": "555-0101"}'
 ```
+
+> **Interactive API explorer:** OpenAPI is off by default (secure-by-default). To get a browsable **Swagger UI** at `/swagger`, add `<openapi><enabled>true</enabled></openapi>` to `config/settings.xml` and reload — changes apply instantly.
 
 Done. You're ready to start defining your own endpoints in `config/sql.xml` — see [How it works](#how-it-works) below.
 
