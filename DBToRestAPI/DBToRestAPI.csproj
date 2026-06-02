@@ -64,12 +64,38 @@
 
   </ItemGroup>
 
-  <!-- 
+  <!--
+    DB2's native CLI driver (clidriver) is ~80 MB and is x64/OS-specific, so it is bundled only when it is
+    actually usable — otherwise every full release would carry 80 MB of (often foreign-platform) native
+    libraries for a niche provider.
+
+    Default: included for local (RID-less) `dotnet build`/`run` so DB2 works in development, but NOT for
+    self-contained release builds. To produce a ready-to-run DB2 release build, opt in on the matching
+    x64 platform:  dotnet publish -r linux-x64 -p:IncludeDb2Native=true
+    Without the native driver the managed DB2 provider is still present, but a DB2 connection fails until
+    the IBM Data Server Driver is available on the host. DB2 is excluded from lite builds entirely.
+  -->
+  <PropertyGroup>
+    <IncludeDb2Native Condition="'$(IncludeDb2Native)' == '' and '$(RuntimeIdentifier)' == ''">true</IncludeDb2Native>
+    <IncludeDb2Native Condition="'$(IncludeDb2Native)' == ''">false</IncludeDb2Native>
+  </PropertyGroup>
+
+  <!-- Bundle the clidriver only when opted in, not lite, and the target is the matching build-host x64
+       platform (a RID-less local build always targets the host). This prevents shipping, e.g., Linux
+       .so files inside a Windows build, or x64 libraries inside an arm64 build. -->
+  <PropertyGroup Condition="'$(DbProviders)' != 'lite' and '$(IncludeDb2Native)' == 'true'">
+    <_Db2NativeOsMatch>false</_Db2NativeOsMatch>
+    <_Db2NativeOsMatch Condition="$([MSBuild]::IsOSPlatform('Windows')) and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64')">true</_Db2NativeOsMatch>
+    <_Db2NativeOsMatch Condition="$([MSBuild]::IsOSPlatform('Linux')) and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64')">true</_Db2NativeOsMatch>
+    <_Db2NativeOsMatch Condition="$([MSBuild]::IsOSPlatform('OSX')) and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-x64')">true</_Db2NativeOsMatch>
+  </PropertyGroup>
+
+  <!--
     DB2 CLI driver post-build copy:
-    The NuGet package places clidriver files in a versioned subfolder, but the runtime expects them 
+    The NuGet package places clidriver files in a versioned subfolder, but the runtime expects them
     in the root 'clidriver' folder. This target copies files from the highest version and cleans up.
   -->
-  <Target Name="CopyDb2CliDriver" AfterTargets="Build" Condition="'$(DbProviders)' != 'lite'">
+  <Target Name="CopyDb2CliDriver" AfterTargets="Build" Condition="'$(_Db2NativeOsMatch)' == 'true'">
     <!-- Windows -->
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
       <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2</Db2PackagePath>
@@ -115,6 +141,24 @@
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -Path '$(OutputPath)clidriver' -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     
     <Exec Command="bash -c &quot;find '$(OutputPath)clidriver' -maxdepth 1 -type d -regex '.*/[0-9]+\.[0-9]+\.[0-9]+.*' -exec rm -rf {} + 2&gt;/dev/null || true&quot;" Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
+  </Target>
+
+  <!--
+    Mirror the DB2 clidriver into the PUBLISH output. CopyDb2CliDriver (above) only populates the build
+    output ($(OutputPath)); `dotnet publish` writes a separate folder, so without this the native driver
+    is missing from published / released builds and DB2 connections fail at runtime. This reuses the files
+    the build target already staged, under the same host-OS gate (so cross-published artifacts never get
+    foreign-OS native libraries).
+  -->
+  <Target Name="CopyDb2CliDriverToPublish" AfterTargets="Publish" Condition="'$(_Db2NativeOsMatch)' == 'true'">
+    <ItemGroup>
+      <_Db2PublishCliDriver Include="$(OutputPath)clidriver\**\*" />
+    </ItemGroup>
+    <Message Importance="high" Condition="'@(_Db2PublishCliDriver)' != ''" Text="Copying DB2 CLI driver into publish output: $(PublishDir)clidriver\" />
+    <Copy Condition="'@(_Db2PublishCliDriver)' != ''"
+          SourceFiles="@(_Db2PublishCliDriver)"
+          DestinationFiles="@(_Db2PublishCliDriver->'$(PublishDir)clidriver\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <ItemGroup>

@@ -98,8 +98,40 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.*
 
+  # Framework-dependent, portable lite build (no RID) — a tiny download for hosts that already have
+  # the ASP.NET Core runtime installed. SQL Server + SQLite only, Workstation GC. Runs on any OS/arch.
+  publish-lite-portable:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish (framework-dependent, lite)
+        run: >
+          dotnet publish DBToRestAPI/DBToRestAPI.csproj
+          --configuration Release
+          --no-self-contained
+          -p:DbProviders=lite
+          --output ./publish/DBToRestAPI-lite-portable
+
+      - name: Package
+        run: |
+          tar -czf DBToRestAPI-lite-portable.tar.gz -C ./publish DBToRestAPI-lite-portable
+          cd ./publish && zip -r ../DBToRestAPI-lite-portable.zip DBToRestAPI-lite-portable
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: DBToRestAPI-lite-portable
+          path: DBToRestAPI-lite-portable.*
+
   release:
-    needs: publish
+    needs: [publish, publish-lite-portable]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
