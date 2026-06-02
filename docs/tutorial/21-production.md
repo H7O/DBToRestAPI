@@ -369,7 +369,12 @@ Running on a small VPS (say, a 512 MB instance)?  Two levers help:
 Oracle, DB2, ODBC, and OleDb providers (smaller download and attack surface) and run with Workstation
 GC, which holds less memory than the default Server GC.  Provider assemblies load lazily in *every*
 build, so unused databases never load into memory either way — the lite build mainly trims the
-download size and baseline footprint.
+baseline footprint and attack surface.
+
+> A *self-contained* archive is dominated by the bundled .NET runtime (~110 MB), so lite is only
+> ~10 MB smaller than full — the runtime is the floor, not the drivers. If your host already has the
+> ASP.NET Core runtime installed, the **`DBToRestAPI-lite-portable`** archive (framework-dependent,
+> `--no-self-contained`) is ~50 MB instead of ~120 MB.
 
 **2. Tune the GC — no rebuild required.**  ASP.NET Core defaults to Server GC, which pre-reserves more
 memory.  On a constrained host, switch to Workstation GC (and optionally cap the heap) via environment

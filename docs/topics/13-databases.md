@@ -19,6 +19,8 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, and any ODBC 
 
 > **Lazy loading & lite builds**: Provider assemblies load on demand — a deployment that only uses SQLite never loads the PostgreSQL, MySQL, Oracle, DB2, ODBC, or OleDb drivers into memory. For small or low-RAM hosts you can also run a **lite build** that ships only SQL Server + SQLite (the `DBToRestAPI-lite-*` release archives, or a source build with `-p:DbProviders=lite`). See [Production → Low-RAM / Small Hosts](../tutorial/21-production.md#low-ram--small-hosts).
 
+> **IBM DB2 native driver**: DB2 requires IBM's CLI driver (`clidriver`, ~80 MB, x64/OS-specific). It is included automatically for local `dotnet run`, but **not** bundled in release binaries by default. For a ready-to-run DB2 deployment, publish on the matching x64 platform with `-p:IncludeDb2Native=true`, or install the IBM Data Server Driver on the host.
+
 ## Connection String Configuration
 
 `/config/settings.xml`:
