@@ -100,14 +100,27 @@
   -->
   <Target Name="CopyDb2CliDriver" AfterTargets="Build" Condition="'$(_Db2NativeOsMatch)' == 'true'">
     <PropertyGroup>
-      <_Db2ClidriverSource Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(PkgNet_IBM_Data_Db2)/buildTransitive/clidriver</_Db2ClidriverSource>
-      <_Db2ClidriverSource Condition="$([MSBuild]::IsOSPlatform('Linux'))">$(PkgNet_IBM_Data_Db2_lnx)/buildTransitive/clidriver</_Db2ClidriverSource>
+      <_Db2PkgId Condition="$([MSBuild]::IsOSPlatform('Windows'))">net.ibm.data.db2</_Db2PkgId>
+      <_Db2PkgId Condition="$([MSBuild]::IsOSPlatform('Linux'))">net.ibm.data.db2-lnx</_Db2PkgId>
+    </PropertyGroup>
+    <!-- NuGetPackageFolders is a ';'-separated list (global + any fallback folders); split it into items
+         and also try NuGetPackageRoot, then resolve the package's restored version folder under whichever
+         folder actually contains it. This avoids depending on the generated path-property name. -->
+    <ItemGroup>
+      <_Db2PkgFolder Include="$(NuGetPackageFolders)" />
+      <_Db2PkgFolder Include="$(NuGetPackageRoot)" Condition="'$(NuGetPackageRoot)' != ''" />
+      <_Db2PkgBaseCandidate Include="@(_Db2PkgFolder->'%(Identity)$(_Db2PkgId)')" />
+      <_Db2VersionDir Include="$([System.IO.Directory]::GetDirectories('%(_Db2PkgBaseCandidate.Identity)'))"
+                      Condition="$([System.IO.Directory]::Exists('%(_Db2PkgBaseCandidate.Identity)'))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_Db2VersionDir>@(_Db2VersionDir)</_Db2VersionDir>
     </PropertyGroup>
     <ItemGroup>
-      <_Db2ClidriverFiles Include="$(_Db2ClidriverSource)/**/*" />
+      <_Db2ClidriverFiles Include="$(_Db2VersionDir)/buildTransitive/clidriver/**/*" Condition="'$(_Db2VersionDir)' != ''" />
     </ItemGroup>
-    <Message Importance="high" Text="DB2: copying clidriver from '$(_Db2ClidriverSource)' to '$(OutputPath)clidriver'" />
-    <Warning Condition="'@(_Db2ClidriverFiles)' == ''" Text="DB2: no clidriver files found at '$(_Db2ClidriverSource)' — the DB2 native driver will be MISSING from the output." />
+    <Message Importance="high" Text="DB2: versionDir='$(_Db2VersionDir)' -> copying clidriver to '$(OutputPath)clidriver'" />
+    <Warning Condition="'@(_Db2ClidriverFiles)' == ''" Text="DB2: no clidriver files found (candidates='@(_Db2PkgBaseCandidate)') — the DB2 native driver will be MISSING." />
     <Copy Condition="'@(_Db2ClidriverFiles)' != ''"
           SourceFiles="@(_Db2ClidriverFiles)"
           DestinationFiles="@(_Db2ClidriverFiles->'$(OutputPath)clidriver/%(RecursiveDir)%(Filename)%(Extension)')"
