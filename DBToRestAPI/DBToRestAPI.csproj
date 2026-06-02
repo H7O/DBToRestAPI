@@ -82,12 +82,12 @@
 
   <!-- Bundle the clidriver only when opted in, not lite, and the target is the matching build-host x64
        platform (a RID-less local build always targets the host). This prevents shipping, e.g., Linux
-       .so files inside a Windows build, or x64 libraries inside an arm64 build. -->
+       .so files inside a Windows build, or x64 libraries inside an arm64 build. IBM ships the DB2 client
+       driver for Windows and Linux x64; macOS / arm64 DB2 are not supported, so they are not matched. -->
   <PropertyGroup Condition="'$(DbProviders)' != 'lite' and '$(IncludeDb2Native)' == 'true'">
     <_Db2NativeOsMatch>false</_Db2NativeOsMatch>
     <_Db2NativeOsMatch Condition="$([MSBuild]::IsOSPlatform('Windows')) and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64')">true</_Db2NativeOsMatch>
     <_Db2NativeOsMatch Condition="$([MSBuild]::IsOSPlatform('Linux')) and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64')">true</_Db2NativeOsMatch>
-    <_Db2NativeOsMatch Condition="$([MSBuild]::IsOSPlatform('OSX')) and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-x64')">true</_Db2NativeOsMatch>
   </PropertyGroup>
 
   <!--
@@ -135,7 +135,7 @@
     <!-- PowerShell approach: Find highest version, copy clidriver contents, remove versioned folders -->
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$versions = Get-ChildItem -Path '$(Db2PackagePath)' -Directory | Sort-Object { [Version]$_.Name } -Descending; if ($versions) { $latest = $versions[0].FullName; $src = Join-Path $latest 'buildTransitive\clidriver'; if (Test-Path $src) { Copy-Item -Path (Join-Path $src '*') -Destination '$(OutputPath)clidriver' -Recurse -Force } }&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     
-    <Exec Command="bash -c &quot;latest=\$(ls -v '$(Db2PackagePath)' | tail -1); src='$(Db2PackagePath)'/\$latest/buildTransitive/clidriver; if [ -d \&quot;\$src\&quot; ]; then cp -r \$src/* '$(OutputPath)clidriver/'; fi&quot;" Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
+    <Exec Command="bash -c &quot;latest=\$(ls -v '$(Db2PackagePath)' | tail -1); src='$(Db2PackagePath)'/\$latest/buildTransitive/clidriver; if [ -d \&quot;\$src\&quot; ]; then mkdir -p '$(OutputPath)clidriver' &amp;&amp; cp -r \$src/* '$(OutputPath)clidriver/'; fi&quot;" Condition="!$([MSBuild]::IsOSPlatform('Windows'))" ContinueOnError="true" />
 
     <!-- Clean up versioned folders from output (remove folders that look like version numbers) -->
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -Path '$(OutputPath)clidriver' -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue&quot;" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />

@@ -28,44 +28,34 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
 
+  # Self-contained builds (the .NET runtime is bundled — just unzip and run). All database providers.
+  # win-x64 builds on a Windows runner so its native DB2 driver is bundled correctly; the others build
+  # on Linux (cross-published). DB2 native is included only for win-x64 and linux-x64 (IBM's supported
+  # x64 platforms) — see the IncludeDb2Native gate in the .csproj.
   publish:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          # Full builds — every supported database provider
           - rid: win-x64
-            flavor: full
+            os: windows-latest
             artifact: DBToRestAPI-win-x64
           - rid: win-arm64
-            flavor: full
+            os: ubuntu-latest
             artifact: DBToRestAPI-win-arm64
           - rid: linux-x64
-            flavor: full
+            os: ubuntu-latest
             artifact: DBToRestAPI-linux-x64
           - rid: linux-arm64
-            flavor: full
+            os: ubuntu-latest
             artifact: DBToRestAPI-linux-arm64
           - rid: osx-x64
-            flavor: full
+            os: ubuntu-latest
             artifact: DBToRestAPI-osx-x64
           - rid: osx-arm64
-            flavor: full
+            os: ubuntu-latest
             artifact: DBToRestAPI-osx-arm64
-          # Lite builds — Microsoft SQL Server + SQLite only, Workstation GC (small / low-RAM hosts)
-          - rid: linux-x64
-            flavor: lite
-            artifact: DBToRestAPI-lite-linux-x64
-          - rid: linux-arm64
-            flavor: lite
-            artifact: DBToRestAPI-lite-linux-arm64
-          - rid: win-x64
-            flavor: lite
-            artifact: DBToRestAPI-lite-win-x64
-          - rid: win-arm64
-            flavor: lite
-            artifact: DBToRestAPI-lite-win-arm64
 
     steps:
       - uses: actions/checkout@v6
@@ -81,16 +71,21 @@ jobs:
           --configuration Release
           --runtime ${{ matrix.rid }}
           --self-contained true
-          -p:DbProviders=${{ matrix.flavor }}
+          -p:IncludeDb2Native=true
           --output ./publish/${{ matrix.artifact }}
 
-      - name: Package (tar.gz)
-        if: ${{ !startsWith(matrix.rid, 'win') }}
-        run: tar -czf ${{ matrix.artifact }}.tar.gz -C ./publish ${{ matrix.artifact }}
+      - name: Package (zip — Windows runner)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path ./publish/${{ matrix.artifact }} -DestinationPath ${{ matrix.artifact }}.zip
 
-      - name: Package (zip)
-        if: startsWith(matrix.rid, 'win')
+      - name: Package (zip — Windows target on Linux runner)
+        if: runner.os != 'Windows' && startsWith(matrix.rid, 'win')
         run: cd ./publish && zip -r ../${{ matrix.artifact }}.zip ${{ matrix.artifact }}
+
+      - name: Package (tar.gz — non-Windows target)
+        if: runner.os != 'Windows' && !startsWith(matrix.rid, 'win')
+        run: tar -czf ${{ matrix.artifact }}.tar.gz -C ./publish ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -98,9 +93,11 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.*
 
-  # Framework-dependent, portable lite build (no RID) — a tiny download for hosts that already have
-  # the ASP.NET Core runtime installed. SQL Server + SQLite only, Workstation GC. Runs on any OS/arch.
-  publish-lite-portable:
+  # Framework-dependent, portable build (no .NET bundled, no RID) — a small download for hosts that
+  # already have the ASP.NET Core 10 runtime installed. Includes all managed providers; runs on any
+  # OS/arch. DB2 native is not bundled here (it is platform-specific); use a self-contained build for
+  # out-of-box DB2, or install the IBM Data Server Driver.
+  publish-portable:
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -111,27 +108,27 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Publish (framework-dependent, lite)
+      - name: Publish (framework-dependent)
         run: >
           dotnet publish DBToRestAPI/DBToRestAPI.csproj
           --configuration Release
           --no-self-contained
-          -p:DbProviders=lite
-          --output ./publish/DBToRestAPI-lite-portable
+          -p:IncludeDb2Native=false
+          --output ./publish/DBToRestAPI-portable
 
       - name: Package
         run: |
-          tar -czf DBToRestAPI-lite-portable.tar.gz -C ./publish DBToRestAPI-lite-portable
-          cd ./publish && zip -r ../DBToRestAPI-lite-portable.zip DBToRestAPI-lite-portable
+          tar -czf DBToRestAPI-portable.tar.gz -C ./publish DBToRestAPI-portable
+          cd ./publish && zip -r ../DBToRestAPI-portable.zip DBToRestAPI-portable
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: DBToRestAPI-lite-portable
-          path: DBToRestAPI-lite-portable.*
+          name: DBToRestAPI-portable
+          path: DBToRestAPI-portable.*
 
   release:
-    needs: [publish, publish-lite-portable]
+    needs: [publish, publish-portable]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -144,4 +141,5 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: artifacts/*
