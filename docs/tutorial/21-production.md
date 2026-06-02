@@ -362,31 +362,25 @@ provide your XML configuration.
 
 ## Low-RAM / Small Hosts
 
-Running on a small VPS (say, a 512 MB instance)?  Two levers help:
+Running on a small VPS (say, a 512 MB instance)?  A couple of things help:
 
-**1. Use a lite build.**  The `DBToRestAPI-lite-*` release archives — or a source build with
-`-p:DbProviders=lite` — include only Microsoft SQL Server and SQLite.  They drop the Npgsql, MySQL,
-Oracle, DB2, ODBC, and OleDb providers (smaller download and attack surface) and run with Workstation
-GC, which holds less memory than the default Server GC.  Provider assemblies load lazily in *every*
-build, so unused databases never load into memory either way — the lite build mainly trims the
-baseline footprint and attack surface.
-
-> A *self-contained* archive is dominated by the bundled .NET runtime (~110 MB), so lite is only
-> ~10 MB smaller than full — the runtime is the floor, not the drivers. If your host already has the
-> ASP.NET Core runtime installed, the **`DBToRestAPI-lite-portable`** archive (framework-dependent,
-> `--no-self-contained`) is ~50 MB instead of ~120 MB.
-
-**2. Tune the GC — no rebuild required.**  ASP.NET Core defaults to Server GC, which pre-reserves more
-memory.  On a constrained host, switch to Workstation GC (and optionally cap the heap) via environment
-variables, then restart:
+**1. Memory is mostly about the GC — no rebuild required.**  The engine itself is light unless you
+enable caching, and database drivers [load lazily](../topics/13-databases.md), so a SQLite-only
+deployment never loads the Oracle/DB2/PostgreSQL/etc. drivers into memory at all.  The bigger lever is
+the GC: ASP.NET Core defaults to Server GC, which pre-reserves more memory.  On a constrained host,
+switch to Workstation GC (and optionally cap the heap) via environment variables, then restart:
 
 ```bash
 DOTNET_gcServer=0                  # Workstation GC — smaller footprint
 DOTNET_GCHeapHardLimit=0x15000000  # optional: cap the managed heap at ~336 MB
 ```
 
-Measure the resident set before and after — on a 512 MB box the GC mode is often a bigger factor than
-the binary's size.
+Measure the resident set before and after — on a 512 MB box the GC mode is usually the deciding factor.
+
+**2. Smaller download (optional).**  A *self-contained* archive bundles the entire .NET runtime
+(~110 MB), which dominates its size.  If your host already has the ASP.NET Core 10 runtime installed,
+the **`DBToRestAPI-portable`** archive (framework-dependent) is ~60 MB instead of ~130 MB — disk, not
+RAM, but handy on tiny instances.
 
 ---
 
@@ -407,7 +401,7 @@ Use this quick reference before going live:
 - [ ] Logging level set to Warning or Error
 - [ ] Environment variables used for platform-specific overrides (connection strings, secrets)
 - [ ] `config/` folder deployed alongside the application
-- [ ] On low-RAM hosts: lite build and/or Workstation GC (`DOTNET_gcServer=0`)
+- [ ] On low-RAM hosts: Workstation GC (`DOTNET_gcServer=0`); portable build for a smaller download
 
 ---
 
@@ -419,7 +413,7 @@ Use this quick reference before going live:
 - How to override any setting via environment variables for cloud deployments.
 - How to audit endpoint protection and organise configuration files.
 - Hosting options and a pre-deployment checklist.
-- How to slim the engine for small / low-RAM hosts (lite build, Workstation GC).
+- How to slim the engine for small / low-RAM hosts (Workstation GC, portable build).
 
 ---
 

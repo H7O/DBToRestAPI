@@ -17,9 +17,9 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, and any ODBC 
 
 > **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
-> **Lazy loading & lite builds**: Provider assemblies load on demand — a deployment that only uses SQLite never loads the PostgreSQL, MySQL, Oracle, DB2, ODBC, or OleDb drivers into memory. For small or low-RAM hosts you can also run a **lite build** that ships only SQL Server + SQLite (the `DBToRestAPI-lite-*` release archives, or a source build with `-p:DbProviders=lite`). See [Production → Low-RAM / Small Hosts](../tutorial/21-production.md#low-ram--small-hosts).
+> **Lazy loading**: Provider assemblies load on demand — a deployment that only uses SQLite never loads the PostgreSQL, MySQL, Oracle, DB2, ODBC, or OleDb drivers into memory. So bundling every provider costs disk, not RAM. (An advanced `-p:DbProviders=lite` source build can strip everything except SQL Server + SQLite if you want a truly minimal binary, but it's rarely needed.)
 
-> **IBM DB2 native driver**: DB2 requires IBM's CLI driver (`clidriver`, ~80 MB, x64/OS-specific). It is included automatically for local `dotnet run`, but **not** bundled in release binaries by default. For a ready-to-run DB2 deployment, publish on the matching x64 platform with `-p:IncludeDb2Native=true`, or install the IBM Data Server Driver on the host.
+> **IBM DB2 native driver**: DB2 requires IBM's CLI driver (`clidriver`, ~80 MB, x64/OS-specific). The self-contained **`DBToRestAPI-win-x64`** and **`DBToRestAPI-linux-x64`** release archives bundle it, so DB2 works out of the box there. For other targets (or the portable build), publish on an x64 Windows/Linux host with `-p:IncludeDb2Native=true`, or install the IBM Data Server Driver on the host. (Local `dotnet run` includes it automatically.)
 
 ## Connection String Configuration
 

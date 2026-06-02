@@ -52,10 +52,13 @@ Grab the latest release from the [Releases page](https://github.com/H7O/DBToRest
 | Platform | Download |
 | --- | --- |
 | Windows (x64) | `DBToRestAPI-win-x64.zip` |
+| Windows (ARM64) | `DBToRestAPI-win-arm64.zip` |
 | Linux (x64) | `DBToRestAPI-linux-x64.tar.gz` |
 | Linux (ARM64) | `DBToRestAPI-linux-arm64.tar.gz` |
 | macOS (x64) | `DBToRestAPI-osx-x64.tar.gz` |
 | macOS (ARM64) | `DBToRestAPI-osx-arm64.tar.gz` |
+
+> These archives are **self-contained** — the .NET runtime is bundled, so nothing else to install. If your host already has the [ASP.NET Core 10 runtime](https://dotnet.microsoft.com/download) (check with `dotnet --version`), the smaller **`DBToRestAPI-portable`** archive (~60 MB, runs on any platform) is an alternative.
 
 ### Step 2 — Extract and run
 
@@ -308,33 +311,17 @@ dotnet publish DBToRestAPI -c Release -r linux-x64 --self-contained -o ./publish
 
 Replace `linux-x64` with `win-x64`, `win-arm64`, `osx-x64`, `linux-arm64`, or `osx-arm64` as needed.
 
-**Lite build (SQL Server + SQLite only):**
-
-For small or low-RAM hosts that don't need every database engine, build a leaner binary with only Microsoft SQL Server and SQLite:
+**Portable build (needs the .NET runtime on the host):** a smaller download (~60 MB vs ~130 MB) that runs on any OS/arch, if the host has the [ASP.NET Core 10 runtime](https://dotnet.microsoft.com/download) installed:
 
 ```bash
-dotnet publish DBToRestAPI -c Release -r linux-x64 --self-contained -p:DbProviders=lite -o ./publish
+dotnet publish DBToRestAPI -c Release --no-self-contained -o ./publish
 ```
 
-This drops the Npgsql, MySQL, Oracle, DB2, ODBC, and OleDb providers (smaller download and attack surface) and switches to Workstation GC for a lower memory footprint. Pre-built **`DBToRestAPI-lite-*`** archives are attached to each [release](https://github.com/H7O/DBToRestAPI/releases) for the common server platforms. Provider assemblies load lazily in both builds, so unused databases never consume memory regardless of which you run.
+> **On size:** a *self-contained* archive bundles the entire .NET runtime (~110 MB), which dominates it — that runtime is the real difference between the two flavors; the database drivers are a small fraction. Provider assemblies also load lazily, so unused databases never consume memory.
 
-> **On size:** a *self-contained* build bundles the entire .NET runtime (~110 MB), which dominates the archive — so lite is only modestly smaller than full (it removes ~10 MB of managed drivers). The runtime, not the drivers, is the floor. Lite's real wins are Workstation GC and a smaller attack surface.
+**IBM DB2:** the self-contained `win-x64` and `linux-x64` release archives bundle IBM's DB2 CLI driver, so DB2 works out of the box on those platforms. For other targets (or the portable build), publish on an x64 Windows/Linux host with `-p:IncludeDb2Native=true`, or install the IBM Data Server Driver on the host. (Local `dotnet run` includes the driver automatically.)
 
-**Portable lite (smallest download):** if the host already has the [ASP.NET Core 10 runtime](https://dotnet.microsoft.com/download) installed, a framework-dependent lite build is ~50 MB instead of ~120 MB and runs on any OS/arch:
-
-```bash
-dotnet publish DBToRestAPI -c Release --no-self-contained -p:DbProviders=lite -o ./publish
-```
-
-A **`DBToRestAPI-lite-portable`** archive is attached to each release.
-
-**DB2 native driver (opt-in):** the IBM DB2 CLI driver (`clidriver`) is ~80 MB and x64/OS-specific, so it is **not** bundled in release binaries. To produce a ready-to-run DB2 build, opt in on the matching x64 platform:
-
-```bash
-dotnet publish DBToRestAPI -c Release -r linux-x64 --self-contained -p:IncludeDb2Native=true -o ./publish
-```
-
-(Local `dotnet run` includes it automatically for development.) Without it, the managed DB2 provider is present but a DB2 connection fails until the IBM Data Server Driver is on the host.
+**Advanced — minimal driver set:** `-p:DbProviders=lite` builds an engine with only SQL Server + SQLite (and Workstation GC). Rarely needed — lazy loading already keeps unused drivers out of memory — but handy for minimal or custom builds.
 
 The codebase is C# / ASP.NET Core 10, organized as a single project (`DBToRestAPI/`) plus a test project (`DBToRestAPI.Tests/`). MIT licensed — fork freely.
 
