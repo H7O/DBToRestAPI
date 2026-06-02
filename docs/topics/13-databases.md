@@ -17,6 +17,8 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, and any ODBC 
 
 > **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
+> **Lazy loading & lite builds**: Provider assemblies load on demand — a deployment that only uses SQLite never loads the PostgreSQL, MySQL, Oracle, DB2, ODBC, or OleDb drivers into memory. For small or low-RAM hosts you can also run a **lite build** that ships only SQL Server + SQLite (the `DBToRestAPI-lite-*` release archives, or a source build with `-p:DbProviders=lite`). See [Production → Low-RAM / Small Hosts](../tutorial/21-production.md#low-ram--small-hosts).
+
 ## Connection String Configuration
 
 `/config/settings.xml`:

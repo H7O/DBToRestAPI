@@ -405,6 +405,7 @@ DbToRestAPI is not a prototype or development-only tool:
 - **TLS support**: Built-in Kestrel HTTPS configuration
 - **Environment-specific config**: `appsettings.Development.json`, `appsettings.Production.json`
 - **Secrets encryption**: Connection strings and API keys can be encrypted at rest
+- **Small-host friendly**: Database providers load lazily (unused engines never consume memory), and a lite build (SQL Server + SQLite only, Workstation GC) keeps the footprint small enough for a 512 MB VPS
 - **MIT licensed**: No vendor lock-in, fully extensible for .NET developers
 
 The backend an agent builds with DbToRestAPI is the same backend that runs in

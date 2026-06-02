@@ -360,6 +360,31 @@ provide your XML configuration.
 
 ---
 
+## Low-RAM / Small Hosts
+
+Running on a small VPS (say, a 512 MB instance)?  Two levers help:
+
+**1. Use a lite build.**  The `DBToRestAPI-lite-*` release archives — or a source build with
+`-p:DbProviders=lite` — include only Microsoft SQL Server and SQLite.  They drop the Npgsql, MySQL,
+Oracle, DB2, ODBC, and OleDb providers (smaller download and attack surface) and run with Workstation
+GC, which holds less memory than the default Server GC.  Provider assemblies load lazily in *every*
+build, so unused databases never load into memory either way — the lite build mainly trims the
+download size and baseline footprint.
+
+**2. Tune the GC — no rebuild required.**  ASP.NET Core defaults to Server GC, which pre-reserves more
+memory.  On a constrained host, switch to Workstation GC (and optionally cap the heap) via environment
+variables, then restart:
+
+```bash
+DOTNET_gcServer=0                  # Workstation GC — smaller footprint
+DOTNET_GCHeapHardLimit=0x15000000  # optional: cap the managed heap at ~336 MB
+```
+
+Measure the resident set before and after — on a 512 MB box the GC mode is often a bigger factor than
+the binary's size.
+
+---
+
 ## Production Checklist
 
 Use this quick reference before going live:
@@ -377,6 +402,7 @@ Use this quick reference before going live:
 - [ ] Logging level set to Warning or Error
 - [ ] Environment variables used for platform-specific overrides (connection strings, secrets)
 - [ ] `config/` folder deployed alongside the application
+- [ ] On low-RAM hosts: lite build and/or Workstation GC (`DOTNET_gcServer=0`)
 
 ---
 
@@ -388,6 +414,7 @@ Use this quick reference before going live:
 - How to override any setting via environment variables for cloud deployments.
 - How to audit endpoint protection and organise configuration files.
 - Hosting options and a pre-deployment checklist.
+- How to slim the engine for small / low-RAM hosts (lite build, Workstation GC).
 
 ---
 

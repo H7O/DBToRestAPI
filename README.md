@@ -306,7 +306,17 @@ dotnet test
 dotnet publish DBToRestAPI -c Release -r linux-x64 --self-contained -o ./publish
 ```
 
-Replace `linux-x64` with `win-x64`, `osx-x64`, `linux-arm64`, or `osx-arm64` as needed.
+Replace `linux-x64` with `win-x64`, `win-arm64`, `osx-x64`, `linux-arm64`, or `osx-arm64` as needed.
+
+**Lite build (SQL Server + SQLite only):**
+
+For small or low-RAM hosts that don't need every database engine, build a leaner binary with only Microsoft SQL Server and SQLite:
+
+```bash
+dotnet publish DBToRestAPI -c Release -r linux-x64 --self-contained -p:DbProviders=lite -o ./publish
+```
+
+This drops the Npgsql, MySQL, Oracle, DB2, ODBC, and OleDb providers (smaller download and attack surface) and switches to Workstation GC for a lower memory footprint. Pre-built **`DBToRestAPI-lite-*`** archives are attached to each [release](https://github.com/H7O/DBToRestAPI/releases) for the common server platforms. Provider assemblies load lazily in both builds, so unused databases never consume memory regardless of which you run.
 
 The codebase is C# / ASP.NET Core 10, organized as a single project (`DBToRestAPI/`) plus a test project (`DBToRestAPI.Tests/`). MIT licensed — fork freely.
 
