@@ -34,18 +34,38 @@ jobs:
     strategy:
       matrix:
         include:
+          # Full builds — every supported database provider
           - rid: win-x64
+            flavor: full
             artifact: DBToRestAPI-win-x64
           - rid: win-arm64
+            flavor: full
             artifact: DBToRestAPI-win-arm64
           - rid: linux-x64
+            flavor: full
             artifact: DBToRestAPI-linux-x64
           - rid: linux-arm64
+            flavor: full
             artifact: DBToRestAPI-linux-arm64
           - rid: osx-x64
+            flavor: full
             artifact: DBToRestAPI-osx-x64
           - rid: osx-arm64
+            flavor: full
             artifact: DBToRestAPI-osx-arm64
+          # Lite builds — Microsoft SQL Server + SQLite only, Workstation GC (small / low-RAM hosts)
+          - rid: linux-x64
+            flavor: lite
+            artifact: DBToRestAPI-lite-linux-x64
+          - rid: linux-arm64
+            flavor: lite
+            artifact: DBToRestAPI-lite-linux-arm64
+          - rid: win-x64
+            flavor: lite
+            artifact: DBToRestAPI-lite-win-x64
+          - rid: win-arm64
+            flavor: lite
+            artifact: DBToRestAPI-lite-win-arm64
 
     steps:
       - uses: actions/checkout@v6
@@ -61,6 +81,7 @@ jobs:
           --configuration Release
           --runtime ${{ matrix.rid }}
           --self-contained true
+          -p:DbProviders=${{ matrix.flavor }}
           --output ./publish/${{ matrix.artifact }}
 
       - name: Package (tar.gz)

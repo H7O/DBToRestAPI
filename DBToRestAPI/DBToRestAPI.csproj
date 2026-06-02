@@ -10,6 +10,22 @@
   <InformationalVersion>1.3.1</InformationalVersion>
 </PropertyGroup>
 
+<!--
+  Database provider set. Default 'full' includes every supported provider.
+  Build a smaller engine (Microsoft SQL Server + SQLite only) with:
+      dotnet publish -p:DbProviders=lite
+  The lite flavor drops the heavy provider packages (Npgsql, MySQL, Oracle, DB2, ODBC, OleDb) and
+  switches to Workstation GC, which is friendlier on small / low-RAM hosts. Provider assemblies are
+  loaded lazily either way (see DbConnectionFactory), so unused providers never load into memory.
+-->
+<PropertyGroup>
+  <DbProviders Condition="'$(DbProviders)' == ''">full</DbProviders>
+</PropertyGroup>
+
+<PropertyGroup Condition="'$(DbProviders)' == 'lite'">
+  <ServerGarbageCollection>false</ServerGarbageCollection>
+</PropertyGroup>
+
 <!-- Allow test project to access internal types -->
 <ItemGroup>
   <InternalsVisibleTo Include="DBToRestAPI.Tests" />
@@ -29,19 +45,21 @@
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
     <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.4.0" />
-    <PackageReference Include="MySqlConnector" Version="2.5.0" />
-    <PackageReference Include="Npgsql" Version="10.0.2" />
-    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.100" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
-    <PackageReference Include="System.Data.Odbc" Version="10.0.5" />
-    <PackageReference Include="System.Data.OleDb" Version="10.0.5" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.5" />
+
+    <!-- Heavy/optional database providers — excluded from the 'lite' build (-p:DbProviders=lite) -->
+    <PackageReference Include="MySqlConnector" Version="2.5.0" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="Npgsql" Version="10.0.2" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.100" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="System.Data.Odbc" Version="10.0.5" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="System.Data.OleDb" Version="10.0.5" Condition="'$(DbProviders)' != 'lite'" />
 
     <!-- DB2 - Platform-specific (only the matching package is included in build output) -->
     <!-- ExcludeAssets prevents the package's .targets from adding TestConn files to the project -->
-    <PackageReference Include="Net.IBM.Data.Db2" Version="*" Condition="$([MSBuild]::IsOSPlatform('Windows'))" ExcludeAssets="build;buildTransitive" />
-    <PackageReference Include="Net.IBM.Data.Db2-lnx" Version="*" Condition="$([MSBuild]::IsOSPlatform('Linux'))" ExcludeAssets="build;buildTransitive" />
-    <PackageReference Include="Net.IBM.Data.Db2-osx" Version="*" Condition="$([MSBuild]::IsOSPlatform('OSX'))" ExcludeAssets="build;buildTransitive" />
+    <PackageReference Include="Net.IBM.Data.Db2" Version="*" Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" />
+    <PackageReference Include="Net.IBM.Data.Db2-lnx" Version="*" Condition="$([MSBuild]::IsOSPlatform('Linux')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" />
+    <PackageReference Include="Net.IBM.Data.Db2-osx" Version="*" Condition="$([MSBuild]::IsOSPlatform('OSX')) and '$(DbProviders)' != 'lite'" ExcludeAssets="build;buildTransitive" />
 
 
   </ItemGroup>
@@ -51,7 +69,7 @@
     The NuGet package places clidriver files in a versioned subfolder, but the runtime expects them 
     in the root 'clidriver' folder. This target copies files from the highest version and cleans up.
   -->
-  <Target Name="CopyDb2CliDriver" AfterTargets="Build">
+  <Target Name="CopyDb2CliDriver" AfterTargets="Build" Condition="'$(DbProviders)' != 'lite'">
     <!-- Windows -->
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
       <Db2PackagePath>$(NuGetPackageRoot)net.ibm.data.db2</Db2PackagePath>

@@ -23,68 +23,23 @@ public class DbConnectionFactory
 
     private static void RegisterAllProviders()
     {
-        DbProviderFactories.RegisterFactory(
-            "Microsoft.Data.SqlClient",
-            Microsoft.Data.SqlClient.SqlClientFactory.Instance);
-
-        DbProviderFactories.RegisterFactory(
-            "Npgsql",
-            Npgsql.NpgsqlFactory.Instance);
-
-        DbProviderFactories.RegisterFactory(
-            "MySqlConnector",
-            MySqlConnector.MySqlConnectorFactory.Instance);
-
-        DbProviderFactories.RegisterFactory(
-            "Microsoft.Data.Sqlite",
-            Microsoft.Data.Sqlite.SqliteFactory.Instance);
-
-        DbProviderFactories.RegisterFactory(
-            "Oracle.ManagedDataAccess.Core",
-            Oracle.ManagedDataAccess.Client.OracleClientFactory.Instance);
-
-        DbProviderFactories.RegisterFactory(
-            "System.Data.Odbc",
-            System.Data.Odbc.OdbcFactory.Instance);
-
-        RegisterOleDbProvider();
-
-        // DB2 - Register based on current OS (only one package is included per platform)
-        RegisterDb2Provider();
-
-    }
-
-    private static void RegisterDb2Provider()
-    {
-        try
-        {
-            // The IBM.Data.Db2 namespace and factory class name is the same across all platform packages
-            // Only one package will be present based on the build target OS
-            DbProviderFactories.RegisterFactory(
-                "Net.IBM.Data.Db2",
-                IBM.Data.Db2.DB2Factory.Instance);
-        }
-        catch
-        {
-            // DB2 provider not available on this platform or not included - that's OK
-            // Users who don't need DB2 won't have the package
-        }
-    }
-
-    private static void RegisterOleDbProvider()
-    {
-        try
-        {
-#pragma warning disable CA1416 // Platform compatibility - handled by try/catch
-            DbProviderFactories.RegisterFactory(
-                "System.Data.OleDb",
-                System.Data.OleDb.OleDbFactory.Instance);
-#pragma warning restore CA1416
-        }
-        catch
-        {
-            // OleDb provider not available on this platform (primarily Windows-only)
-        }
+        // Register providers LAZILY, by assembly-qualified factory type name. This string overload of
+        // RegisterFactory only records the name — the provider assembly is not loaded until the first
+        // GetFactory(...) call for that provider. So a deployment that uses only (say) SQLite never
+        // loads Oracle/DB2/Npgsql/MySQL/ODBC/OleDb into memory at all. (Passing Factory.Instance
+        // instead, as this code previously did, forced every provider assembly to load at startup.)
+        //
+        // In the "lite" build (dotnet publish -p:DbProviders=lite) the heavy provider packages are not
+        // shipped; the registrations below stay harmless because the assembly is only resolved when
+        // that provider is actually requested — and Create() then surfaces a clear error.
+        DbProviderFactories.RegisterFactory("Microsoft.Data.SqlClient", "Microsoft.Data.SqlClient.SqlClientFactory, Microsoft.Data.SqlClient");
+        DbProviderFactories.RegisterFactory("Microsoft.Data.Sqlite", "Microsoft.Data.Sqlite.SqliteFactory, Microsoft.Data.Sqlite");
+        DbProviderFactories.RegisterFactory("Npgsql", "Npgsql.NpgsqlFactory, Npgsql");
+        DbProviderFactories.RegisterFactory("MySqlConnector", "MySqlConnector.MySqlConnectorFactory, MySqlConnector");
+        DbProviderFactories.RegisterFactory("Oracle.ManagedDataAccess.Core", "Oracle.ManagedDataAccess.Client.OracleClientFactory, Oracle.ManagedDataAccess");
+        DbProviderFactories.RegisterFactory("System.Data.Odbc", "System.Data.Odbc.OdbcFactory, System.Data.Odbc");
+        DbProviderFactories.RegisterFactory("System.Data.OleDb", "System.Data.OleDb.OleDbFactory, System.Data.OleDb");
+        DbProviderFactories.RegisterFactory("Net.IBM.Data.Db2", "IBM.Data.Db2.DB2Factory, IBM.Data.Db2");
     }
 
 
@@ -105,7 +60,22 @@ public class DbConnectionFactory
                 ?? "Microsoft.Data.SqlClient";
         });
 
-        var factory = DbProviderFactories.GetFactory(provider);
+        DbProviderFactory factory;
+        try
+        {
+            factory = DbProviderFactories.GetFactory(provider);
+        }
+        catch (Exception ex)
+        {
+            // The provider assembly is resolved lazily on this first use. In a "lite" build only
+            // Microsoft.Data.SqlClient and Microsoft.Data.Sqlite are shipped, so any other provider's
+            // assembly is absent and fails to resolve here — surface a clear, actionable message.
+            throw new InvalidOperationException(
+                $"Database provider '{provider}' could not be loaded. If this is a 'lite' build, only "
+                + "'Microsoft.Data.SqlClient' and 'Microsoft.Data.Sqlite' are included — use the full "
+                + "build for other databases.", ex);
+        }
+
         var connection = factory.CreateConnection()
             ?? throw new InvalidOperationException($"Failed to create connection for provider '{provider}'");
 
