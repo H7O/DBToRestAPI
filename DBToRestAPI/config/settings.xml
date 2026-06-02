@@ -76,10 +76,16 @@
   </settings_encryption>  
   
   
-  <!-- passing the value in the below `debug_mode_header_value` 
+  <!-- passing the value in the below `debug_mode_header_value`
   as a value to header `debug-mode` in your HTTP request will enable debug mode
   allowing you to see the SQL query errors returned by the database server
   in your HTTP response.
+
+  This default (`54321`) is intentionally trivial — it is meant to be replaced. A real-looking
+  secret (e.g. a GUID) makes a worse default: it is public in this repo, so attackers check known
+  defaults, and "it looks complex" tempts developers to leave it in place (false confidence). A
+  silly value instead signals "placeholder — change me." In production, set a long secret you keep
+  private, or remove this tag entirely (debug mode is then fully off).
   -->
   <debug_mode_header_value>54321</debug_mode_header_value>
   
