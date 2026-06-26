@@ -4,7 +4,7 @@ Enterprise-grade authentication with Azure B2C, Google, Auth0, Okta, and any OID
 
 ## Features
 
-- Multi-provider support
+- Multi-provider support — define many providers, and allow **several per endpoint** (see [Multiple Providers Per Endpoint](#multiple-providers-per-endpoint))
 - Automatic token validation
 - Claims available in SQL as `{auth{claim}}`
 - Role and scope enforcement
@@ -76,6 +76,103 @@ Enterprise-grade authentication with Azure B2C, Google, Auth0, Okta, and any OID
 </protected_endpoint>
 ```
 
+## Multiple Providers Per Endpoint
+
+A single endpoint can accept tokens from **several** providers — ideal when your app offers
+"Log in with Google", "Log in with Microsoft", etc., all hitting the same API. List the allowed
+providers comma-separated in `<provider>`, or use `*` to accept any provider defined in
+`auth_providers.xml`:
+
+```xml
+<get_my_orders>
+  <authorize>
+    <!-- Accept tokens from any of these providers -->
+    <provider>google,azure_b2c,auth0</provider>
+  </authorize>
+  <query><![CDATA[ SELECT * FROM orders WHERE email = {auth{email}}; ]]></query>
+</get_my_orders>
+
+<!-- ...or accept any configured provider -->
+<open_endpoint>
+  <authorize>
+    <provider>*</provider>
+  </authorize>
+  <query>...</query>
+</open_endpoint>
+```
+
+A single value (e.g. `<provider>azure_b2c</provider>`) behaves exactly as before — this feature
+is fully backward compatible.
+
+### How a provider is selected
+
+When more than one provider is allowed, the engine selects **exactly one** to validate the token
+against, in this order:
+
+1. **Provider hint header** — if the client sends `X-Auth-Provider: google` (overridable, see
+   below) and `google` is in the allowed list, that provider is used. Your app already knows which
+   provider the user logged in with, so sending the hint is the most reliable option. A hint that
+   names a provider *not* allowed on the endpoint is rejected with `401`.
+2. **Token issuer (`iss`)** — otherwise the engine reads the token's issuer and matches it to the
+   allowed provider whose `<issuer>` (or `<authority>`) matches. If several allowed providers share
+   an issuer (e.g. two app registrations in one Azure tenant), the token's audience selects the
+   right one.
+3. **Reject** — if neither a hint nor a matching issuer identifies an allowed provider, the request
+   is rejected with `401`.
+
+> **Selection never weakens validation.** The hint and the issuer are used only to *choose* which
+> provider's settings to apply. The token is then **fully validated** (signature against that
+> provider's keys, issuer, audience, expiration) exactly as for a single-provider endpoint. A wrong
+> or forged hint/issuer can only cause a token to be *rejected* — never wrongly accepted.
+
+> **For the `iss` fallback to work**, each provider used in a multi-provider endpoint should have an
+> `<issuer>` equal to the token's `iss` — or, if you omit `<issuer>`, its `<authority>` must equal
+> the token's `iss` (true for providers like Google). Providers whose `iss` differs from their
+> `authority` (e.g. Azure B2C) should set `<issuer>` explicitly. If you always send the hint header,
+> the `iss` fallback isn't needed.
+
+### Customizing the hint header
+
+The default hint header is `X-Auth-Provider`. Override it per-endpoint or globally:
+
+```xml
+<!-- Per-endpoint (sql.xml) -->
+<authorize>
+  <provider>google,azure_b2c</provider>
+  <provider_hint_header>X-Login-With</provider_hint_header>
+</authorize>
+```
+
+```xml
+<!-- Global default (settings.xml) -->
+<authorize>
+  <provider_hint_header>X-Login-With</provider_hint_header>
+</authorize>
+```
+
+Resolution: endpoint `<provider_hint_header>` → global `authorize:provider_hint_header` → built-in
+default `X-Auth-Provider`.
+
+### Knowing which provider authenticated the user
+
+The resolved provider name is exposed to SQL as `{auth{auth_provider}}` — useful for partitioning
+users or applying provider-specific logic:
+
+```sql
+DECLARE @provider NVARCHAR(100) = {auth{auth_provider}};  -- e.g. 'google', 'azure_b2c'
+SELECT * FROM users WHERE email = {auth{email}} AND login_source = @provider;
+```
+
+> **Note:** route-level overrides of `authority`/`audience`/`issuer`/validation flags apply only to
+> single-provider endpoints. With multiple providers (or `*`), each provider uses its own config
+> block; `required_roles`/`required_scopes` remain enforced for the endpoint. Providers that
+> deliberately share an issuer should each set a distinct `<audience>` and keep
+> `validate_audience` on.
+
+> **Tokens must be JWTs.** Issuer-based routing reads the JWT `iss`. In a "Log in with X" flow, send
+> the **ID token** (a JWT); opaque access tokens (some Google/Facebook access tokens) can't be
+> routed by issuer.
+
 ## Accessing Claims
 
 Use `{auth{claim_name}}` syntax:
@@ -98,6 +195,7 @@ DECLARE @roles NVARCHAR(500) = {auth{roles}};
 | `family_name` | `{auth{family_name}}` | Last name |
 | `roles` | `{auth{roles}}` | Roles (pipe-delimited) |
 | `scope` | `{auth{scope}}` | Scopes |
+| `auth_provider` | `{auth{auth_provider}}` | Resolved provider name (e.g. `google`, `azure_b2c`) |
 
 ### Special Characters
 
@@ -233,6 +331,7 @@ Or simply remove the `<authorize>` section.
 | Missing Authorization header | 401 |
 | Invalid token format | 401 |
 | Token validation failed | 401 |
+| No allowed provider matched the token (multi-provider endpoint) | 401 |
 | Missing required scopes | 403 |
 | Missing required roles | 403 |
 

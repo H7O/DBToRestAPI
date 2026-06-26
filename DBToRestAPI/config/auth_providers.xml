@@ -14,6 +14,26 @@
       - Results are cached for performance
     -->
 
+    <!--
+      MULTIPLE PROVIDERS PER ENDPOINT
+      An endpoint's <authorize><provider> (in sql.xml) accepts a single provider name (default),
+      a comma-separated list (e.g. google,azure_b2c), or "*" for any provider defined below — so
+      one endpoint can serve "Log in with Google", "Log in with Microsoft", etc.
+
+      For multi-provider endpoints the engine selects ONE provider to validate the token against:
+        1. the X-Auth-Provider hint header (overridable per-endpoint via <provider_hint_header>,
+           or globally here via <provider_hint_header>), then
+        2. the token's issuer (iss) — matched against each provider's <issuer> below, or its
+           <authority> when <issuer> is omitted (so set <issuer> when iss differs from authority,
+           as with Azure B2C).
+      Selection only routes; the token is then fully validated against the chosen provider.
+      The resolved provider name is exposed to SQL as {auth{auth_provider}}.
+      See MULTI_PROVIDER_OIDC.md or docs/topics/12-authentication.md for details.
+    -->
+
+    <!-- Optional: override the default provider-hint header name (default: X-Auth-Provider). -->
+    <!-- <provider_hint_header>X-Auth-Provider</provider_hint_header> -->
+
     <providers>
 
       <!-- ========================================= -->

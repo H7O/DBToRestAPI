@@ -23,7 +23,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step. Call stored procedures, functions, CTEs — anything your database supports.
 - **8+ database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2, plus any ODBC or OleDb data source — with automatic provider detection. Named `{{parameter}}` syntax works even on positional-parameter databases (ODBC/OleDb).
 - **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
-- **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc.), and SQL injection protection via parameterised queries.
+- **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc. — with **multiple providers per endpoint** for "Log in with X" apps), and SQL injection protection via parameterised queries.
 - **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
 - **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML, with automatic rollback of uploaded files when the downstream request fails.
 - **Multi-query chaining** — Execute sequential queries across different databases in a single request.
@@ -254,7 +254,7 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | 06 | [XML Configuration Structure](docs/tutorial/06-xml-structure.md) | Config files, hot-reload, encryption, multi-file organization |
 | 07 | [Input Validation](docs/tutorial/07-regex-validation.md) | Mandatory parameters, SQL error codes, regex delimiters |
 | 08 | [API Key Protection](docs/tutorial/08-api-keys.md) | API key collections, protecting endpoints |
-| 09 | [JWT & OIDC Authentication](docs/tutorial/09-jwt-auth.md) | Providers, `{auth{email}}`, roles, database-driven authorization |
+| 09 | [JWT & OIDC Authentication](docs/tutorial/09-jwt-auth.md) | Providers, `{auth{email}}`, roles, database-driven authorization, multiple providers per endpoint |
 | 10 | [Using Claims in Queries](docs/tutorial/10-claims-in-queries.md) | Accessing JWT claims in SQL, auto-registration patterns |
 | 11 | [Caching](docs/tutorial/11-caching.md) | Memory cache for SQL endpoints and gateway routes |
 | 12 | [API Gateway](docs/tutorial/12-api-gateway.md) | Proxy routes, wildcards, protecting gateway routes |

@@ -53,7 +53,7 @@ Fetch only what you need:
 | File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Local/SFTP, multipart, base64 |
 | File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | Streaming from DB, local, SFTP, HTTP |
 | CORS | [11-cors.md](docs/topics/11-cors.md) | Pattern matching, credentials, preflight |
-| Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0 |
+| Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0, multiple providers per endpoint |
 | Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
@@ -170,9 +170,16 @@ Client sends: `x-api-key: secret-key-123`
 
 ### JWT Protected
 ```xml
+<!-- Single provider -->
 <authorize><provider>azure_b2c</provider></authorize>
+
+<!-- Multiple providers on one endpoint ("Log in with X"); or use * for any configured provider -->
+<authorize><provider>google,azure_b2c,auth0</provider></authorize>
 ```
-Access claims: `{auth{email}}`, `{auth{sub}}`, `{auth{roles}}`
+Access claims: `{auth{email}}`, `{auth{sub}}`, `{auth{roles}}`, `{auth{auth_provider}}`.
+For multi-provider endpoints the provider is selected by the `X-Auth-Provider` hint header
+(overridable), else by the token's `iss`. Selection only *routes* — the token is still fully
+validated (signature, issuer, audience, lifetime) against the chosen provider.
 
 ### Settings Variables in HTTP Calls
 ```xml

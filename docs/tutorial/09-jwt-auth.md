@@ -80,6 +80,46 @@ You can define as many providers as you need:
 
 Each endpoint can specify which provider to use.
 
+### Multiple Providers on One Endpoint
+
+Often an endpoint accepts just one provider — but if your app lets users choose how to sign in
+("Log in with Google", "Log in with Microsoft", …), a single endpoint can accept tokens from
+**several** providers. List them comma-separated, or use `*` for any provider you've defined:
+
+```xml
+<authorize>
+  <provider>google,azure_b2c,auth0</provider>   <!-- any of these -->
+</authorize>
+
+<authorize>
+  <provider>*</provider>                          <!-- any configured provider -->
+</authorize>
+```
+
+When more than one provider is allowed, the engine figures out which one issued the incoming
+token and validates against just that one, deciding in this order:
+
+1. **A hint header** — your app already knows which provider the user picked, so it can send
+   `X-Auth-Provider: google` and the engine uses that provider directly. (The header name is
+   overridable per-endpoint with `<provider_hint_header>`, or globally in `settings.xml`.)
+2. **The token's issuer** — with no hint, the engine reads the token's `iss` and matches it to
+   the allowed provider whose `<issuer>` (or `<authority>`) matches.
+3. Otherwise the request is rejected with `401`.
+
+The hint and issuer only *choose* which provider to check against — the token is then fully
+validated (signature, issuer, audience, expiry) just like a single-provider endpoint, so a wrong
+hint can never let a bad token through. Inside your SQL you can tell which provider authenticated
+the user via `{auth{auth_provider}}`:
+
+```sql
+declare @provider nvarchar(100) = {auth{auth_provider}};  -- e.g. 'google', 'azure_b2c'
+```
+
+> A single `<provider>name</provider>` keeps working exactly as before — multi-provider behavior
+> only kicks in when you list more than one (or `*`). See the
+> [Authentication reference](../topics/12-authentication.md#multiple-providers-per-endpoint) for
+> full details.
+
 ## Step 2: Protect an Endpoint
 
 Add the `<authorize>` block to any endpoint in `sql.xml`:

@@ -57,6 +57,11 @@ builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddSingleton<RouteConfigResolver>();
 
 builder.Services.AddSingleton<QueryRouteResolver>();
+
+// Indexes OIDC providers (issuer/audience) so an endpoint can allow multiple providers.
+// Consumed by Step4JwtAuthorization. See MULTI_PROVIDER_OIDC.md.
+builder.Services.AddSingleton<OidcProviderIndex>();
+
 builder.Services.AddSingleton<ParametersBuilder>();
 
 // Serves static content (web/ folder) as a fallback when no API route matches.

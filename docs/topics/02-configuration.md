@@ -149,7 +149,7 @@ On first run, unencrypted values become `encrypted:CfDJ8NhY2kB...`
 | `<count_query>` | No | None | Count query for pagination |
 | `<response_structure>` | No | `auto` | `single`, `array`, `auto`, or `file` |
 | `<api_keys_collections>` | No | None | Required API key collections |
-| `<authorize>` | No | None | JWT/OIDC configuration |
+| `<authorize>` | No | None | JWT/OIDC configuration. `<provider>` accepts one name, a comma-separated list, or `*` (see [Authentication](12-authentication.md#multiple-providers-per-endpoint)) |
 | `<cors>` | No | Global | Endpoint-specific CORS |
 | `<cache>` | No | None | Caching configuration |
 | `<file_management>` | No | None | File upload/download config |

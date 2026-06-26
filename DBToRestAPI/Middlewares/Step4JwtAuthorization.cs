@@ -19,7 +19,8 @@ namespace DBToRestAPI.Middlewares
         ILogger<Step4JwtAuthorization> logger,
         CacheService cacheService,
         IEncryptedConfiguration settingsEncryptionService,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        OidcProviderIndex providerIndex)
     {
         private readonly RequestDelegate _next = next;
         // private readonly IConfiguration _configuration = configuration;
@@ -27,7 +28,13 @@ namespace DBToRestAPI.Middlewares
         private readonly ILogger<Step4JwtAuthorization> _logger = logger;
         private readonly CacheService _cacheService = cacheService;
                 private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+        private readonly OidcProviderIndex _providerIndex = providerIndex;
         private static readonly string _errorCode = "Step 5 - JWT Authorization";
+
+        // Default HTTP header an app sends to hint which configured provider issued the token,
+        // consulted only for multi-provider endpoints. Overridable per-endpoint via
+        // <authorize><provider_hint_header> or globally via authorize:provider_hint_header.
+        private const string DefaultProviderHintHeader = "X-Auth-Provider";
 
         public async Task InvokeAsync(HttpContext context)
         {
@@ -86,117 +93,6 @@ namespace DBToRestAPI.Middlewares
             #endregion
 
 
-            #region Get provider configuration
-            var providerName = routeAuthorizeSection.GetValue<string>("provider");
-
-            IConfigurationSection? providerSection = null;
-            if (!string.IsNullOrWhiteSpace(providerName))
-            {
-                // Look for provider in oidc_providers configuration
-                providerSection = _configuration.GetSection($"authorize:providers:{providerName}");
-
-                if (!providerSection.Exists())
-                {
-                    _logger.LogError("Provider '{providerName}' not found in configuration for route `{route}`", providerName, route);
-                    await context.Response.DeferredWriteAsJsonAsync(
-                        new ObjectResult(
-                            new
-                            {
-                                success = false,
-                                message = $"Authorization provider configuration error. (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                            }
-                        )
-                        {
-                            StatusCode = 500
-                        }
-                    );
-                    return;
-                }
-            }
-            #endregion
-
-
-            #region Get JWT configuration (route > provider > global)
-            var authority = routeAuthorizeSection.GetValue<string>("authority")
-                            ?? providerSection?.GetValue<string>("authority");
-                            // global failover removed as it might be confusing for users to understand how to set it
-                            // ?? _configuration.GetValue<string>("authorize:authority");
-
-            var audience = routeAuthorizeSection.GetValue<string>("audience")
-                           ?? providerSection?.GetValue<string>("audience");
-                            // global failover removed as it might be confusing for users to understand how to set it
-                            //?? _configuration.GetValue<string>("authorize:audience");
-
-            var issuer = routeAuthorizeSection.GetValue<string>("issuer")
-                         ?? providerSection?.GetValue<string>("issuer")
-                            // global failover removed as it might be confusing for users to understand how to set it
-                            // ?? _configuration.GetValue<string>("authorize:issuer")
-                         ?? authority;
-
-            var validateIssuer = routeAuthorizeSection.GetValue<bool?>("validate_issuer")
-                                 ?? providerSection?.GetValue<bool?>("validate_issuer")
-                                 // global failover removed as it might be confusing for users to understand how to set it
-                                 // ?? _configuration.GetValue<bool?>("authorize:validate_issuer")
-                                 ?? true;
-
-            var validateAudience = routeAuthorizeSection.GetValue<bool?>("validate_audience")
-                                   ?? providerSection?.GetValue<bool?>("validate_audience")
-                                   // global failover removed as it might be confusing for users to understand how to set it
-                                   // ?? _configuration.GetValue<bool?>("authorize:validate_audience")
-                                   ?? true;
-
-            var validateLifetime = routeAuthorizeSection.GetValue<bool?>("validate_lifetime")
-                                   ?? providerSection?.GetValue<bool?>("validate_lifetime")
-                                   // global failover removed as it might be confusing for users to understand how to set it
-                                   // ?? _configuration.GetValue<bool?>("authorize:validate_lifetime")
-                                   ?? true;
-
-            var clockSkewSeconds = routeAuthorizeSection.GetValue<int?>("clock_skew_seconds")
-                                   ?? providerSection?.GetValue<int?>("clock_skew_seconds")
-                                   // global failover removed as it might be confusing for users to understand how to set it
-                                   // ?? _configuration.GetValue<int?>("authorize:clock_skew_seconds")
-                                   ?? 300;
-
-            // Get UserInfo fallback configuration
-            var userInfoFallbackClaims = routeAuthorizeSection.GetValue<string>("userinfo_fallback_claims")
-                                         ?? providerSection?.GetValue<string>("userinfo_fallback_claims")
-                                         // global failover removed as it might be confusing for users to understand how to set it
-                                         // ?? _configuration.GetValue<string>("authorize:userinfo_fallback_claims")
-                                         ?? "email,name,given_name,family_name";
-
-            var userInfoCacheDuration = routeAuthorizeSection.GetValue<int?>("userinfo_cache_duration_seconds")
-                                        ?? providerSection?.GetValue<int?>("userinfo_cache_duration_seconds");
-                                        // global failover removed as it might be confusing for users to understand how to set it
-                                        // ?? _configuration.GetValue<int?>("authorize:userinfo_cache_duration_seconds");
-            // Note: If null, cache will default to token expiration time
-
-            var userInfoTimeoutSeconds = routeAuthorizeSection.GetValue<int?>("userinfo_timeout_seconds")
-                                         ?? providerSection?.GetValue<int?>("userinfo_timeout_seconds")
-                                         ?? _configuration.GetValue<int?>("authorize:userinfo_timeout_seconds")
-                                         ?? _configuration.GetValue<int?>("userinfo_timeout_seconds")
-                                         ?? 30;
-            if (userInfoTimeoutSeconds < 1)
-                userInfoTimeoutSeconds = 30;
-
-            if (string.IsNullOrWhiteSpace(authority))
-            {
-                _logger.LogError("JWT authority not configured for route `{route}", route);
-                await context.Response.DeferredWriteAsJsonAsync(
-                    new ObjectResult(
-                        new
-                        {
-                            success = false,
-                            message = $"Authorization configuration error. (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                        }
-                    )
-                    {
-                        StatusCode = 500
-                    }
-                );
-                return;
-            }
-            #endregion
-
             #region Extract Bearer token
             if (!context.Request.Headers.TryGetValue("Authorization", out var authHeader)
                 || string.IsNullOrWhiteSpace(authHeader.ToString()))
@@ -250,6 +146,164 @@ namespace DBToRestAPI.Middlewares
                     )
                     {
                         StatusCode = 401
+                    }
+                );
+                return;
+            }
+            #endregion
+
+
+            #region Resolve OIDC provider (single, or multi via hint -> issuer)
+            // <provider> may be a single name (today's behavior), a comma-separated allow-list,
+            // or "*" meaning any provider configured in auth_providers.xml. For multi-provider
+            // endpoints we must select exactly one provider to validate against — see
+            // MULTI_PROVIDER_OIDC.md for the design and security rationale.
+            var allowedProviders = _providerIndex.ExpandAllowedProviders(
+                routeAuthorizeSection.GetValue<string>("provider"));
+
+            // With more than one allowed provider, route-level overrides of authority/audience/
+            // issuer/etc. are ambiguous and intentionally ignored; each provider uses its own block.
+            var isMultiProvider = allowedProviders.Count > 1;
+
+            string? providerName;
+            if (!isMultiProvider)
+            {
+                // 0 allowed -> inline/no-provider mode (providerName stays null, route-level config used)
+                // 1 allowed -> today's behavior, unchanged
+                providerName = allowedProviders.Count == 1 ? allowedProviders[0] : null;
+            }
+            else
+            {
+                providerName = await ResolveProviderForTokenAsync(
+                    context, routeAuthorizeSection, allowedProviders, accessToken, route);
+
+                if (providerName == null)
+                {
+                    // No allowed provider could be matched to this token (no/unaccepted hint and the
+                    // token issuer matched none of the allowed providers). Treat as an invalid token.
+                    await context.Response.DeferredWriteAsJsonAsync(
+                        new ObjectResult(
+                            new
+                            {
+                                success = false,
+                                message = "Invalid token"
+                            }
+                        )
+                        {
+                            StatusCode = 401
+                        }
+                    );
+                    return;
+                }
+            }
+
+            IConfigurationSection? providerSection = null;
+            if (!string.IsNullOrWhiteSpace(providerName))
+            {
+                // Look for provider in oidc_providers configuration
+                providerSection = _configuration.GetSection($"authorize:providers:{providerName}");
+
+                if (!providerSection.Exists())
+                {
+                    _logger.LogError("Provider '{providerName}' not found in configuration for route `{route}`", providerName, route);
+                    await context.Response.DeferredWriteAsJsonAsync(
+                        new ObjectResult(
+                            new
+                            {
+                                success = false,
+                                message = $"Authorization provider configuration error. (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                            }
+                        )
+                        {
+                            StatusCode = 500
+                        }
+                    );
+                    return;
+                }
+            }
+
+            // Route-level overrides apply only in single-provider mode (see comment above).
+            IConfigurationSection? routeOverrides = isMultiProvider ? null : routeAuthorizeSection;
+            #endregion
+
+
+            #region Get JWT configuration (route > provider > global)
+            // NOTE: `routeOverrides` is the route-level <authorize> section in single-provider mode,
+            // and null in multi-provider mode (so each selected provider uses its own config block).
+            var authority = routeOverrides?.GetValue<string>("authority")
+                            ?? providerSection?.GetValue<string>("authority");
+                            // global failover removed as it might be confusing for users to understand how to set it
+                            // ?? _configuration.GetValue<string>("authorize:authority");
+
+            var audience = routeOverrides?.GetValue<string>("audience")
+                           ?? providerSection?.GetValue<string>("audience");
+                            // global failover removed as it might be confusing for users to understand how to set it
+                            //?? _configuration.GetValue<string>("authorize:audience");
+
+            var issuer = routeOverrides?.GetValue<string>("issuer")
+                         ?? providerSection?.GetValue<string>("issuer")
+                            // global failover removed as it might be confusing for users to understand how to set it
+                            // ?? _configuration.GetValue<string>("authorize:issuer")
+                         ?? authority;
+
+            var validateIssuer = routeOverrides?.GetValue<bool?>("validate_issuer")
+                                 ?? providerSection?.GetValue<bool?>("validate_issuer")
+                                 // global failover removed as it might be confusing for users to understand how to set it
+                                 // ?? _configuration.GetValue<bool?>("authorize:validate_issuer")
+                                 ?? true;
+
+            var validateAudience = routeOverrides?.GetValue<bool?>("validate_audience")
+                                   ?? providerSection?.GetValue<bool?>("validate_audience")
+                                   // global failover removed as it might be confusing for users to understand how to set it
+                                   // ?? _configuration.GetValue<bool?>("authorize:validate_audience")
+                                   ?? true;
+
+            var validateLifetime = routeOverrides?.GetValue<bool?>("validate_lifetime")
+                                   ?? providerSection?.GetValue<bool?>("validate_lifetime")
+                                   // global failover removed as it might be confusing for users to understand how to set it
+                                   // ?? _configuration.GetValue<bool?>("authorize:validate_lifetime")
+                                   ?? true;
+
+            var clockSkewSeconds = routeOverrides?.GetValue<int?>("clock_skew_seconds")
+                                   ?? providerSection?.GetValue<int?>("clock_skew_seconds")
+                                   // global failover removed as it might be confusing for users to understand how to set it
+                                   // ?? _configuration.GetValue<int?>("authorize:clock_skew_seconds")
+                                   ?? 300;
+
+            // Get UserInfo fallback configuration
+            var userInfoFallbackClaims = routeOverrides?.GetValue<string>("userinfo_fallback_claims")
+                                         ?? providerSection?.GetValue<string>("userinfo_fallback_claims")
+                                         // global failover removed as it might be confusing for users to understand how to set it
+                                         // ?? _configuration.GetValue<string>("authorize:userinfo_fallback_claims")
+                                         ?? "email,name,given_name,family_name";
+
+            var userInfoCacheDuration = routeOverrides?.GetValue<int?>("userinfo_cache_duration_seconds")
+                                        ?? providerSection?.GetValue<int?>("userinfo_cache_duration_seconds");
+                                        // global failover removed as it might be confusing for users to understand how to set it
+                                        // ?? _configuration.GetValue<int?>("authorize:userinfo_cache_duration_seconds");
+            // Note: If null, cache will default to token expiration time
+
+            var userInfoTimeoutSeconds = routeOverrides?.GetValue<int?>("userinfo_timeout_seconds")
+                                         ?? providerSection?.GetValue<int?>("userinfo_timeout_seconds")
+                                         ?? _configuration.GetValue<int?>("authorize:userinfo_timeout_seconds")
+                                         ?? _configuration.GetValue<int?>("userinfo_timeout_seconds")
+                                         ?? 30;
+            if (userInfoTimeoutSeconds < 1)
+                userInfoTimeoutSeconds = 30;
+
+            if (string.IsNullOrWhiteSpace(authority))
+            {
+                _logger.LogError("JWT authority not configured for route `{route}", route);
+                await context.Response.DeferredWriteAsJsonAsync(
+                    new ObjectResult(
+                        new
+                        {
+                            success = false,
+                            message = $"Authorization configuration error. (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                        }
+                    )
+                    {
+                        StatusCode = 500
                     }
                 );
                 return;
@@ -497,6 +551,12 @@ namespace DBToRestAPI.Middlewares
                     claimsDict[claim.Type] = claim.Value;
             }
 
+            // Expose the resolved provider (the auth_providers.xml key, e.g. "google", "azure_b2c")
+            // to SQL via {auth{auth_provider}}. Set AFTER copying token claims so the engine-resolved
+            // value is authoritative even if a token happens to carry an "auth_provider" claim.
+            if (!string.IsNullOrWhiteSpace(providerName))
+                claimsDict["auth_provider"] = providerName;
+
             context.Items["user_claims"] = claimsDict;
 
             _logger.LogDebug("User context set successfully. UserId: {userId}, Email: {email}",
@@ -684,6 +744,85 @@ namespace DBToRestAPI.Middlewares
                     return claims;
                 },
                 cancellationToken);
+        }
+
+
+        /// <summary>
+        /// Resolves a token to exactly one of the endpoint's allowed providers, for endpoints that
+        /// permit MORE THAN ONE provider. Selection order (see MULTI_PROVIDER_OIDC.md):
+        ///   1. The provider-hint header (default "X-Auth-Provider", overridable) when present and it
+        ///      names an allowed provider. A present-but-not-allowed hint fails fast (returns null).
+        ///   2. Otherwise the token's UNVALIDATED issuer (disambiguated by audience when several
+        ///      allowed providers share an issuer).
+        /// Returns null when no allowed provider can be determined (the caller then responds 401).
+        ///
+        /// The hint/issuer only SELECT a provider; trust still comes entirely from the subsequent
+        /// cryptographic validation, so a wrong hint or a forged issuer can only cause a rejection.
+        /// </summary>
+        private Task<string?> ResolveProviderForTokenAsync(
+            HttpContext context,
+            IConfigurationSection routeAuthorizeSection,
+            IReadOnlyList<string> allowedProviders,
+            string accessToken,
+            string? route)
+        {
+            // 1) Client hint header (endpoint override > global setting > built-in default)
+            var hintHeaderName = routeAuthorizeSection.GetValue<string>("provider_hint_header")
+                                 ?? _configuration.GetValue<string>("authorize:provider_hint_header")
+                                 ?? DefaultProviderHintHeader;
+
+            if (context.Request.Headers.TryGetValue(hintHeaderName, out var hintValues))
+            {
+                var hint = hintValues.ToString().Trim();
+                if (!string.IsNullOrWhiteSpace(hint))
+                {
+                    var hinted = allowedProviders.FirstOrDefault(
+                        p => string.Equals(p, hint, StringComparison.OrdinalIgnoreCase));
+                    if (hinted != null)
+                        return Task.FromResult<string?>(hinted);
+
+                    // Hint present but not allowed on this endpoint -> fail fast (clear client/config error).
+                    // To prefer leniency, remove this block and let resolution fall through to the issuer.
+                    _logger.LogWarning(
+                        "Provider hint '{hint}' (header '{header}') is not allowed for route `{route}`",
+                        hint, hintHeaderName, route);
+                    return Task.FromResult<string?>(null);
+                }
+            }
+
+            // 2) Issuer (iss) fallback — read UNVALIDATED, used only to select a provider.
+            var jwt = TryReadJwt(accessToken);
+            if (jwt == null || string.IsNullOrWhiteSpace(jwt.Issuer))
+            {
+                _logger.LogDebug(
+                    "No provider hint and token issuer is unreadable for route `{route}`; cannot select a provider", route);
+                return Task.FromResult<string?>(null);
+            }
+
+            var resolved = _providerIndex.ResolveProviderByIssuer(jwt.Issuer, jwt.Audiences, allowedProviders);
+            if (resolved == null)
+                _logger.LogDebug(
+                    "Token issuer '{iss}' did not resolve to a single allowed provider for route `{route}` " +
+                    "(send the '{header}' hint header to disambiguate)", jwt.Issuer, route, hintHeaderName);
+
+            return Task.FromResult<string?>(resolved);
+        }
+
+        /// <summary>
+        /// Reads a JWT WITHOUT validating it, to extract routing hints (issuer/audience) before the
+        /// full validation runs. Returns null for non-JWT (e.g. opaque) tokens.
+        /// </summary>
+        private static JwtSecurityToken? TryReadJwt(string accessToken)
+        {
+            try
+            {
+                var handler = new JwtSecurityTokenHandler();
+                return handler.CanReadToken(accessToken) ? handler.ReadJwtToken(accessToken) : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
 
