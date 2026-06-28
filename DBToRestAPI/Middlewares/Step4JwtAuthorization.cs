@@ -317,6 +317,32 @@ namespace DBToRestAPI.Middlewares
             OpenIdConnectConfiguration? discoveryDocument;
             try
             {
+                var tokenHandler = new JwtSecurityTokenHandler();
+
+                // A bearer that isn't a readable JWT (e.g. wrong segment count) is a client error, not a
+                // server error — and we can tell without contacting the provider. Reject it as 401 up front
+                // so the provider-hint path matches the issuer-fallback path (which already screens
+                // unreadable tokens via TryReadJwt/CanReadToken) and the documented contract, and so we skip
+                // the discovery fetch for junk input. Otherwise ValidateToken throws ArgumentException
+                // (IDX12741) — not a SecurityTokenException — which would fall through to the generic 500.
+                if (!tokenHandler.CanReadToken(accessToken))
+                {
+                    _logger.LogDebug("Bearer is not a readable JWT; rejecting as invalid token");
+                    await context.Response.DeferredWriteAsJsonAsync(
+                        new ObjectResult(
+                            new
+                            {
+                                success = false,
+                                message = "Invalid token"
+                            }
+                        )
+                        {
+                            StatusCode = 401
+                        }
+                    );
+                    return;
+                }
+
                 // Get or fetch discovery document (with caching)
                 discoveryDocument = await GetDiscoveryDocumentAsync(authority, context.RequestAborted);
 
@@ -344,7 +370,6 @@ namespace DBToRestAPI.Middlewares
                     ClockSkew = TimeSpan.FromSeconds(clockSkewSeconds)
                 };
 
-                var tokenHandler = new JwtSecurityTokenHandler();
                 principal = tokenHandler.ValidateToken(accessToken, validationParameters, out validatedToken);
 
                 _logger.LogDebug("Access token validation successful");
