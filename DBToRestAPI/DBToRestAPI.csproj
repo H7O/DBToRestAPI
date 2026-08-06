@@ -38,22 +38,28 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="Com.H" Version="10.1.0" />
-    <PackageReference Include="Com.H.Data.Common" Version="10.1.0.7" />
+    <PackageReference Include="Com.H" Version="10.2.0" />
+    <PackageReference Include="Com.H.Data.Common" Version="10.1.0.9" />
     <PackageReference Include="Com.H.Net.Ssh" Version="10.0.0.1" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.8" />
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.1" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.6.0" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.1" />
-    <PackageReference Include="System.IO.Hashing" Version="10.0.8" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <!-- Force the patched SourceGear-based native SQLite build. Microsoft.Data.Sqlite still floors the
+         SQLitePCLRaw bundle at 2.1.11, which pulls the deprecated + vulnerable SQLitePCLRaw.lib.e_sqlite3
+         (CVE-2025-6965 / GHSA-2m69-gcr7-jv3q). Bundle 3.x drops lib.e_sqlite3 in favor of
+         SourceGear.sqlite3 (SQLite 3.50.4, past the fix line). A direct (top-level) reference overrides
+         the transitive resolution; applies to both full and lite builds. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.8.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.10" />
 
     <!-- Heavy/optional database providers — excluded from the 'lite' build (-p:DbProviders=lite) -->
-    <PackageReference Include="MySqlConnector" Version="2.5.0" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="MySqlConnector" Version="2.6.1" Condition="'$(DbProviders)' != 'lite'" />
     <PackageReference Include="Npgsql" Version="10.0.3" Condition="'$(DbProviders)' != 'lite'" />
-    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.200" Condition="'$(DbProviders)' != 'lite'" />
-    <PackageReference Include="System.Data.Odbc" Version="10.0.8" Condition="'$(DbProviders)' != 'lite'" />
-    <PackageReference Include="System.Data.OleDb" Version="10.0.8" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.300" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="System.Data.Odbc" Version="10.0.10" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="System.Data.OleDb" Version="10.0.10" Condition="'$(DbProviders)' != 'lite'" />
 
     <!-- DB2 - Platform-specific (only the matching package is included in build output) -->
     <!-- ExcludeAssets prevents the package's .targets from adding TestConn files to the project -->
@@ -110,8 +116,7 @@
       <_Db2PkgFolder Include="$(NuGetPackageFolders)" />
       <_Db2PkgFolder Include="$(NuGetPackageRoot)" Condition="'$(NuGetPackageRoot)' != ''" />
       <_Db2PkgBaseCandidate Include="@(_Db2PkgFolder->'%(Identity)$(_Db2PkgId)')" />
-      <_Db2VersionDir Include="$([System.IO.Directory]::GetDirectories('%(_Db2PkgBaseCandidate.Identity)'))"
-                      Condition="$([System.IO.Directory]::Exists('%(_Db2PkgBaseCandidate.Identity)'))" />
+      <_Db2VersionDir Include="$([System.IO.Directory]::GetDirectories('%(_Db2PkgBaseCandidate.Identity)'))" Condition="$([System.IO.Directory]::Exists('%(_Db2PkgBaseCandidate.Identity)'))" />
     </ItemGroup>
     <PropertyGroup>
       <_Db2VersionDir>@(_Db2VersionDir)</_Db2VersionDir>
@@ -119,12 +124,9 @@
     <ItemGroup>
       <_Db2ClidriverFiles Include="$(_Db2VersionDir)/buildTransitive/clidriver/**/*" Condition="'$(_Db2VersionDir)' != ''" />
     </ItemGroup>
-    <Message Importance="high" Text="DB2: versionDir='$(_Db2VersionDir)' -> copying clidriver to '$(OutputPath)clidriver'" />
+    <Message Importance="high" Text="DB2: versionDir='$(_Db2VersionDir)' -&gt; copying clidriver to '$(OutputPath)clidriver'" />
     <Warning Condition="'@(_Db2ClidriverFiles)' == ''" Text="DB2: no clidriver files found (candidates='@(_Db2PkgBaseCandidate)') — the DB2 native driver will be MISSING." />
-    <Copy Condition="'@(_Db2ClidriverFiles)' != ''"
-          SourceFiles="@(_Db2ClidriverFiles)"
-          DestinationFiles="@(_Db2ClidriverFiles->'$(OutputPath)clidriver/%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Copy Condition="'@(_Db2ClidriverFiles)' != ''" SourceFiles="@(_Db2ClidriverFiles)" DestinationFiles="@(_Db2ClidriverFiles->'$(OutputPath)clidriver/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
   <!--
@@ -139,10 +141,7 @@
       <_Db2PublishCliDriver Include="$(OutputPath)clidriver\**\*" />
     </ItemGroup>
     <Message Importance="high" Condition="'@(_Db2PublishCliDriver)' != ''" Text="Copying DB2 CLI driver into publish output: $(PublishDir)clidriver\" />
-    <Copy Condition="'@(_Db2PublishCliDriver)' != ''"
-          SourceFiles="@(_Db2PublishCliDriver)"
-          DestinationFiles="@(_Db2PublishCliDriver->'$(PublishDir)clidriver\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Copy Condition="'@(_Db2PublishCliDriver)' != ''" SourceFiles="@(_Db2PublishCliDriver)" DestinationFiles="@(_Db2PublishCliDriver->'$(PublishDir)clidriver\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
   <ItemGroup>
