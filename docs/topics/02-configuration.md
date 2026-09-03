@@ -74,6 +74,23 @@ All configuration files support hot-reload — changes apply without restart.
 </settings>
 ```
 
+### Rate Limiting
+
+A global default for every endpoint. Endpoints override single tags or opt out with
+`<enabled>false</enabled>`; no block anywhere means no limit.
+
+```xml
+<settings>
+  <rate_limit>
+    <max_requests>120</max_requests>
+    <window_seconds>60</window_seconds>
+    <per>caller</per>
+  </rate_limit>
+</settings>
+```
+
+See [Rate Limiting](18-rate-limiting.md) for per-endpoint overrides, who a "caller" is, and the
+reverse-proxy client-IP settings.
 ### Settings Encryption
 
 ```xml
@@ -153,6 +170,7 @@ On first run, unencrypted values become `encrypted:CfDJ8NhY2kB...`
 | `<cors>` | No | Global | Endpoint-specific CORS |
 | `<cache>` | No | None | Caching configuration |
 | `<file_management>` | No | None | File upload/download config |
+| `<rate_limit>` | No | Global | Per-endpoint request limit: `<max_requests>`, `<window_seconds>`, `<per>`, `<enabled>`, `<message>`. Each tag falls back to the global block in settings.xml (see [Rate Limiting](18-rate-limiting.md)) |
 
 ### Host-Based Routing
 
@@ -376,3 +394,4 @@ deployment-specific examples.
 - [API Keys](06-api-keys.md) - Key collection setup
 - [Authentication](12-authentication.md) - OIDC provider configuration
 - [Encryption](15-encryption.md) - Settings encryption details
+- [Rate Limiting](18-rate-limiting.md) - Global default and per-endpoint request limits

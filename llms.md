@@ -59,6 +59,7 @@ Fetch only what you need:
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
 | Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, full request schema, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, `query` field for caller-supplied values, automatic JSON escaping of substituted values, microservice calls from SQL |
+| Rate Limiting | [18-rate-limiting.md](docs/topics/18-rate-limiting.md) | Per-endpoint `<rate_limit>` (max_requests, window_seconds, per=caller/ip/endpoint, enabled, message) with a global default under `<settings>`; 429 + Retry-After; counted per user, API key or client IP; runs after auth and before any database work; client_ip_header for reverse proxies; hot-reload; never a 500 from a config typo |
 | Webhooks | [19-webhooks.md](docs/topics/19-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
 | OpenAPI / Swagger | [20-openapi.md](docs/topics/20-openapi.md) | Auto-generated OpenAPI 3.0 spec at /openapi.json, built-in Swagger UI at /swagger, secure by default (opt-in), per-endpoint or global, enrichment tags (summary, description, tags, response_schema), hot-reload |
 | Settings Variables | [21-settings-vars.md](docs/topics/21-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
@@ -133,6 +134,7 @@ Error codes 50000-51000 map to HTTP 0-1000.
 | `<file_management>` | File upload/download config |
 | `<response_structure>` | `single`, `array`, `auto`, or `file` |
 | `<openapi>` | Per-endpoint OpenAPI enrichment: `<enabled>`, `<summary>`, `<description>`, `<tags>`, `<response_schema>` |
+| `<rate_limit>` | Per-endpoint request limit: `<max_requests>`, `<window_seconds>`, `<per>`, `<enabled>`, `<message>`; global default under `<settings>` |
 
 ## Configuration Files
 
@@ -244,6 +246,24 @@ See [19-webhooks.md](docs/topics/19-webhooks.md) for complete configuration refe
 ```
 Served as a fallback only when no API gateway/db_query route matches (API-first). Public — served before API-key/JWT checks. Point `root_path` at a dedicated folder; the engine refuses the app base dir, `./config`, or the encryption key path, and blocks `../` traversal.
 
+### Rate-Limited Endpoint
+```xml
+<!-- settings.xml: default for every endpoint, per caller -->
+<rate_limit>
+  <max_requests>120</max_requests>
+  <window_seconds>60</window_seconds>
+</rate_limit>
+
+<!-- sql.xml: tighter on an endpoint with a side effect; <enabled>false</enabled> opts one out -->
+<create_user>
+  <route>users</route>
+  <verb>POST</verb>
+  <authorize><provider>my_provider</provider></authorize>
+  <rate_limit><max_requests>30</max_requests></rate_limit>
+  <query><![CDATA[ ... ]]></query>
+</create_user>
+```
+Checked after auth, before any database work. Over the limit: `429` + `Retry-After` + `{ success, message, retry_after_seconds }`. Caller = authenticated user, else validated API key, else client IP (set `client_ip_header` behind a locked-down reverse proxy). Opt out health probes and endpoints the engine calls on itself with a shared key. See [18-rate-limiting.md](docs/topics/18-rate-limiting.md).
 ### Stored Procedure Call
 ```xml
 <query><![CDATA[ EXEC dbo.GetContacts @status = {{status}}; ]]></query>

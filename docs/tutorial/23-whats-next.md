@@ -33,6 +33,7 @@ feature.  Use them when you need quick lookups:
 | Error Handling | [docs/topics/15-error-handling.md](../topics/15-error-handling.md) |
 | Debug Mode | [docs/topics/16-debug-mode.md](../topics/16-debug-mode.md) |
 | Embedded HTTP Calls | [docs/topics/17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) |
+| Rate Limiting | [docs/topics/18-rate-limiting.md](../topics/18-rate-limiting.md) |
 | OpenAPI / Swagger | [docs/topics/20-openapi.md](../topics/20-openapi.md) |
 | Settings Variables | [docs/topics/21-settings-vars.md](../topics/21-settings-vars.md) |
 
@@ -113,7 +114,7 @@ Here is the full learning path you completed:
 | 18 | [Webhooks](18-webhooks.md) | Two-endpoint webhook pattern, `no_wait` |
 | 19 | [Settings Variables](19-settings-vars.md) | `{s{}}`, `<vars>` config, encrypted secrets |
 | 20 | [OpenAPI & Swagger UI](20-openapi.md) | Auto-generated spec, Swagger UI, enrichment |
-| 21 | [Production Tips](21-production.md) | Security, encryption, deployment checklist |
+| 21 | [Production Tips](21-production.md) | Security, encryption, rate limiting, deployment checklist |
 | 22 | [Static Files](22-static-files.md) | Serve a web UI / SPA as an API-first fallback |
 | 23 | What's Next? | ← You are here |
 

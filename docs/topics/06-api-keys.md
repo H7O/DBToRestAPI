@@ -226,4 +226,5 @@ Use both API keys and JWT authentication:
 
 - [Authentication](12-authentication.md) - JWT/OIDC authentication
 - [API Gateway](08-api-gateway.md) - Protecting proxy routes
+- [Rate Limiting](18-rate-limiting.md) - Every request behind one key shares one allowance
 - [Configuration](02-configuration.md) - api_keys.xml details

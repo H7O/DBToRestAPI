@@ -90,7 +90,7 @@ Each topic builds on the previous one. Follow them in order for the best learnin
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
 | 20 | [OpenAPI & Swagger UI](20-openapi.md) | Auto-generated spec, Swagger UI, enrichment tags, selective exposure |
-| 21 | [Production & Deployment](21-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 21 | [Production & Deployment](21-production.md) | Environment config, TLS, rate limiting, Docker, reverse proxy |
 | 22 | [Static Files](22-static-files.md) | Serve a web UI / SPA as an API-first fallback, traversal protection, SPA mode |
 | 23 | [What's Next?](23-whats-next.md) | Further resources and community |
 
@@ -117,6 +117,7 @@ For quick lookups and comprehensive details on any feature, see the [reference t
 - [15-encryption.md](../topics/15-encryption.md) — Encryption reference
 - [16-tls-certificates.md](../topics/16-tls-certificates.md) — TLS/HTTPS setup
 - [17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) — HTTP calls reference
+- [18-rate-limiting.md](../topics/18-rate-limiting.md) — Rate limiting reference
 - [20-openapi.md](../topics/20-openapi.md) — OpenAPI spec & Swagger UI reference
 - [21-settings-vars.md](../topics/21-settings-vars.md) — Settings variables reference
 - [22-static-files.md](../topics/22-static-files.md) — Static file serving reference

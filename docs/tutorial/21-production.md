@@ -181,7 +181,62 @@ your server.
 
 ---
 
-## 8. Separate Configuration Files
+## 8. Rate Limit Your Endpoints
+
+Authentication says *who* may call an endpoint; it says nothing about *how often*. A logged-in
+user with a burst tool can fire hundreds of requests a second at a `POST` that sends e-mail or
+calls a metered third-party API, and every one of them is processed. Add a global limit, then
+give the endpoints that matter their own:
+
+```xml
+<!-- settings.xml: the default for every endpoint, counted per caller -->
+<rate_limit>
+  <max_requests>120</max_requests>
+  <window_seconds>60</window_seconds>
+</rate_limit>
+```
+
+```xml
+<!-- contacts.xml: tighter where a request has an expensive side effect -->
+<create_contact>
+  <route>contacts</route>
+  <verb>POST</verb>
+  <authorize><provider>my_provider</provider></authorize>
+  <rate_limit><max_requests>30</max_requests></rate_limit>
+  <query><![CDATA[ ... ]]></query>
+</create_contact>
+
+<!-- opted out: the load balancer probes this from a handful of addresses -->
+<health>
+  <route>health</route>
+  <rate_limit><enabled>false</enabled></rate_limit>
+  <query><![CDATA[ SELECT 1 AS ok; ]]></query>
+</health>
+```
+
+The limit is checked after authentication and **before any database work**. The caller is the
+authenticated user, else the validated API key, else the client IP. A caller over the limit gets
+`429 Too Many Requests` with a `Retry-After` header and the usual `{ success, message }` body.
+
+Three things to get right:
+
+- **Behind a reverse proxy, tell the engine which header carries the client IP**
+  (`<client_ip_header>` in the global block), and only once nothing but that proxy can reach the
+  engine. Without it every anonymous caller shares the proxy's address; set wrongly, the header
+  is client-controlled.
+- **Opt out health probes and internal hops.** An endpoint the engine calls on itself with one
+  shared API key would otherwise give every user one combined allowance.
+- **Size from a measurement over the window**, about twice the busiest legitimate endpoint, and
+  watch the once-a-minute rejection summaries in the log before tightening.
+
+Limits are per process: two instances behind a load balancer each allow the full number. See the
+[Rate Limiting reference](../topics/18-rate-limiting.md) for how settings resolve, what a config
+typo does (the endpoint stays open and a warning is logged, never a 500), and hot-reload
+behaviour.
+
+---
+
+## 9. Separate Configuration Files
 
 Keep your config files organized and avoid a single monolithic `sql.xml`:
 
@@ -211,7 +266,7 @@ enable:
 
 ---
 
-## 9. Caching Strategy
+## 10. Caching Strategy
 
 For production traffic, add caching to read-heavy endpoints
 (see [Tutorial 11 — Caching](11-caching.md)):
@@ -238,7 +293,7 @@ Avoid caching:
 
 ---
 
-## 10. Logging and Monitoring
+## 11. Logging and Monitoring
 
 Configure ASP.NET Core logging levels in `appsettings.Production.json`:
 
@@ -259,7 +314,7 @@ alerting and troubleshooting.
 
 ---
 
-## 11. Environment Variable Overrides
+## 12. Environment Variable Overrides
 
 Every XML or JSON setting can be overridden by an environment variable — no config
 file changes needed.  This is the standard way to configure applications on cloud
@@ -336,7 +391,7 @@ appsettings.json → appsettings.{Environment}.json → settings.xml → additio
 
 ---
 
-## 12. Hosting Options
+## 13. Hosting Options
 
 DBToRestAPI is a standard ASP.NET Core application.  Common hosting patterns:
 
@@ -395,6 +450,7 @@ Use this quick reference before going live:
 - [ ] CORS restricted to your domains
 - [ ] HTTPS with a real certificate
 - [ ] Every endpoint protected (API key and/or JWT)
+- [ ] Rate limits set: a global `<rate_limit>`, tighter limits on endpoints with side effects, health probes and internal hops opted out, `client_ip_header` only behind a locked-down proxy
 - [ ] Payload size limit appropriate for your use case
 - [ ] Database timeouts reviewed
 - [ ] Caching enabled for read-heavy endpoints
@@ -427,6 +483,7 @@ remove the demo `web/` folder, leave OpenAPI off unless you intend to publish an
 - How to lock down CORS, enforce HTTPS, and set timeouts.
 - How to override any setting via environment variables for cloud deployments.
 - How to audit endpoint protection and organise configuration files.
+- How to rate limit endpoints, and which ones to opt out.
 - Hosting options and a pre-deployment checklist.
 - How to slim the engine for small / low-RAM hosts (Workstation GC, portable build).
 

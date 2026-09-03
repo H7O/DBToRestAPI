@@ -25,6 +25,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
 - **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc. — with **multiple providers per endpoint** for "Log in with X" apps), and SQL injection protection via parameterised queries.
 - **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
+- **Rate limiting** — Per-endpoint request limits with a global default, counted per user, API key or client IP, answered with `429` + `Retry-After` before any database work. Hot-reloads, fails open, and a config typo can never turn into a 500. See [Rate Limiting](docs/topics/18-rate-limiting.md).
 - **File management** — Upload to local or SFTP stores, download via streaming, all configured in XML, with automatic rollback of uploaded files when the downstream request fails.
 - **Multi-query chaining** — Execute sequential queries across different databases in a single request.
 - **Embedded HTTP calls** — Call external APIs from within your SQL queries.
@@ -266,7 +267,7 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | 18 | [Webhooks](docs/tutorial/18-webhooks.md) | Two-endpoint webhook pattern, accept & process, `no_wait` |
 | 19 | [Settings Variables](docs/tutorial/19-settings-vars.md) | `{s{}}` / `{settings{}}`, `<vars>` config, encrypted secrets |
 | 20 | [OpenAPI & Swagger UI](docs/tutorial/20-openapi.md) | Auto-generated spec, Swagger UI, enrichment tags, selective exposure |
-| 21 | [Production & Deployment](docs/tutorial/21-production.md) | Environment config, TLS, Docker, reverse proxy |
+| 21 | [Production & Deployment](docs/tutorial/21-production.md) | Environment config, TLS, rate limiting, Docker, reverse proxy |
 | 22 | [Static Files](docs/tutorial/22-static-files.md) | Serve a web UI / SPA as an API-first fallback, traversal protection, SPA mode |
 | 23 | [What's Next?](docs/tutorial/23-whats-next.md) | Further resources and community |
 

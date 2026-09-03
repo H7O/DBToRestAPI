@@ -727,4 +727,94 @@ public class OpenApiDocumentBuilderTests
         Assert.DoesNotContain("<script>alert(1)</script>", htmlStr);
         Assert.Contains("&lt;script&gt;", htmlStr);
     }
+
+    // ── rate limiting ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void RateLimitedEndpoint_Has429WithRetryAfter_AndDescriptionHint()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:test:route"] = "test",
+            ["queries:test:verb"] = "GET",
+            ["queries:test:query"] = "SELECT 1",
+            ["queries:test:rate_limit:max_requests"] = "30",
+            ["queries:test:rate_limit:window_seconds"] = "10"
+        });
+
+        var op = ParseDoc(builder).GetProperty("paths").GetProperty("/test").GetProperty("get");
+
+        Assert.Contains("Rate limited: 30 requests per 10 s per caller", op.GetProperty("description").GetString());
+
+        var tooMany = op.GetProperty("responses").GetProperty("429");
+        Assert.Contains("30", tooMany.GetProperty("description").GetString());
+        Assert.Equal("integer", tooMany.GetProperty("headers").GetProperty("Retry-After").GetProperty("schema").GetProperty("type").GetString());
+
+        var props = tooMany.GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("properties");
+        Assert.True(props.TryGetProperty("retry_after_seconds", out var retry));
+        Assert.Equal(10, retry.GetProperty("example").GetInt32());
+        Assert.True(props.TryGetProperty("success", out _));
+        Assert.True(props.TryGetProperty("message", out _));
+    }
+
+    [Fact]
+    public void GlobalRateLimit_AppliesToEveryOperation_AndPerIpIsLabelled()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["rate_limit:max_requests"] = "120",
+            ["rate_limit:per"] = "ip",
+            ["queries:test:route"] = "test",
+            ["queries:test:verb"] = "GET,POST",
+            ["queries:test:query"] = "SELECT 1"
+        });
+
+        var path = ParseDoc(builder).GetProperty("paths").GetProperty("/test");
+
+        foreach (var verb in new[] { "get", "post" })
+        {
+            var op = path.GetProperty(verb);
+            Assert.True(op.GetProperty("responses").TryGetProperty("429", out _));
+            Assert.Contains("120 requests per 60 s per client IP", op.GetProperty("description").GetString());
+        }
+    }
+
+    [Fact]
+    public void NoRateLimit_OrOptedOut_OrUnparseable_No429()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["rate_limit:max_requests"] = "120",
+            ["queries:plain:route"] = "plain",
+            ["queries:plain:verb"] = "GET",
+            ["queries:plain:query"] = "SELECT 1",
+            ["queries:plain:rate_limit:enabled"] = "false",
+            ["queries:broken:route"] = "broken",
+            ["queries:broken:verb"] = "GET",
+            ["queries:broken:query"] = "SELECT 1",
+            ["queries:broken:rate_limit:max_requests"] = "lots",   // falls through to the global 120
+        });
+
+        var paths = ParseDoc(builder).GetProperty("paths");
+
+        var plain = paths.GetProperty("/plain").GetProperty("get");
+        Assert.False(plain.GetProperty("responses").TryGetProperty("429", out _));
+        Assert.False(plain.TryGetProperty("description", out _));
+
+        var broken = paths.GetProperty("/broken").GetProperty("get");
+        Assert.True(broken.GetProperty("responses").TryGetProperty("429", out _));   // never throws on a typo
+        Assert.Contains("120 requests", broken.GetProperty("description").GetString());
+
+        var none = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:test:route"] = "test",
+            ["queries:test:verb"] = "GET",
+            ["queries:test:query"] = "SELECT 1"
+        });
+        Assert.False(ParseDoc(none).GetProperty("paths").GetProperty("/test").GetProperty("get").GetProperty("responses").TryGetProperty("429", out _));
+    }
 }

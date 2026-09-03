@@ -140,7 +140,7 @@ Cache external API responses:
 By default, **all responses are cached** including errors. This protects external APIs during:
 - High traffic
 - Temporary outages
-- Rate limiting
+- Rate limiting by the external API
 
 ## Ignore Certificate Errors
 
@@ -246,6 +246,10 @@ All accessible via your single API endpoint.
 
 ### Rate Limit Protection
 
+This is about a limit the *external* API imposes on you: caching keeps your call count under
+it. To limit how fast *your own callers* may hit a gateway route, add a `<rate_limit>` block to
+the route instead; see [Rate Limiting](18-rate-limiting.md).
+
 Cache with short duration to reduce hits:
 
 ```xml
@@ -263,4 +267,5 @@ Cache with short duration to reduce hits:
 
 - [Caching](07-caching.md) - Cache configuration details
 - [API Keys](06-api-keys.md) - Protecting routes
+- [Rate Limiting](18-rate-limiting.md) - Limiting your own callers on gateway routes
 - [Configuration](02-configuration.md) - api_gateway.xml structure

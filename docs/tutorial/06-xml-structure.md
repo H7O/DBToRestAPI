@@ -122,6 +122,7 @@ Here's every tag you can use inside an endpoint definition:
 | `<cors>` | No | Global setting | Per-endpoint CORS override. |
 | `<file_management>` | No | None | File upload/download configuration. |
 | `<openapi>` | No | None | Per-endpoint OpenAPI enrichment: `<enabled>`, `<summary>`, `<description>`, `<tags>`, `<response_schema>`. See [OpenAPI topic](../topics/20-openapi.md). |
+| `<rate_limit>` | No | Global | Per-endpoint request limit: `<max_requests>`, `<window_seconds>`, `<per>`, `<enabled>`, `<message>`. Falls back tag by tag to the global block in settings.xml. See [Rate Limiting topic](../topics/18-rate-limiting.md). |
 
 > **Host priority:** When multiple endpoints share the same route and verb,
 > the engine picks the most specific host: exact (`www.example.com`) beats

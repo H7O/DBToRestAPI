@@ -181,6 +181,7 @@ app.UseMiddleware<Step1ServiceTypeChecks>();        // 1. Route resolution & ser
 app.UseMiddleware<Step2CorsCheck>();                // 2. CORS headers (must be before auth for preflight)
 app.UseMiddleware<Step3ApiKeysCheck>();             // 3. Local API key validation
 app.UseMiddleware<Step4JwtAuthorization>();         // 4. JWT/OAuth 2.0 validation
+app.UseMiddleware<Step4bRateLimiting>();            // 4b. Per-endpoint rate limiting (after auth so the caller can be the user; before the gateway so proxied routes are covered)
 app.UseMiddleware<Step5APIGatewayProcess>();        // 5. API Gateway proxy
 app.UseMiddleware<Step6MandatoryFieldsCheck>();     // 6. Parameter validation
 app.UseMiddleware<Step7FileUploadManagement>();     // 7. File upload processing

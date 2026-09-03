@@ -78,6 +78,7 @@ The following are inferred automatically from your existing endpoint tags — no
 | `<authorize>` | Bearer JWT security scheme |
 | `<host>` | Noted in operation description |
 | `<cache>` | "Response is cached" in description |
+| `<rate_limit>` | `429` response with the `Retry-After` header and the `{ success, message, retry_after_seconds }` body; the effective limit noted in the description (see [Rate Limiting](18-rate-limiting.md)) |
 | `<count_query>` | Response wrapped in `{ count, data }` pagination envelope |
 
 ## Per-Endpoint Enrichment

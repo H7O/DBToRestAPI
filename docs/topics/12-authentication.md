@@ -402,4 +402,5 @@ When `<authorize>` is present, `Access-Control-Allow-Credentials: true` is autom
 
 - [API Keys](06-api-keys.md) - Combine with API key protection
 - [CORS](11-cors.md) - CORS with credentials
+- [Rate Limiting](18-rate-limiting.md) - Per-user allowances keyed on the validated token
 - [Configuration](02-configuration.md) - Provider configuration

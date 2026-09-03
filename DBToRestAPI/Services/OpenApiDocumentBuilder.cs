@@ -28,6 +28,7 @@ public class OpenApiDocumentBuilder
     private readonly IEncryptedConfiguration _configuration;
     private readonly ILogger<OpenApiDocumentBuilder> _logger;
     private readonly AtomicGate _reloadingGate = new();
+    private readonly RateLimitPolicyResolver _rateLimitResolver;
 
     private static readonly Regex _routeParamRegex = new(
         @"\{\{(?<name>[^}]+)\}\}",
@@ -39,6 +40,7 @@ public class OpenApiDocumentBuilder
     {
         _configuration = configuration;
         _logger = logger;
+        _rateLimitResolver = new RateLimitPolicyResolver(configuration);
         Rebuild();
         ChangeToken.OnChange(
             () => _configuration.GetReloadToken(),
@@ -357,6 +359,12 @@ $$"""
             descriptionParts.Add("Response is cached.");
         if (hasCountQuery)
             descriptionParts.Add("Supports pagination with count.");
+
+        // Rate limit, resolved exactly as Step4bRateLimiting resolves it (endpoint → global → default).
+        // Configuration warnings are reported once by the middleware; the document only reflects the result.
+        var rateLimit = _rateLimitResolver.Resolve(section, new List<string>());
+        if (rateLimit is not null)
+            descriptionParts.Add($"Rate limited: {rateLimit.MaxRequests} requests per {rateLimit.WindowSeconds} s per {RateLimitScopeLabel(rateLimit.Per)}.");
         var fullDescription = descriptionParts.Count > 0 ? string.Join(" | ", descriptionParts) : null;
 
         // Build response schema
@@ -369,7 +377,7 @@ $$"""
                 verb, summary, fullDescription, tags,
                 pathParams, nonPathMandatory,
                 successCode, responseContent,
-                usesApiKey, usesBearer);
+                usesApiKey, usesBearer, rateLimit);
             pathItem[verb] = operation;
         }
 
@@ -386,7 +394,8 @@ $$"""
         string successCode,
         Dictionary<string, object>? responseContent,
         bool usesApiKey,
-        bool usesBearer)
+        bool usesBearer,
+        RateLimitPolicy? rateLimit)
     {
         var operation = new Dictionary<string, object>
         {
@@ -467,7 +476,7 @@ $$"""
         if (responseContent != null)
             successResponse["content"] = responseContent;
 
-        operation["responses"] = new Dictionary<string, object>
+        var responses = new Dictionary<string, object>
         {
             [successCode] = successResponse,
             ["default"] = new Dictionary<string, object>
@@ -490,6 +499,11 @@ $$"""
             }
         };
 
+        if (rateLimit is not null)
+            responses["429"] = BuildRateLimitResponse(rateLimit);
+
+        operation["responses"] = responses;
+
         // Security
         var security = new List<object>();
         if (usesApiKey)
@@ -501,6 +515,49 @@ $$"""
 
         return operation;
     }
+
+    /// <summary>
+    /// The 429 a rate-limited operation returns: the Retry-After header (the full window, "at least
+    /// this long") and the same { success, message, retry_after_seconds } body the middleware writes.
+    /// </summary>
+    private static Dictionary<string, object> BuildRateLimitResponse(RateLimitPolicy rateLimit)
+    {
+        return new Dictionary<string, object>
+        {
+            ["description"] = $"Too many requests: more than {rateLimit.MaxRequests} in {rateLimit.WindowSeconds} seconds per {RateLimitScopeLabel(rateLimit.Per)}. Wait the number of seconds given in Retry-After before retrying.",
+            ["headers"] = new Dictionary<string, object>
+            {
+                ["Retry-After"] = new Dictionary<string, object>
+                {
+                    ["description"] = "Seconds to wait before retrying (the full window).",
+                    ["schema"] = new Dictionary<string, object> { ["type"] = "integer" }
+                }
+            },
+            ["content"] = new Dictionary<string, object>
+            {
+                ["application/json"] = new Dictionary<string, object>
+                {
+                    ["schema"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new Dictionary<string, object>
+                        {
+                            ["success"] = new Dictionary<string, object> { ["type"] = "boolean", ["example"] = false },
+                            ["message"] = new Dictionary<string, object> { ["type"] = "string" },
+                            ["retry_after_seconds"] = new Dictionary<string, object> { ["type"] = "integer", ["example"] = rateLimit.WindowSeconds }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    private static string RateLimitScopeLabel(RateLimitPer per) => per switch
+    {
+        RateLimitPer.Ip => "client IP",
+        RateLimitPer.Endpoint => "endpoint (shared by all callers)",
+        _ => "caller"
+    };
 
     private static Dictionary<string, object>? BuildResponseContent(
         string? responseStructure,

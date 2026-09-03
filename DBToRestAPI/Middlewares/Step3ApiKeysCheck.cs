@@ -20,7 +20,9 @@ namespace DBToRestAPI.Middlewares
     /// The middleware:
     /// - Validates API keys specific to the route (if configured)
     /// - Allows routes to have their own independent API key requirements
-    /// 
+    /// - On success sets context.Items[`api_key_hash`]: a short SHA-256 prefix of the validated key,
+    ///   used by the rate limiter to tell key holders apart (never the key itself)
+    ///
     /// Responses:
     /// - 401 Unauthorized: Local API key validation failed
     /// - 500 Internal Server Error: Required context items missing from previous middlewares
@@ -135,6 +137,10 @@ namespace DBToRestAPI.Middlewares
             // Use the ApiKeysService for validation
             if (_apiKeysService.IsValidApiKeyInCollections(apiKeysCollections, extractedKeyValue!))
             {
+                // Record a non-secret identity for the key that was actually validated, so later
+                // steps (rate limiting) can tell key holders apart without re-reading the header:
+                // a request can carry several `x-api-key` values and only the first is checked here.
+                context.Items["api_key_hash"] = IdentityHash.Short(extractedKeyValue!);
                 await _next(context);
                 return;
             }
@@ -150,7 +156,7 @@ namespace DBToRestAPI.Middlewares
 
             #endregion
 
-            
+
         }
 
 
