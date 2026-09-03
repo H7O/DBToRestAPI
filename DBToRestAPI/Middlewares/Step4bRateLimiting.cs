@@ -72,7 +72,7 @@ namespace DBToRestAPI.Middlewares
         /// <summary>Rejections are summarised per endpoint at most once a minute; see <see cref="NoteRejection"/>.</summary>
         private readonly ConcurrentDictionary<string, RejectionCounter> _rejections = new();
 
-        private static readonly TimeSpan SummaryInterval = TimeSpan.FromMinutes(1);
+        private const long SummaryIntervalMs = 60_000;
 
         public async Task InvokeAsync(HttpContext context)
         {
@@ -238,7 +238,7 @@ namespace DBToRestAPI.Middlewares
             var now = Environment.TickCount64;
             var last = Interlocked.Read(ref counter.LastSummaryTicks);
 
-            if (now - last < SummaryInterval.TotalMilliseconds)
+            if (now - last < SummaryIntervalMs)
                 return;
 
             if (Interlocked.CompareExchange(ref counter.LastSummaryTicks, now, last) != last)
@@ -259,7 +259,13 @@ namespace DBToRestAPI.Middlewares
         private sealed class RejectionCounter
         {
             public int Count;
-            public long LastSummaryTicks;
+
+            /// <summary>
+            /// Starts one interval in the past so the very first rejection always writes a summary.
+            /// TickCount64 is milliseconds since boot, so a zero start would silence the summary for
+            /// the first minute of a machine's uptime (a freshly provisioned VM or CI runner).
+            /// </summary>
+            public long LastSummaryTicks = -SummaryIntervalMs;
         }
     }
 }
