@@ -58,7 +58,7 @@ Fetch only what you need:
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
-| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, microservice calls from SQL |
+| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, full request schema, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, `query` field for caller-supplied values, automatic JSON escaping of substituted values, microservice calls from SQL |
 | Webhooks | [19-webhooks.md](docs/topics/19-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
 | OpenAPI / Swagger | [20-openapi.md](docs/topics/20-openapi.md) | Auto-generated OpenAPI 3.0 spec at /openapi.json, built-in Swagger UI at /swagger, secure by default (opt-in), per-endpoint or global, enrichment tags (summary, description, tags, response_schema), hot-reload |
 | Settings Variables | [21-settings-vars.md](docs/topics/21-settings-vars.md) | {s{}}/{settings{}} syntax, <vars> config, encrypted secrets in queries |
@@ -176,7 +176,7 @@ Client sends: `x-api-key: secret-key-123`
 <!-- Multiple providers on one endpoint ("Log in with X"); or use * for any configured provider -->
 <authorize><provider>google,azure_b2c,auth0</provider></authorize>
 ```
-Access claims: `{auth{email}}`, `{auth{sub}}`, `{auth{roles}}`, `{auth{auth_provider}}`.
+Access claims: `{auth{email}}`, `{auth{sub}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`.
 For multi-provider endpoints the provider is selected by the `X-Auth-Provider` hint header
 (overridable), else by the token's `iss`. Selection only *routes* — the token is still fully
 validated (signature, issuer, audience, lifetime) against the chosen provider.
@@ -201,7 +201,9 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- Fire-and-forget: "no_wait": true → call runs on background thread, variable receives NULL immediately
 -- Database-driven skip: combine with query chaining — Query 1 outputs a flag column, Query 2 uses it as "skip": "{{flag}}"
 -- Webhook pattern: use no_wait + multi-query chaining for accept→process→notify workflows (see below)
--- Built-in retry: "retry": {"max_attempts": 3, "delay_seconds": 2, "backoff_multiplier": 2.0, "retry_on_status_codes": [500,502,503,504]}
+-- Built-in retry: "retry": {"max_attempts": 3, "delay_ms": 2000, "exponential_backoff": true, "retry_status_codes": [500,502,503,504]}
+-- Caller-supplied values in a URL: "query": {"id": "{{id}}"} (percent-encoded) — never inside the "url" string
+-- Values landing inside JSON strings are escaped automatically; "body": {{doc}} (outside a string) injects raw JSON by design — only for values you built yourself
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 

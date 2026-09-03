@@ -4,10 +4,10 @@
   <TargetFramework>net10.0</TargetFramework>
   <Nullable>enable</Nullable>
   <ImplicitUsings>enable</ImplicitUsings>
-  <Version>1.5.1</Version>
-  <AssemblyVersion>1.5.1.0</AssemblyVersion>
-  <FileVersion>1.5.1.0</FileVersion>
-  <InformationalVersion>1.5.1</InformationalVersion>
+  <Version>1.6.0</Version>
+  <AssemblyVersion>1.6.0.0</AssemblyVersion>
+  <FileVersion>1.6.0.0</FileVersion>
+  <InformationalVersion>1.6.0</InformationalVersion>
 </PropertyGroup>
 
 <!--
@@ -38,28 +38,31 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="Com.H" Version="10.2.0" />
+    <PackageReference Include="Com.H" Version="10.3.0" />
     <PackageReference Include="Com.H.Data.Common" Version="10.1.0.9" />
-    <PackageReference Include="Com.H.Net.Ssh" Version="10.0.0.1" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <PackageReference Include="Com.H.Net.Ssh" Version="10.1.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <!-- Force the patched SourceGear-based native SQLite build. Microsoft.Data.Sqlite still floors the
          SQLitePCLRaw bundle at 2.1.11, which pulls the deprecated + vulnerable SQLitePCLRaw.lib.e_sqlite3
          (CVE-2025-6965 / GHSA-2m69-gcr7-jv3q). Bundle 3.x drops lib.e_sqlite3 in favor of
          SourceGear.sqlite3 (SQLite 3.50.4, past the fix line). A direct (top-level) reference overrides
          the transitive resolution; applies to both full and lite builds. -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.9.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
-    <PackageReference Include="System.IO.Hashing" Version="10.0.10" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.11" />
+    <!-- JWT validation and OpenID Connect discovery, called directly by Step4JwtAuthorization -->
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.22.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
 
     <!-- Heavy/optional database providers — excluded from the 'lite' build (-p:DbProviders=lite) -->
-    <PackageReference Include="MySqlConnector" Version="2.6.1" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="MySqlConnector" Version="2.6.2" Condition="'$(DbProviders)' != 'lite'" />
     <PackageReference Include="Npgsql" Version="10.0.3" Condition="'$(DbProviders)' != 'lite'" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.300" Condition="'$(DbProviders)' != 'lite'" />
-    <PackageReference Include="System.Data.Odbc" Version="10.0.10" Condition="'$(DbProviders)' != 'lite'" />
-    <PackageReference Include="System.Data.OleDb" Version="10.0.10" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="System.Data.Odbc" Version="10.0.11" Condition="'$(DbProviders)' != 'lite'" />
+    <PackageReference Include="System.Data.OleDb" Version="10.0.11" Condition="'$(DbProviders)' != 'lite'" />
 
     <!-- DB2 - Platform-specific (only the matching package is included in build output) -->
     <!-- ExcludeAssets prevents the package's .targets from adding TestConn files to the project -->

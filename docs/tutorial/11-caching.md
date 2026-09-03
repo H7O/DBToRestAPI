@@ -155,7 +155,8 @@ Each contact ID gets its own 2-minute cache entry.
 |---------|----------|---------|-------------|
 | `<duration_in_milliseconds>` | Yes | — | How long to cache the response |
 | `<invalidators>` | No | None | Comma-separated parameter names for cache key |
-| `<max_per_value_cache_size>` | No | 1000 | Max characters per invalidator value (prevents huge cache keys) |
+
+> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. The former `max_per_value_cache_size` setting is no longer needed and is ignored if present.
 
 ## Global Caching
 

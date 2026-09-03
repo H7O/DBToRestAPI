@@ -71,7 +71,8 @@ This means you **always** get a result back — you never have to guess whether 
     -- Fetch weather from external API
     DECLARE @weather NVARCHAR(MAX) = {http{
       {
-        "url": "https://api.weatherapi.com/v1/current.json?key=YOUR_KEY&q={{city}}",
+        "url": "https://api.weatherapi.com/v1/current.json?key=YOUR_KEY",
+        "query": { "q": "{{city}}" },
         "method": "GET"
       }
     }http};
@@ -101,7 +102,7 @@ This means you **always** get a result back — you never have to guess whether 
 </contact_with_weather>
 ```
 
-The `{{city}}` parameter inside the HTTP call comes from the original HTTP request — the same parameter injection you've been using throughout the tutorial.
+The `{{city}}` parameter inside the HTTP call comes from the original HTTP request — the same parameter injection you've been using throughout the tutorial. It sits in `query` rather than inside the `url` string so that it is percent-encoded — see [Caller-supplied values in a URL](#caller-supplied-values-in-a-url-use-query) below.
 
 ## HTTP Request Configuration
 
@@ -109,14 +110,48 @@ The JSON inside `{http{...}http}` supports these properties:
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `url` | string | Yes | — | Target URL |
-| `method` | string | No | `GET` | HTTP method |
-| `headers` | object | No | — | Custom headers |
-| `body` | object/string | No | — | Request body |
-| `timeout` | number | No | 30 | Timeout in seconds |
-| `auth` | object | No | — | Authentication config |
-| `retry` | object | No | — | Retry policy |
+| `url` | string | Yes | — | Target URL. Constants and `{s{settings}}` values may sit in its query string; a **caller-supplied** `{{marker}}` belongs in `query` instead (see below) |
+| `method` | string | No | `GET` | HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS |
+| `headers` | object | No | — | Custom headers. A header whose name or value contains a line break is dropped, so a substituted value cannot inject a second header |
+| `query` | object | No | — | Query-string parameters, percent-encoded and appended to `url` (with `&` if `url` already has a `?`). **Put caller-supplied values here** |
+| `body` | object/array | No | — | JSON body, serialized automatically. A marker used *outside* a string here (`"body": {{doc}}`) injects a whole JSON document, raw |
+| `body_raw` | string | No | — | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document safely |
+| `content_type` | string | No | `application/json` | Content-Type header |
+| `timeout_seconds` | number | No | 30 | Timeout in seconds (`timeout` is accepted as an alias) |
+| `ignore_certificate_errors` | bool | No | `false` | Skip TLS certificate validation (development only) |
+| `follow_redirects` | bool | No | `true` | Follow HTTP redirects automatically |
+| `auth` | object | No | — | Authentication config — see [Authentication Options](#authentication-options) |
+| `retry` | object | No | — | Retry policy: `max_attempts` (3), `delay_ms` (1000), `exponential_backoff` (true), `retry_status_codes` ([500,502,503,504]) |
 | `skip` | bool/string/number | No | `false` | When truthy (`true`, `"true"`, `"1"`, `"yes"`, non-zero), the call is not executed and the variable receives `NULL` |
+| `no_wait` | bool/string/number | No | `false` | When truthy, the call runs in the background after the response is sent and the variable receives `NULL` — see [Fire-and-Forget](#fire-and-forget-with-no_wait) |
+
+### Caller-supplied values in a URL: use `query`
+
+Anything a caller sends — a route segment, a query-string value, a JSON field, a header — can contain
+characters that mean something in a URL: `&` starts a new parameter, `#` ends the query string, `?`
+and `=` split names from values. If a `{{marker}}` sits inside the `url` string, those characters go
+through exactly as written. Put caller-supplied values in `query` instead. Each value is
+percent-encoded there, so `a&admin=1` reaches the external API as one literal value:
+
+```sql
+DECLARE @weather NVARCHAR(MAX) = {http{
+  {
+    "url": "https://api.weatherapi.com/v1/current.json?key={s{weather_api_key}}",
+    "query": { "q": "{{city}}" }
+  }
+}http};
+```
+
+The rule is narrow: a query string made of constants or `{s{settings}}` values is fine in `url`.
+Only a **caller-supplied** marker needs to move into `query`.
+
+What about a caller value that contains a double quote? That is handled for you. Before the block
+is parsed, every marker that lands inside a JSON string is escaped, so a value such as
+`a","url":"https://evil.example` stays inside the string it was substituted into. It cannot close
+that string, add a second `url` key, or otherwise change the request. Markers placed *outside* a
+string (`"body": {{doc}}`) are left raw on purpose — that is how you inject a whole JSON document —
+so only put values you built yourself there, never a raw caller value. To forward a caller-supplied
+JSON document, use `"body_raw": "{{payload}}"`.
 
 ## POST with JSON Body
 
@@ -155,19 +190,22 @@ DECLARE @data NVARCHAR(MAX) = {http{
 
 ### API Key in Header
 
+`key` is the secret itself and `key_header` names the header that carries it:
+
 ```sql
 DECLARE @data NVARCHAR(MAX) = {http{
   {
     "url": "https://api.example.com/data",
     "auth": {
       "type": "api_key",
-      "key": "X-API-Key",
-      "value": "your-api-key",
-      "in": "header"
+      "key": "your-api-key",
+      "key_header": "X-API-Key"
     }
   }
 }http};
 ```
+
+To send the key as a query-string parameter instead, replace `key_header` with `"key_query_param": "api_key"`.
 
 ## Practical Example: Email Validation
 
@@ -227,14 +265,16 @@ You can embed multiple HTTP calls:
 ```sql
 DECLARE @weather NVARCHAR(MAX) = {http{
   {
-    "url": "https://api.weather.com/current?city={{city}}",
+    "url": "https://api.weather.com/current",
+    "query": { "city": "{{city}}" },
     "method": "GET"
   }
 }http};
 
 DECLARE @news NVARCHAR(MAX) = {http{
   {
-    "url": "https://api.news.com/headlines?country={{country}}",
+    "url": "https://api.news.com/headlines",
+    "query": { "country": "{{country}}" },
     "method": "GET"
   }
 }http};
@@ -460,7 +500,8 @@ IF @emirates_id IS NOT NULL AND @emirates_id != ''
 BEGIN
     DECLARE @api_response NVARCHAR(MAX) = {http{
       {
-        "url": "https://api.example.com/lookup?id={{emirates_id}}",
+        "url": "https://api.example.com/lookup",
+        "query": { "id": "{{emirates_id}}" },
         "method": "GET"
       }
     }http};
@@ -479,6 +520,9 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 ## Security Considerations
 
 - **SQL injection safe** — HTTP responses are delivered as parameterized SQL variables (`@http_response_1`, `@http_response_2`, etc.), not string-replaced into the query. This is the same `sp_executesql`-style parameter binding that DB Admins already trust for preventing SQL injection. Even if an external API returns `'; DROP TABLE users; --`, it is treated as a harmless string value, not executable SQL.
+- **Caller values cannot rewrite the request** — a marker that lands inside a JSON string is escaped before the block is parsed, so a value carrying `"` cannot close the string and add or replace keys such as `url`. Markers outside a string (`"body": {{doc}}`) are inserted raw by design; reserve them for values you built yourself.
+- **Caller values cannot smuggle headers** — a header whose name or value contains a line break is dropped rather than sent.
+- **Put caller-supplied values in `query`, not in the `url` string** — they are percent-encoded there, so `&`, `#` and `=` cannot add or split parameters.
 - **Never expose secrets in client-visible responses** — API keys in `{http{...}http}` are server-side only
 - **Validate external data** — don't trust external API responses blindly
 - **Set timeouts** — prevent your API from hanging if an external service is slow
@@ -496,6 +540,7 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 - How HTTP calls execute before the SQL runs, with results delivered via SQL parameterization (`sp_executesql`-style binding, not string replacement)
 - That `IF` blocks can control whether the parameterized result is assigned, even though the HTTP call always fires during pre-processing
 - Sending GET and POST requests with headers and body
+- Putting caller-supplied values in `query` (percent-encoded) rather than inside the `url` string, and that values landing inside JSON strings are escaped for you
 - Authentication options (bearer token, API key)
 - Parsing JSON responses with `JSON_VALUE` and `OPENJSON` — all under the `$.data` path
 - Granular error handling — inspecting status codes instead of checking for `NULL`

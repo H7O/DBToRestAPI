@@ -48,9 +48,6 @@ This document describes the caching implementation for API Gateway routes in DBT
       
       <!-- Optional: Don't cache these status codes (comma-separated) -->
       <exclude_status_codes_from_cache>401,403,429</exclude_status_codes_from_cache>
-      
-      <!-- Optional: Max size per invalidator value (default: 1000) -->
-      <max_per_value_cache_size>1000</max_per_value_cache_size>
     </memory>
   </cache>
 </hello_world_loopback_with_cache>
@@ -65,6 +62,7 @@ Cache keys include:
 - Resolved route path
 - Query parameters (only those specified in `invalidators`)
 - Headers (only those specified in `invalidators`)
+- Every invalidator value is hashed (xxHash3) before it enters the key, so values of any length are safe and a caller cannot forge a key segment with `|` or `=`
 
 ### ✅ Streaming vs Buffering
 - **No cache configured**: Streams directly (best performance)

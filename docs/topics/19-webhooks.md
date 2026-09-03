@@ -104,9 +104,9 @@ Key properties:
         "body": { "request_id": "{{request_id}}", "status": "completed" },
         "retry": {
           "max_attempts": 3,
-          "delay_seconds": 2,
-          "backoff_multiplier": 2.0,
-          "retry_on_status_codes": [500, 502, 503, 504]
+          "delay_ms": 2000,
+          "exponential_backoff": true,
+          "retry_status_codes": [500, 502, 503, 504]
         }
       }
     }http};

@@ -374,3 +374,5 @@ source_from_nuget/
 # IBM DB2 CLI Driver files
 clidriver/
 scratchpad/
+# Claude Code project folder: session approvals and machine-specific settings land here
+.claude/

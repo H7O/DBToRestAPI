@@ -132,7 +132,8 @@ Cache external API responses:
 | `duration_in_milliseconds` | How long to cache |
 | `invalidators` | Query params that create separate cache entries |
 | `exclude_status_codes_from_cache` | Don't cache these HTTP codes |
-| `max_per_value_cache_size` | Max chars per invalidator value |
+
+> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. The former `max_per_value_cache_size` setting is no longer needed and is ignored if present.
 
 ### Default Caching Behavior
 

@@ -314,4 +314,69 @@ public class RequestMessageBuilderTests
         var contentType = message.Content.Headers.ContentType;
         Assert.Equal("application/json", contentType?.MediaType);
     }
+
+    [Fact]
+    public void Build_HeaderValueWithLineBreak_IsDropped()
+    {
+        // Headers are added with TryAddWithoutValidation, so nothing else would stop a substituted
+        // value from smuggling in a second header (or a body) after a CRLF.
+        var request = new HttpExecutorRequest
+        {
+            Url = "https://example.com/api",
+            Headers = new Dictionary<string, string>
+            {
+                ["X-Good"] = "ok",
+                ["X-Bad"] = "value\r\nX-Injected: yes"
+            }
+        };
+
+        var message = RequestMessageBuilder.Build(request);
+
+        Assert.True(message.Headers.Contains("X-Good"));
+        Assert.False(message.Headers.Contains("X-Bad"));
+        Assert.DoesNotContain(message.Headers, h => h.Key.Contains("Injected"));
+    }
+
+    [Fact]
+    public void Build_HeaderNameWithLineBreak_IsDropped()
+    {
+        var request = new HttpExecutorRequest
+        {
+            Url = "https://example.com/api",
+            Headers = new Dictionary<string, string>
+            {
+                ["X-Bad\nX-Injected"] = "yes",
+                ["X-Good"] = "ok"
+            }
+        };
+
+        var message = RequestMessageBuilder.Build(request);
+
+        Assert.True(message.Headers.Contains("X-Good"));
+        Assert.DoesNotContain(message.Headers, h => h.Key.Contains("Bad") || h.Key.Contains("Injected"));
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r")]
+    public void Build_ContentHeaderWithLineBreak_IsDropped(string lineBreak)
+    {
+        // The check runs before the content-header branch, so content headers are covered too.
+        var request = new HttpExecutorRequest
+        {
+            Url = "https://example.com/api",
+            Method = "POST",
+            BodyRaw = "payload",
+            Headers = new Dictionary<string, string>
+            {
+                ["Content-Language"] = "en" + lineBreak + "X-Injected: yes"
+            }
+        };
+
+        var message = RequestMessageBuilder.Build(request);
+
+        Assert.NotNull(message.Content);
+        Assert.False(message.Content!.Headers.Contains("Content-Language"));
+        Assert.DoesNotContain(message.Headers, h => h.Key.Contains("Injected"));
+    }
 }

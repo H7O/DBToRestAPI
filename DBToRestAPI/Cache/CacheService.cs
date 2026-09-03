@@ -3,7 +3,7 @@ using Com.H.Data.Common;
 using Com.H.Threading;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Hybrid;
-using System.Security.Cryptography;
+using System.Buffers;
 using System.Text;
 using DBToRestAPI.Services;
 
@@ -201,9 +201,6 @@ namespace DBToRestAPI.Cache
             if (duration < 1)
                 return null;
 
-            int maxPerValueCacheSize = memorySection.GetValue<int?>("max_per_value_cache_size") ??
-                this._configuration.GetValue<int?>("cache:memory:max_per_value_cache_size") ?? 1000;
-
             // Retrieve cache invalidators
             var invalidatorsCsv = memorySection.GetValue<string?>("invalidators") ?? string.Empty;
             var invalidators = invalidatorsCsv.Split([',', ' ', '\n', '\r', ';'],
@@ -220,10 +217,18 @@ namespace DBToRestAPI.Cache
                     var value = model[key];
                     string strValue = value is string s ? s : value?.ToString() ?? string.Empty;
 
-                    if (strValue.Length <= maxPerValueCacheSize)
-                    {
-                        invalidatorsValues[key] = strValue;
-                    }
+                    // EVERY value is hashed — never dropped, never embedded raw. Both alternatives
+                    // let two different requests collide onto one cache entry:
+                    // - DROPPING an over-long value (the original behaviour) left the parameter out
+                    //   of the key altogether, so two requests differing only in that value shared
+                    //   an entry and the second caller was served the first one's response.
+                    // - EMBEDDING a value raw let a caller forge a key segment, because `|` and `=`
+                    //   are legal inside header and query-string values: `?tenant=a|user=victim`
+                    //   built the same key string as `?tenant=a&user=victim`.
+                    // A fixed-width hash is bounded, distinct, and delimiter-free, closing both.
+                    // Cost is a few hundred nanoseconds per value — noise next to the DB round-trip
+                    // this cache exists to avoid.
+                    invalidatorsValues[key] = strValue.ToXxHash3().ToString();
                 }
             }
 
@@ -271,9 +276,6 @@ namespace DBToRestAPI.Cache
             if (duration < 1)
                 return null;
 
-            int maxPerValueCacheSize = memorySection.GetValue<int?>("max_per_value_cache_size") ??
-                this._configuration.GetValue<int?>("cache:memory:max_per_value_cache_size") ?? 1000;
-
             // Retrieve cache invalidators
             var invalidatorsCsv = memorySection.GetValue<string?>("invalidators") ?? string.Empty;
             var invalidators = invalidatorsCsv.Split([',', ' ', '\n', '\r', ';'],
@@ -287,11 +289,8 @@ namespace DBToRestAPI.Cache
             {
                 if (invalidators.Contains(queryParam.Key, StringComparer.OrdinalIgnoreCase))
                 {
-                    var value = queryParam.Value.ToString();
-                    if (value.Length <= maxPerValueCacheSize)
-                    {
-                        invalidatorsValues[queryParam.Key] = value;
-                    }
+                    // Always hashed, never raw and never dropped - see GetCacheInfo above.
+                    invalidatorsValues[queryParam.Key] = queryParam.Value.ToString().ToXxHash3().ToString();
                 }
             }
 
@@ -300,11 +299,11 @@ namespace DBToRestAPI.Cache
             {
                 if (invalidators.Contains(header.Key, StringComparer.OrdinalIgnoreCase))
                 {
-                    var value = header.Value.ToString();
-                    if (value.Length <= maxPerValueCacheSize)
-                    {
-                        invalidatorsValues[header.Key] = value;
-                    }
+                    // Always hashed, never raw and never dropped - see GetCacheInfo above.
+                    // Hashing is also what makes an arbitrarily large header usable as an
+                    // invalidator at all: a bearer token runs to ~1300 characters, and an author
+                    // is free to nominate something far larger still.
+                    invalidatorsValues[header.Key] = header.Value.ToString().ToXxHash3().ToString();
                 }
             }
 
@@ -338,13 +337,51 @@ namespace DBToRestAPI.Cache
     internal static class StringExtensions
     {
 
+        /// <summary>
+        /// 64-bit xxHash3 of a string. Used to tell one cache entry from another, so speed and
+        /// distinctness are what matter here — xxHash3 is deliberately NOT a cryptographic hash.
+        /// </summary>
+        /// <remarks>
+        /// Deterministic across processes and restarts, unlike <c>string.GetHashCode()</c>, which
+        /// is randomised per process and would make a cache miss after every restart.
+        /// </remarks>
         internal static ulong ToXxHash3(this string text)
         {
-            Span<byte> buffer = stackalloc byte[Encoding.UTF8.GetMaxByteCount(text.Length)];
-            int bytesWritten = Encoding.UTF8.GetBytes(text, buffer);
-            return System.IO.Hashing.XxHash3.HashToUInt64(buffer[..bytesWritten]);
-            // the above is equivalent to:
-            // return System.IO.Hashing.XxHash3.HashToUInt64(buffer.Slice(0, bytesWritten));
+            // Encoding.UTF8.GetMaxByteCount(n) is 3n + 3. Stack-allocating that for an arbitrary
+            // string exhausts the thread's stack somewhere in the low hundreds of thousands of
+            // characters (request threads get 1 MB on Windows, and .NET does not commit more than
+            // a couple of MB per thread on Linux either), and a StackOverflowException cannot be
+            // caught — it takes the whole process down, not just the request. So the stack is used
+            // only for short strings; longer ones rent a buffer.
+            //
+            // 1 KB covers a whole assembled cache key (~340 characters) plus every ordinary
+            // invalidator value in one stack frame, while staying far below any platform's stack
+            // budget. Stack pages are committed on demand, so this costs nothing until it is used.
+            const int stackAllocLimit = 1024;
+            int maxByteCount = Encoding.UTF8.GetMaxByteCount(text.Length);
+
+            if (maxByteCount <= stackAllocLimit)
+            {
+                Span<byte> buffer = stackalloc byte[stackAllocLimit];
+                int bytesWritten = Encoding.UTF8.GetBytes(text, buffer);
+                return System.IO.Hashing.XxHash3.HashToUInt64(buffer[..bytesWritten]);
+            }
+
+            byte[] rented = ArrayPool<byte>.Shared.Rent(maxByteCount);
+            try
+            {
+                int bytesWritten = Encoding.UTF8.GetBytes(text, rented.AsSpan());
+                return System.IO.Hashing.XxHash3.HashToUInt64(rented.AsSpan(0, bytesWritten));
+            }
+            finally
+            {
+                // clearArray: the long values that reach this branch are exactly the ones an author
+                // is most likely to have nominated because they identify a caller — a bearer token,
+                // a session blob. A pooled array keeps its contents after Return, so without this
+                // those bytes stay readable to whoever rents the array next, and to anything that
+                // dumps the heap. A memset of a few KB is nothing beside the hash we just ran.
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
         }
 
     }

@@ -16,8 +16,10 @@ namespace DBToRestAPI.Tests;
 /// Focus: a bearer that is NOT a parseable JWT must be rejected as 401 ("Invalid token"), not 500.
 /// Before the fix, the multi-provider provider-hint path sent such a token straight into
 /// JwtSecurityTokenHandler.ValidateToken, which throws ArgumentException (IDX12741, wrong segment count)
-/// — not a SecurityTokenException — so it fell through the catch ladder to the generic 500. A CanReadToken
-/// guard (placed before the discovery fetch) now returns 401 up front, matching the issuer-fallback path.
+/// — not a SecurityTokenException — so it fell through the catch ladder to the generic 500. A guard placed
+/// before the discovery fetch now returns 401 up front, matching the issuer-fallback path. The guard parses
+/// the header and payload (TryReadJwt) rather than relying on CanReadToken, which only checks for three
+/// base64url segments and let correctly-shaped garbage such as "abc.def.ghi" through to the same 500.
 ///
 /// These tests are fully offline: an unreadable token is rejected before any OIDC discovery/JWKS fetch,
 /// so no network (and no mocked discovery document) is required.
@@ -126,6 +128,31 @@ public class Step4JwtAuthorizationTests
     {
         // Sanity: no Authorization header is still 401 (not affected by the guard).
         var h = CreateHarness("multi", authorization: "", ("X-Auth-Provider", "google"));
+
+        await h.Middleware.InvokeAsync(h.Context);
+
+        Assert.Equal(401, h.Status);
+        Assert.False(h.NextCalled);
+    }
+
+    /// <summary>
+    /// Shape alone is not enough. CanReadToken accepts anything with three base64url segments, so
+    /// "abc.def.ghi" passed the original guard and blew up inside ValidateToken with a 500. The guard
+    /// now parses the header and payload (TryReadJwt), so correctly-shaped garbage is a 401 as well.
+    /// </summary>
+    [Theory]
+    [InlineData("multi", "notajwt")]                              // 1 segment
+    [InlineData("multi", "a.b")]                                  // 2 segments
+    [InlineData("multi", "....")]                                 // 5 segments
+    [InlineData("multi", "abc.def.ghi")]                          // 3 segments, not base64url JSON
+    [InlineData("multi", "eyJhbGciOiJIUzI1NiJ9.bm90anNvbg.sig")]  // valid header, payload "notjson"
+    [InlineData("single", "abc.def.ghi")]
+    [InlineData("single", "eyJhbGciOiJIUzI1NiJ9.bm90anNvbg.sig")]
+    public async Task MalformedBearer_AnyShape_Returns401_Not500(string endpointKey, string token)
+    {
+        var h = endpointKey == "multi"
+            ? CreateHarness(endpointKey, "Bearer " + token, ("X-Auth-Provider", "google"))
+            : CreateHarness(endpointKey, "Bearer " + token);
 
         await h.Middleware.InvokeAsync(h.Context);
 

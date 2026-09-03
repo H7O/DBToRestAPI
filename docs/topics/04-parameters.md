@@ -114,7 +114,8 @@ DECLARE @user_roles NVARCHAR(500) = {auth{roles}};
 | `name` | `{auth{name}}` | Full name |
 | `given_name` | `{auth{given_name}}` | First name |
 | `family_name` | `{auth{family_name}}` | Last name |
-| `roles` | `{auth{roles}}` | User roles |
+| `roles` | `{auth{roles}}` | User roles (pipe-delimited) |
+| `auth_time` | `{auth{auth_time}}` | Login instant as Unix time (seconds): the `auth_time` claim when present, otherwise `iat` |
 | `scope` | `{auth{scope}}` | Token scopes |
 
 ### Special Characters in Claims

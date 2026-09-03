@@ -5,6 +5,7 @@ using Com.H.IO;
 using DBToRestAPI.Cache;
 using DBToRestAPI.Services;
 using DBToRestAPI.Services.HttpExecutor;
+using DBToRestAPI.Services.HttpExecutor.Internal;
 using DBToRestAPI.Services.HttpExecutor.Models;
 using DBToRestAPI.Services.QueryParser;
 using DBToRestAPI.Settings;
@@ -432,7 +433,36 @@ namespace DBToRestAPI.Controllers
             var preparedCalls = distinctMatches.Select((matched, index) =>
             {
                 var httpRequestDetails = matched.Groups["param"].Value;
-                httpRequestDetails = httpRequestDetails.Fill(qParams);
+
+                // Escape values that land INSIDE a JSON string, so a value carrying a double
+                // quote cannot close that string and append sibling keys. Without this, a
+                // caller-supplied value in a url could inject a second "url" key and, because
+                // System.Text.Json keeps the LAST duplicate, redirect the call to any host -
+                // taking this block's own credential headers with it.
+                // Markers used OUTSIDE a string are left raw on purpose: "body": {{obj}} is a
+                // supported way to inject a whole JSON document, and escaping it would break it.
+                var jsonStringMarkers = EmbeddedHttpTemplate.MarkersInsideJsonStrings(
+                    httpRequestDetails, out var mixedContextMarkers);
+
+                if (mixedContextMarkers.Count > 0)
+                {
+                    _logger.LogWarning(
+                        "{Time}: [EmbeddedHTTP] Route: {Route} — marker(s) {Markers} are used both inside "
+                        + "and outside a JSON string in the same block. They are being escaped, which will "
+                        + "break the structural use. Split them into separate markers.",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route,
+                        string.Join(", ", mixedContextMarkers));
+                }
+
+                httpRequestDetails = httpRequestDetails.Fill(
+                    qParams,
+                    valueConverter: (name, value) =>
+                    {
+                        var text = value?.ToString() ?? string.Empty;
+                        return jsonStringMarkers.Contains(name)
+                            ? EmbeddedHttpTemplate.JsonEscape(text)
+                            : text;
+                    });
                 _logger.LogDebug(
                     "{Time}: [EmbeddedHTTP] Route: {Route} — Prepared call #{Index}: {Details}",
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, index,

@@ -195,7 +195,20 @@ DECLARE @roles NVARCHAR(500) = {auth{roles}};
 | `family_name` | `{auth{family_name}}` | Last name |
 | `roles` | `{auth{roles}}` | Roles (pipe-delimited) |
 | `scope` | `{auth{scope}}` | Scopes |
+| `auth_time` | `{auth{auth_time}}` | Login instant as Unix time (seconds): the `auth_time` claim when present, otherwise `iat` |
 | `auth_provider` | `{auth{auth_provider}}` | Resolved provider name (e.g. `google`, `azure_b2c`) |
+
+`{auth{auth_time}}` is the moment the user logged in, unified across providers: the `auth_time`
+claim when the provider sends one (it survives silent token refreshes), otherwise `iat`. Compare it
+against a server-side "sessions invalidated at" timestamp to reject tokens issued before a logout,
+even though they have not yet expired:
+
+```sql
+DECLARE @login_time DATETIME2 = DATEADD(SECOND, CAST({auth{auth_time}} AS BIGINT), '1970-01-01');
+
+IF EXISTS (SELECT 1 FROM users WHERE email = {auth{email}} AND sessions_invalidated_at > @login_time)
+  THROW 50401, 'Session was signed out — please log in again', 1;
+```
 
 ### Special Characters
 

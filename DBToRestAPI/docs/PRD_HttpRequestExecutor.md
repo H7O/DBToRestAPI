@@ -101,10 +101,21 @@ A singleton service (`IHttpRequestExecutor`) that:
 | `body_raw` | string | No | `null` | Raw string body (used if `body` is null) |
 | `content_type` | string | No | `"application/json"` | Content-Type header (convenience field) |
 | `timeout_seconds` | int | No | `30` | Request timeout in seconds |
+| `timeout` | int | No | — | Alias for `timeout_seconds`, used when `timeout_seconds` is absent |
 | `ignore_certificate_errors` | bool | No | `false` | Skip SSL certificate validation |
 | `follow_redirects` | bool | No | `true` | Automatically follow HTTP redirects |
 | `auth` | object | No | `null` | Authentication configuration |
 | `retry` | object | No | `null` | Retry policy configuration |
+
+> **Two more properties exist only when a block is embedded in SQL.** `ApiController` reads `skip`
+> (truthy → the call is not made and the SQL variable is `NULL`) and `no_wait` (truthy → the call runs
+> in the background after the response is sent and the variable is `NULL`) before the JSON reaches
+> this service. They are documented in
+> [docs/topics/17-embedded-http-calls.md](../../docs/topics/17-embedded-http-calls.md).
+>
+> Marker values substituted into the block are JSON-escaped when they land inside a string literal and
+> left raw when used structurally (`"body": {{doc}}`); see `EmbeddedHttpTemplate`. Caller-supplied
+> values belong in `query`, which is percent-encoded, rather than in the `url` string.
 
 ### 2.3 Authentication Object
 

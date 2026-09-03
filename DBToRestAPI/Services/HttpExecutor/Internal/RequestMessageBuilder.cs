@@ -89,6 +89,16 @@ internal static class RequestMessageBuilder
 
         foreach (var header in request.Headers)
         {
+            // A carriage return or line feed in a header would let a substituted value start
+            // a header of its own, or a request body. TryAddWithoutValidation is used below
+            // precisely because it skips the framework's own checks, so nothing else refuses
+            // this - the header is dropped rather than sent.
+            if (EmbeddedHttpTemplate.ContainsHeaderBreak(header.Key)
+                || EmbeddedHttpTemplate.ContainsHeaderBreak(header.Value))
+            {
+                continue;
+            }
+
             if (ContentHeaderNames.Contains(header.Key))
             {
                 // Content headers must be set on the content

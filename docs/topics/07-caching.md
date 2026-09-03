@@ -41,7 +41,8 @@ Invalidate cache when specific parameters change:
 |---------|---------|-------------|
 | `duration_in_milliseconds` | Required | Cache lifetime |
 | `invalidators` | None | Comma-separated params for cache key |
-| `max_per_value_cache_size` | 1000 | Max characters per invalidator value |
+
+> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. The former `max_per_value_cache_size` setting is no longer needed and is ignored if present.
 
 ## Example: User-Specific Cache
 

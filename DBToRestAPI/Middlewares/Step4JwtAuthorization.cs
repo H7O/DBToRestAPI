@@ -27,7 +27,7 @@ namespace DBToRestAPI.Middlewares
         private readonly IEncryptedConfiguration _configuration = settingsEncryptionService;
         private readonly ILogger<Step4JwtAuthorization> _logger = logger;
         private readonly CacheService _cacheService = cacheService;
-                private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+        private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
         private readonly OidcProviderIndex _providerIndex = providerIndex;
         private static readonly string _errorCode = "Step 5 - JWT Authorization";
 
@@ -232,18 +232,18 @@ namespace DBToRestAPI.Middlewares
             // and null in multi-provider mode (so each selected provider uses its own config block).
             var authority = routeOverrides?.GetValue<string>("authority")
                             ?? providerSection?.GetValue<string>("authority");
-                            // global failover removed as it might be confusing for users to understand how to set it
-                            // ?? _configuration.GetValue<string>("authorize:authority");
+            // global failover removed as it might be confusing for users to understand how to set it
+            // ?? _configuration.GetValue<string>("authorize:authority");
 
             var audience = routeOverrides?.GetValue<string>("audience")
                            ?? providerSection?.GetValue<string>("audience");
-                            // global failover removed as it might be confusing for users to understand how to set it
-                            //?? _configuration.GetValue<string>("authorize:audience");
+            // global failover removed as it might be confusing for users to understand how to set it
+            //?? _configuration.GetValue<string>("authorize:audience");
 
             var issuer = routeOverrides?.GetValue<string>("issuer")
                          ?? providerSection?.GetValue<string>("issuer")
-                            // global failover removed as it might be confusing for users to understand how to set it
-                            // ?? _configuration.GetValue<string>("authorize:issuer")
+                         // global failover removed as it might be confusing for users to understand how to set it
+                         // ?? _configuration.GetValue<string>("authorize:issuer")
                          ?? authority;
 
             var validateIssuer = routeOverrides?.GetValue<bool?>("validate_issuer")
@@ -279,8 +279,8 @@ namespace DBToRestAPI.Middlewares
 
             var userInfoCacheDuration = routeOverrides?.GetValue<int?>("userinfo_cache_duration_seconds")
                                         ?? providerSection?.GetValue<int?>("userinfo_cache_duration_seconds");
-                                        // global failover removed as it might be confusing for users to understand how to set it
-                                        // ?? _configuration.GetValue<int?>("authorize:userinfo_cache_duration_seconds");
+            // global failover removed as it might be confusing for users to understand how to set it
+            // ?? _configuration.GetValue<int?>("authorize:userinfo_cache_duration_seconds");
             // Note: If null, cache will default to token expiration time
 
             var userInfoTimeoutSeconds = routeOverrides?.GetValue<int?>("userinfo_timeout_seconds")
@@ -319,13 +319,20 @@ namespace DBToRestAPI.Middlewares
             {
                 var tokenHandler = new JwtSecurityTokenHandler();
 
-                // A bearer that isn't a readable JWT (e.g. wrong segment count) is a client error, not a
-                // server error — and we can tell without contacting the provider. Reject it as 401 up front
-                // so the provider-hint path matches the issuer-fallback path (which already screens
-                // unreadable tokens via TryReadJwt/CanReadToken) and the documented contract, and so we skip
-                // the discovery fetch for junk input. Otherwise ValidateToken throws ArgumentException
-                // (IDX12741) — not a SecurityTokenException — which would fall through to the generic 500.
-                if (!tokenHandler.CanReadToken(accessToken))
+                // A bearer that isn't a readable JWT is a client error, not a server error — and we can
+                // tell without contacting the provider. Reject it as 401 up front so the provider-hint
+                // path matches the issuer-fallback path (which screens unreadable tokens the same way)
+                // and the documented contract, and so we skip the discovery fetch for junk input.
+                // Otherwise ValidateToken throws ArgumentException (IDX12741) — not a
+                // SecurityTokenException — which would fall through to the generic 500.
+                //
+                // TryReadJwt, not CanReadToken alone: CanReadToken only checks the SHAPE (three
+                // base64url segments). "abc.def.ghi" has that shape, so it passed this guard and then
+                // blew up inside ValidateToken with a 500 — the very bug this guard exists to stop.
+                // Tokens with 1, 2 or 5 segments were rejected correctly; only correctly-shaped
+                // garbage slipped through. TryReadJwt actually parses the header and payload, so
+                // content that merely looks like a JWT is caught here too.
+                if (TryReadJwt(accessToken) == null)
                 {
                     _logger.LogDebug("Bearer is not a readable JWT; rejecting as invalid token");
                     await context.Response.DeferredWriteAsJsonAsync(
@@ -370,7 +377,24 @@ namespace DBToRestAPI.Middlewares
                     ClockSkew = TimeSpan.FromSeconds(clockSkewSeconds)
                 };
 
-                principal = tokenHandler.ValidateToken(accessToken, validationParameters, out validatedToken);
+                try
+                {
+                    principal = tokenHandler.ValidateToken(accessToken, validationParameters, out validatedToken);
+                }
+                catch (ArgumentException ex)
+                {
+                    // Belt and braces behind the TryReadJwt guard above. ValidateToken reports some
+                    // malformed-token conditions as ArgumentException rather than a
+                    // SecurityTokenException, and ArgumentException is not caught below, so it would
+                    // reach the generic handler and be reported as a 500 — telling the caller the
+                    // server broke when in fact they sent a bad token.
+                    //
+                    // Scoped to this one call on purpose: an ArgumentException from anywhere else in
+                    // the enclosing try (a malformed authority URL in OUR config, say) really is a
+                    // server error and must keep returning 500.
+                    _logger.LogDebug(ex, "Access token rejected as malformed by the validator");
+                    throw new SecurityTokenMalformedException("The token is malformed.", ex);
+                }
 
                 _logger.LogDebug("Access token validation successful");
             }
@@ -473,7 +497,7 @@ namespace DBToRestAPI.Middlewares
                 .Concat(principal.FindAll("roles"))
                 .Select(c => c.Value)
                 .Distinct()
-                .ToList()??[];
+                .ToList() ?? [];
             //if (userRoles?.Any() == true)
             //    claimsDict["roles"] = string.Join("|", userRoles);
             #endregion
@@ -564,8 +588,28 @@ namespace DBToRestAPI.Middlewares
             if (!string.IsNullOrWhiteSpace(userName))
                 claimsDict["name"] = userName;
 
-            if (userRoles.Count == 0)
+            // Condition was inverted: it wrote "roles" ONLY when there were none (an empty
+            // string), and skipped it whenever roles actually existed. That mattered because
+            // .NET rewrites inbound claim names - "roles" and "role" both become
+            // http://schemas.microsoft.com/ws/2008/06/identity/claims/role - so the generic
+            // claim-copy loop below never produces a key called "roles". The unification here
+            // IS the only thing that gives SQL authors {auth{roles}}, exactly as the "email"
+            // line above is what gives them {auth{email}} despite the same rewriting.
+            if (userRoles.Count > 0)
                 claimsDict["roles"] = string.Join("|", userRoles);
+
+            // Unified login instant, same intent as "email" and "roles" above: one name a SQL
+            // author can rely on across providers. Both source claims keep their own names
+            // (neither is rewritten), but their AVAILABILITY differs - iat is required in an
+            // OIDC ID token, auth_time only when max_age was requested. Prefer auth_time: it
+            // marks when the human authenticated and survives a silent token refresh, whereas
+            // iat changes on every refresh. Lets a SQL author compare the login instant against
+            // a server-side "sessions invalidated at" timestamp, so a token issued before a
+            // logout is rejected even though it has not yet expired.
+            var authInstant = principal.FindFirst("auth_time")?.Value
+                              ?? principal.FindFirst("iat")?.Value;
+            if (!string.IsNullOrWhiteSpace(authInstant))
+                claimsDict["auth_time"] = authInstant;
 
 
 
