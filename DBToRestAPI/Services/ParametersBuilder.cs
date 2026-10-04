@@ -978,7 +978,9 @@ public class ParametersBuilder
             .Replace("{{guid}}", guid)
             .Replace("{file{name}}", fileName).UnifyPathSeperator()
             .Replace(comparisonType: StringComparison.OrdinalIgnoreCase, oldValue: "\\", newValue: "/");
-        return relativePath;
+        // A structure that starts with a separator would make the path rooted, and Path.Combine would then
+        // drop the store's base_path and write outside the store.
+        return relativePath.TrimStart('/');
     }
 
 
@@ -1123,8 +1125,10 @@ public class ParametersBuilder
             throw new ArgumentException($"File name `{fileName}` contains invalid path traversal sequence `..`");
         }
 
-        // validate if file name has directory separator characters
-        if (fileName.Contains(Path.DirectorySeparatorChar) || fileName.Contains(Path.AltDirectorySeparatorChar))
+        // validate if file name has directory separator characters. Both '/' and '\' are refused on every
+        // OS: on Linux '\' is an ordinary character, but BuildRelativeFilePath turns it into '/', so a name
+        // like \tmp\x.pdf would otherwise become a rooted path outside the store.
+        if (fileName.IndexOfAny(['/', '\\']) >= 0)
         {
             throw new ArgumentException($"File name `{fileName}` contains invalid directory separator characters.");
         }

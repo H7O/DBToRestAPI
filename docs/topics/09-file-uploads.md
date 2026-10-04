@@ -174,9 +174,11 @@ The system generates and passes this JSON to your SQL:
 | Setting | Description |
 |---------|-------------|
 | `optional` | Don't fail if store unavailable |
-| `base_path` | Root path for files |
+| `base_path` | Root path for files. Required for a local store: a local store without one is skipped by uploads and refused by downloads. |
 
 `optional` affects upload-time availability only. If a store successfully receives a file and the request later fails, that stored file is still included in rollback.
+
+A local store's `base_path` can be a Windows file share, written as a UNC path (`\\fileserver\share\uploads\` or `//fileserver/share/uploads/`). The account the app runs as needs Modify on the share folder: write for uploads, delete to roll back a failed upload, read for downloads. Under IIS's default app pool identity, or a service running as a built-in account, the app reaches the share as the server's computer account (`DOMAIN\SERVER$`), so grant that account, or run the pool or service as a domain account and grant that one instead. On Linux or in a container, mount the share and point `base_path` at the mount instead.
 
 ## Path Structure Variables
 
@@ -228,7 +230,7 @@ Handle file additions, updates, and deletions:
 
 ## Security
 
-- Path traversal protection built-in
+- Path traversal protection built-in: file names containing `/`, `\` or `..` are rejected on every OS, a leading `/` in `relative_file_path_structure` is dropped, and nothing is written outside the store's `base_path`
 - Extension whitelist validation
 - Size limit enforcement
 - Validate file ownership in SQL before operations

@@ -47,7 +47,7 @@ A download endpoint is like any other endpoint, but with two differences:
 ### How It Works
 
 1. SQL returns `file_name` and `relative_path`
-2. The application uses `<store>primary</store>` to resolve the full path
+2. The application uses `<store>primary</store>` to resolve the full path, and refuses (with a 404) any `relative_path` that would land outside that store
 3. The file is **streamed** to the client (never fully loaded into memory)
 4. The browser receives proper headers (`Content-Disposition`, `Content-Type`)
 
@@ -201,6 +201,7 @@ from file_variants where id = {{id}};
 | `THROW 50404` in SQL | 404 |
 | `THROW 50403` in SQL | 403 |
 | File not found in store | 404 |
+| `relative_path` points outside the store | 404 |
 | Store not configured | 500 |
 | SFTP connection failed | 500 |
 | HTTP proxy error | 502 |

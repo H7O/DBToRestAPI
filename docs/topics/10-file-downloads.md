@@ -69,6 +69,10 @@ Return one of these from your query:
 ]]></query>
 ```
 
+`relative_path` must point inside the store's `base_path`. Write it relative to the store, without a leading `/`, the way uploads store it. Anything else is refused with the same 404 as a missing file, and the refusal is logged as a warning. That covers any `..` segment (even one that would stay inside the store), absolute paths outside the store (a leading `/` makes a path absolute), and on Windows UNC or device paths to another machine (`\\host\share\...`, `\??\UNC\...`). An absolute path that does point inside the store is accepted, except in an SFTP store with no `base_path`, which only accepts relative paths. This matters most when a query builds the path from caller input.
+
+A local store needs a `base_path`. Downloads from a local store without one are refused and logged, just as uploads already skip such a store. An SFTP store with no `base_path` uses the SFTP account's home folder.
+
 ## Download from Database
 
 No `store` config needed:
@@ -186,7 +190,9 @@ FROM file_variants WHERE id = {{id}};
 | SQL returns no rows | 404 |
 | `THROW 50404` | 404 |
 | `THROW 50403` | 403 |
-| File not in store | 404 |
+| File not in store (local or SFTP), or not readable by the app's account | 404 (logged as a warning) |
+| `relative_path` points outside the store | 404 (logged as a warning) |
+| Local store has no `base_path` | 404 (logged as a warning) |
 | Store not configured | 500 |
 | SFTP connection failed | 500 |
 | HTTP proxy error | 502 |

@@ -254,8 +254,9 @@ namespace DBToRestAPI.Middlewares
                         {
                             try
                             {
-                                var destinationPath = Path.Combine(remotePath, relativePath)
-                                    .UnifyPathSeperator().Replace("\\", "/");
+                                // Resolved the same way as the upload above, so the delete hits the same file.
+                                if (!FileStorePath.TryResolveSftp(remotePath, relativePath, out var destinationPath))
+                                    continue;
                                 await sftpClient.DeleteAsync(destinationPath);
                                 this._logger.LogDebug("{time}: Deleted file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware",
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
@@ -297,7 +298,10 @@ namespace DBToRestAPI.Middlewares
                     {
                         foreach (var file in tempFilesTracker.GetLocalFiles())
                         {
-                            var destinationPath = Path.Combine(localPath, file.Value.RelativePath);
+                            // Same containment rule as downloads: nothing is written outside the store.
+                            if (!FileStorePath.TryResolveLocal(localPath, file.Value.RelativePath, out var destinationPath))
+                                throw new InvalidOperationException(
+                                    $"File path '{file.Value.RelativePath}' points outside local store '{entry.Config.Key}'.");
                             // see if the parent directory exists, if not create it
                             var parentDir = Path.GetDirectoryName(destinationPath);
                             if (!string.IsNullOrWhiteSpace(parentDir))
@@ -378,8 +382,10 @@ namespace DBToRestAPI.Middlewares
                         {
                             foreach (var file in tempFilesTracker.GetLocalFiles())
                             {
-                                var destinationPath = Path.Combine(remotePath, file.Value.RelativePath)
-                                    .UnifyPathSeperator().Replace("\\", "/");
+                                // Same containment rule as downloads: nothing is written outside the store.
+                                if (!FileStorePath.TryResolveSftp(remotePath, file.Value.RelativePath, out var destinationPath))
+                                    throw new InvalidOperationException(
+                                        $"File path '{file.Value.RelativePath}' points outside SFTP store '{entry.Config.Key}'.");
 
                                 // Check if file already exists on SFTP (unless overwrite is enabled)
                                 if (!overwriteExistingFiles)

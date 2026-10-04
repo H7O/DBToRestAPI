@@ -4,10 +4,10 @@
   <TargetFramework>net10.0</TargetFramework>
   <Nullable>enable</Nullable>
   <ImplicitUsings>enable</ImplicitUsings>
-  <Version>1.7.1</Version>
-  <AssemblyVersion>1.7.1.0</AssemblyVersion>
-  <FileVersion>1.7.1.0</FileVersion>
-  <InformationalVersion>1.7.1</InformationalVersion>
+  <Version>1.7.2</Version>
+  <AssemblyVersion>1.7.2.0</AssemblyVersion>
+  <FileVersion>1.7.2.0</FileVersion>
+  <InformationalVersion>1.7.2</InformationalVersion>
 </PropertyGroup>
 
 <!--
@@ -38,9 +38,9 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="Com.H" Version="10.3.0" />
+    <PackageReference Include="Com.H" Version="10.3.2" />
     <PackageReference Include="Com.H.Data.Common" Version="10.1.0.9" />
-    <PackageReference Include="Com.H.Net.Ssh" Version="10.1.0" />
+    <PackageReference Include="Com.H.Net.Ssh" Version="10.1.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
@@ -101,34 +101,35 @@
 
   <!--
     Copy the DB2 native CLI driver (clidriver) from the NuGet package into the build output so a
-    self-contained build can connect to DB2. Uses the package's generated path property (reliable
-    across OSes — the previous $(NuGetPackageRoot) + shell approach silently produced nothing on Linux)
-    and a cross-platform MSBuild <Copy>, copying only the clidriver subtree. Gated by _Db2NativeOsMatch
-    (win-x64 / linux-x64 only). A loud warning fires if the driver can't be found, so it never silently
-    goes missing again.
+    self-contained build can connect to DB2. The package folder is found from the DB2 assembly that
+    the build actually resolved, and a cross-platform MSBuild <Copy> copies only the clidriver subtree.
+    Gated by _Db2NativeOsMatch (win-x64 / linux-x64 only). A loud warning fires if the driver can't be
+    found, so it never silently goes missing again.
   -->
   <Target Name="CopyDb2CliDriver" AfterTargets="Build" Condition="'$(_Db2NativeOsMatch)' == 'true'">
     <PropertyGroup>
       <_Db2PkgId Condition="$([MSBuild]::IsOSPlatform('Windows'))">net.ibm.data.db2</_Db2PkgId>
       <_Db2PkgId Condition="$([MSBuild]::IsOSPlatform('Linux'))">net.ibm.data.db2-lnx</_Db2PkgId>
     </PropertyGroup>
-    <!-- NuGetPackageFolders is a ';'-separated list (global + any fallback folders); split it into items
-         and also try NuGetPackageRoot, then resolve the package's restored version folder under whichever
-         folder actually contains it. This avoids depending on the generated path-property name. -->
+    <!-- The resolved assembly sits at <package folder>/lib/<tfm>/IBM.Data.Db2.dll, so its folder's
+         grandparent is the exact package version restore picked, wherever NuGet put it. Listing the
+         version folders in the NuGet cache instead picked up every cached version (the package floats
+         on Version="*", so an older one stays behind after each IBM release) and broke the copy.
+         Before that, a GeneratePathProperty attempt read $(PkgNet_IBM_Data_Db2_lnx), but NuGet names
+         that property PkgNet_IBM_Data_Db2-lnx, so it came back empty on Linux. NuGetPackageId holds
+         the OS-specific id set above and is compared case-insensitively. -->
     <ItemGroup>
-      <_Db2PkgFolder Include="$(NuGetPackageFolders)" />
-      <_Db2PkgFolder Include="$(NuGetPackageRoot)" Condition="'$(NuGetPackageRoot)' != ''" />
-      <_Db2PkgBaseCandidate Include="@(_Db2PkgFolder->'%(Identity)$(_Db2PkgId)')" />
-      <_Db2VersionDir Include="$([System.IO.Directory]::GetDirectories('%(_Db2PkgBaseCandidate.Identity)'))" Condition="$([System.IO.Directory]::Exists('%(_Db2PkgBaseCandidate.Identity)'))" />
+      <_Db2Reference Include="@(ReferencePath)" Condition="'%(ReferencePath.NuGetPackageId)' == '$(_Db2PkgId)'" />
+      <_Db2PkgDir Include="$([System.IO.Path]::GetFullPath('%(_Db2Reference.RootDir)%(_Db2Reference.Directory)../..'))" Condition="'%(_Db2Reference.Identity)' != ''" />
     </ItemGroup>
     <PropertyGroup>
-      <_Db2VersionDir>@(_Db2VersionDir)</_Db2VersionDir>
+      <_Db2PkgDir>@(_Db2PkgDir->Distinct())</_Db2PkgDir>
     </PropertyGroup>
     <ItemGroup>
-      <_Db2ClidriverFiles Include="$(_Db2VersionDir)/buildTransitive/clidriver/**/*" Condition="'$(_Db2VersionDir)' != ''" />
+      <_Db2ClidriverFiles Include="$(_Db2PkgDir)/buildTransitive/clidriver/**/*" Condition="'$(_Db2PkgDir)' != ''" />
     </ItemGroup>
-    <Message Importance="high" Text="DB2: versionDir='$(_Db2VersionDir)' -&gt; copying clidriver to '$(OutputPath)clidriver'" />
-    <Warning Condition="'@(_Db2ClidriverFiles)' == ''" Text="DB2: no clidriver files found (candidates='@(_Db2PkgBaseCandidate)') — the DB2 native driver will be MISSING." />
+    <Message Importance="high" Text="DB2: packageDir='$(_Db2PkgDir)' -&gt; copying clidriver to '$(OutputPath)clidriver'" />
+    <Warning Condition="'@(_Db2ClidriverFiles)' == ''" Text="DB2: no clidriver files found (packageDir='$(_Db2PkgDir)', package '$(_Db2PkgId)') — the DB2 native driver will be MISSING." />
     <Copy Condition="'@(_Db2ClidriverFiles)' != ''" SourceFiles="@(_Db2ClidriverFiles)" DestinationFiles="@(_Db2ClidriverFiles->'$(OutputPath)clidriver/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 

@@ -1199,6 +1199,18 @@ namespace DBToRestAPI.Controllers
                 {
                     relativePath = fileName;
                 }
+
+                // One 404 for every way a store can fail to produce the file (outside the store, missing, not
+                // readable), so a caller who controls relative_path can't tell them apart.
+                var requestedPath = relativePath;
+                IActionResult FileNotFound() => NotFound(new
+                {
+                    success = false,
+                    message = $"File not found at relative path `{requestedPath}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                });
+                // relative_path may come from the caller, so a line break in it must not start a new log line.
+                static string ForLog(string value) => value.ReplaceLineEndings(@"\n");
+
                 // get IConfigurationSection for local_file_store from context items
                 if (HttpContext.Items.ContainsKey("local_file_store_section"))
                 {
@@ -1206,23 +1218,46 @@ namespace DBToRestAPI.Controllers
                     if (localStoreSection != null
                          && localStoreSection.Exists())
                     {
-                        var basePath = localStoreSection.GetValue<string>("base_path") ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(basePath)) basePath = AppContext.BaseDirectory;
-                        if (!string.IsNullOrWhiteSpace(basePath))
+                        var basePath = localStoreSection.GetValue<string>("base_path");
+                        if (string.IsNullOrWhiteSpace(basePath))
                         {
-                            relativePath = Path.Combine(basePath, relativePath).UnifyPathSeperator();
+                            // Uploads skip a local store without a base path, so it can never hold an uploaded
+                            // file. Falling back to the app's own folder would only expose the app's config.
+                            _logger.LogWarning(
+                                "{Time}: Local file store `{Store}` used by route `{Route}` has no base_path, so the download was refused",
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), localStoreSection.Key, HttpContext.Items["route"]);
+                            return FileNotFound();
                         }
-                        if (!System.IO.File.Exists(relativePath))
+                        if (!FileStorePath.TryResolveLocal(basePath, relativePath, out var fullPath))
                         {
-                            return NotFound(new
+                            _logger.LogWarning(
+                                "{Time}: Relative path `{RelativePath}` for route `{Route}` points outside local file store `{Store}` and was refused",
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), ForLog(relativePath), HttpContext.Items["route"], localStoreSection.Key);
+                            return FileNotFound();
+                        }
+                        // File.Exists is true for a file the app's account can't read, so opening it can still
+                        // fail; both cases get the same 404.
+                        FileStream? fileStream = null;
+                        if (System.IO.File.Exists(fullPath))
+                        {
+                            try
                             {
-                                success = false,
-                                message = $"File not found at relative path `{relativePath}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                            });
+                                // Use async file stream with proper buffering
+                                fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true);
+                            }
+                            catch (Exception ex) when (ex is UnauthorizedAccessException or FileNotFoundException or DirectoryNotFoundException)
+                            {
+                            }
                         }
-
-                        // Use async file stream with proper buffering
-                        var fileStream = new FileStream(relativePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true);
+                        if (fileStream == null)
+                        {
+                            // The full path names the server or share behind the store, so it goes to the
+                            // log only. The caller sees the relative path its own query returned.
+                            _logger.LogWarning(
+                                "{Time}: File for route `{Route}` not found, or not readable by the app's account, at `{FullPath}`",
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), HttpContext.Items["route"], ForLog(fullPath));
+                            return FileNotFound();
+                        }
                         return File(fileStream, mimeType, fileName);
                     }
                 }
@@ -1234,11 +1269,12 @@ namespace DBToRestAPI.Controllers
                     {
                         var basePath = HttpContext.Items["base_path"] as string;
                         if (string.IsNullOrWhiteSpace(basePath)) basePath = "";
-                        else
+                        if (!FileStorePath.TryResolveSftp(basePath, relativePath, out var remotePath))
                         {
-                            relativePath = Path.Combine(basePath, relativePath)
-                                .UnifyPathSeperator()
-                                .Replace("\\", "/");
+                            _logger.LogWarning(
+                                "{Time}: Relative path `{RelativePath}` for route `{Route}` points outside SFTP file store `{Store}` and was refused",
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), ForLog(relativePath), HttpContext.Items["route"], sftpStoreSection.Key);
+                            return FileNotFound();
                         }
                         string host = sftpStoreSection.GetValue<string>("host") ?? string.Empty;
                         if (string.IsNullOrWhiteSpace(host))
@@ -1273,19 +1309,30 @@ namespace DBToRestAPI.Controllers
                         HttpContext.Response.RegisterForDisposeAsync(sftpClient);
 
 
-                        var stream = await sftpClient.DownloadAsStreamAsync(
-                            relativePath,
-                            HttpContext.RequestAborted
-                            );
-
+                        // SSH.NET throws for a missing or unreadable file rather than returning null. Every SFTP
+                        // status error (no such file, permission denied, a folder instead of a file) is a file
+                        // this store can't serve; connection failures are not SftpException and still surface.
+                        Stream? stream;
+                        try
+                        {
+                            stream = await sftpClient.DownloadAsStreamAsync(
+                                remotePath,
+                                HttpContext.RequestAborted
+                                );
+                        }
+                        catch (Renci.SshNet.Common.SftpException)
+                        {
+                            stream = null;
+                        }
 
                         if (stream == null)
                         {
-                            return NotFound(new
-                            {
-                                success = false,
-                                message = $"File not found at relative path `{relativePath}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                            });
+                            // The remote path names the folder layout behind the store, so it goes to the
+                            // log only. The caller sees the relative path its own query returned.
+                            _logger.LogWarning(
+                                "{Time}: File for route `{Route}` not found, or not readable by the SFTP account, on SFTP file store `{Store}` at `{RemotePath}`",
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), HttpContext.Items["route"], sftpStoreSection.Key, ForLog(remotePath));
+                            return FileNotFound();
                         }
                         return File(stream, mimeType, fileName);
 

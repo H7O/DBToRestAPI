@@ -234,6 +234,7 @@ See [19-webhooks.md](docs/topics/19-webhooks.md) for complete configuration refe
 <response_structure>file</response_structure>
 <query>SELECT file_name, relative_path FROM files WHERE id = {{id}};</query>
 ```
+`relative_path` must resolve inside the store's `base_path`. Anything else (`..`, an absolute path elsewhere, a UNC path) is refused with 404.
 
 ### Static File Serving (website / SPA)
 ```xml

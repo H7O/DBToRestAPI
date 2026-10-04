@@ -76,6 +76,18 @@
         <optional>true</optional>
 
       </site2>
+      <!-- A Windows file share works as a base path too. Write it as a UNC path, either
+        \\fileserver\share\uploads\ or //fileserver/share/uploads/.
+        The account the app runs as needs Modify on the share folder: write for uploads, delete to
+        roll back a failed upload, read for downloads. Under IIS's default app pool identity, or a
+        service running as a built-in account, the app reaches the share as the server's computer
+        account (DOMAIN\SERVER$), so grant that account, or run the pool or service as a domain
+        account and grant that one instead.
+        On Linux or in a container, mount the share first and point base_path at the mount.
+      <site5>
+        <base_path><![CDATA[\\fileserver\share\uploads\]]></base_path>
+      </site5>
+      -->
     </local_file_store>
 
     <sftp_file_store>
