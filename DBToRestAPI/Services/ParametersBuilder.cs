@@ -166,6 +166,15 @@ public class ParametersBuilder
                 StatusCode = 400
             });
         }
+        catch (Exception ex) when (ex is not OperationCanceledException
+            && _httpContextAccessor.HttpContext?.RequestAborted.IsCancellationRequested == true)
+        {
+            // The caller went away mid-request (a dropped upload, say). Nobody reads this response, and
+            // it is not a server fault worth an Error entry with a stack trace.
+            _logger.LogDebug("{Time}: Request aborted by the caller while its parameters were read ({Type})",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), ex.GetType().Name);
+            return (null, new ObjectResult(new { success = false, message = "Request was cancelled" }) { StatusCode = 400 });
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "{Time}: Failed to read the request's parameters",
@@ -484,9 +493,26 @@ public class ParametersBuilder
         if (filesArray.ValueKind != JsonValueKind.Array)
             throw new RequestValidationException($"Invalid JSON format: Property must be an array");
 
+        bool isMultipartMode = StringComparer.InvariantCultureIgnoreCase.Equals(
+            this.ContentType,
+            "multipart/form-data");
+
+        // Each uploaded part is claimed by exactly one metadata entry. A part nobody claims would be
+        // neither stored nor passed to the query, so it is refused rather than silently dropped.
+        var claimedFormFiles = new HashSet<IFormFile>(ReferenceEqualityComparer.Instance);
+        void RefuseUnclaimedFormFiles()
+        {
+            if (!isMultipartMode || formFiles is null) return;
+            var unclaimed = formFiles.FirstOrDefault(f => !claimedFormFiles.Contains(f));
+            if (unclaimed != null)
+                throw new RequestValidationException(
+                    $"Uploaded file `{unclaimed.FileName}` has no entry in `{this.FilesDataFieldName}`.");
+        }
+
         // Check if array is empty, if so just write empty array
         if (filesArray.GetArrayLength() == 0)
         {
+            RefuseUnclaimedFormFiles();
             writer.WriteStartArray();
             writer.WriteEndArray();
             return;
@@ -547,24 +573,73 @@ public class ParametersBuilder
 
         // Determine if we're processing multipart files or JSON base64
 
-        // don't use the below check to know if the submission is multipart or not
-        // use the header check in ContentType property instead
-        // bool isMultipartMode = formFiles != null && formFiles.Count > 0;
+        // isMultipartMode (set above) comes from the content type header, not from
+        // formFiles != null && formFiles.Count > 0.
 
-        // check the header instead
-        bool isMultipartMode = StringComparer.InvariantCultureIgnoreCase.Equals(
-            this.ContentType,
-            "multipart/form-data");
 
+        // Pair metadata entries with uploaded parts before writing anything, each part claimed once.
+        // An entry that already carries a relative_path names a stored file (an existing file kept as is
+        // in a partial update), so entries without one claim parts first and it only gets a part left
+        // over. Within each group an exact-case name match goes before a case-insensitive one, so
+        // Image.jpg and image.jpg are not paired crosswise.
+        // Every entry counts toward the limit, so refuse an oversized array before pairing does any work.
+        if (maxNumberOfFiles.HasValue && filesArray.GetArrayLength() > maxNumberOfFiles.Value)
+            throw new RequestValidationException($"Number of files exceeds the maximum allowed limit of {maxNumberOfFiles.Value}");
+
+        var assignedParts = new Dictionary<int, IFormFile>();
+        if (isMultipartMode && formFiles is { Count: > 0 })
+        {
+            // Parts indexed by name (exact case, and ignoring case), each queue in upload order, so
+            // pairing stays linear however many entries and parts a request carries.
+            var byExactName = formFiles.GroupBy(f => f.FileName, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => new Queue<IFormFile>(g), StringComparer.Ordinal);
+            var byAnyCaseName = formFiles.GroupBy(f => f.FileName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => new Queue<IFormFile>(g), StringComparer.OrdinalIgnoreCase);
+            IFormFile? TakePart(string name, bool exactCase)
+            {
+                var index = exactCase ? byExactName : byAnyCaseName;
+                if (!index.TryGetValue(name, out var queue)) return null;
+                while (queue.TryDequeue(out var part))
+                {
+                    if (claimedFormFiles.Add(part)) return part;
+                }
+                return null;
+            }
+
+            var entries = filesArray.EnumerateArray().ToList();
+            foreach (var storedFilesPass in new[] { false, true })
+            foreach (var exactCase in new[] { true, false })
+            {
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    if (assignedParts.ContainsKey(i)) continue;
+                    var entry = entries[i];
+                    if (entry.ValueKind != JsonValueKind.Object
+                        || !entry.TryGetProperty(fileNameField, out var nameProperty)
+                        || nameProperty.ValueKind != JsonValueKind.String)
+                        continue;
+                    var namesStoredFile = entry.TryGetProperty("relative_path", out var storedPath)
+                        && storedPath.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(storedPath.GetString());
+                    if (namesStoredFile != storedFilesPass) continue;
+
+                    var part = TakePart(nameProperty.GetString()!, exactCase);
+                    if (part == null) continue;
+                    assignedParts[i] = part;
+                }
+            }
+        }
 
         // Write array directly to the provided writer
         writer.WriteStartArray();
 
         int fileCount = 0;
+        int entryIndex = -1;
         // iterate over each file in the array and build the new array with extra fields namely:
         // id, relative_path, extension, size, mime_type, local_temp_path (if content_base64 is passed)
         foreach (var fileElement in filesArray.EnumerateArray())
         {
+            entryIndex++;
             if (maxNumberOfFiles.HasValue && fileCount >= maxNumberOfFiles.Value)
                 throw new RequestValidationException($"Number of files exceeds the maximum allowed limit of {maxNumberOfFiles.Value}");
 
@@ -593,8 +668,7 @@ public class ParametersBuilder
                     throw new RequestValidationException($"Invalid JSON format: Each file object must contain a non-empty string property `{fileNameField}` representing the file name");
                 }
                 var fileName = fileNameProperty.GetString()!;
-                var matchingFormFile = formFiles!
-                    .FirstOrDefault(f => f.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+                assignedParts.TryGetValue(entryIndex, out var matchingFormFile);
                 if (matchingFormFile == null)
                 {
                     // existing file entry - write as is
@@ -652,6 +726,7 @@ public class ParametersBuilder
             fileCount++;
 
         }
+        RefuseUnclaimedFormFiles();
         writer.WriteEndArray();
 
     }
@@ -729,6 +804,10 @@ public class ParametersBuilder
         }
         else
         {
+            // The query gets the content as text. Plain base64 that left its padding off is handed over
+            // complete, since a decoder on the SQL side may not accept it; anything else goes as sent.
+            base64Content = PadIfUnpaddedBase64(base64Content);
+
             // Decode to get size but keep content in JSON
             var fileSize = GetBase64DecodedSize(base64Content);
 
@@ -884,9 +963,15 @@ public class ParametersBuilder
 
 
     /// <summary>
-    /// Memory-efficient streaming base64 decode and write to temp file
-    /// Uses ArrayPool for buffer management and FromBase64Transform for chunked decoding
+    /// Memory-efficient streaming base64 decode and write to temp file. Whitespace (space and
+    /// \t \n \v \f \r) is skipped, the significant characters are decoded in blocks of 4096, and an
+    /// unpadded last group is completed, so the stored bytes are exactly the ones the caller encoded.
     /// </summary>
+    /// <remarks>
+    /// This replaced FromBase64Transform, which dropped an incomplete last group (unpadded content lost
+    /// its last one or two bytes) and could throw on valid content when whitespace fell near the
+    /// boundary between the chunks it was fed.
+    /// </remarks>
     private async Task<(string tempPath, long fileSize)> WriteBase64ToTempFileStreaming(
         string base64Content,
         long? maxFileSizeInBytes,
@@ -895,6 +980,9 @@ public class ParametersBuilder
     {
         var tempPath = Path.GetTempFileName();
         long totalBytesWritten = 0;
+        const int blockChars = 4096; // a multiple of 4, so every full block decodes on its own
+        char[] block = ArrayPool<char>.Shared.Rent(blockChars);
+        byte[] output = ArrayPool<byte>.Shared.Rent(blockChars / 4 * 3);
 
         try
         {
@@ -906,77 +994,46 @@ public class ParametersBuilder
                 bufferSize: 81920,
                 useAsync: true);
 
-            using var transform = new FromBase64Transform();
-
-            const int chunkSize = 4096; // Must be multiple of 4 for base64
-            int offset = 0;
-
-            while (offset < base64Content.Length)
+            async Task DecodeAsync(int count)
             {
-                int length = Math.Min(chunkSize, base64Content.Length - offset);
+                if (!Convert.TryFromBase64Chars(block.AsSpan(0, count), output, out int written))
+                    throw new RequestValidationException($"File `{fileName}` content is not valid base64.");
+                await fileStream.WriteAsync(output.AsMemory(0, written), cancellationToken);
+                totalBytesWritten += written;
+                if (maxFileSizeInBytes.HasValue && totalBytesWritten > maxFileSizeInBytes.Value)
+                    throw new RequestValidationException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
+            }
 
-                // Ensure we're at a valid base64 boundary
-                if (offset + length < base64Content.Length && length % 4 != 0)
+            int filled = 0;
+            foreach (var c in base64Content)
+            {
+                if (IsBase64Whitespace(c)) continue;
+                block[filled++] = c;
+                if (filled == blockChars)
                 {
-                    length = (length / 4) * 4;
-                }
-
-                if (length == 0)
-                    break;
-
-                // Rent buffers from ArrayPool for zero-allocation processing
-                byte[] inputBuffer = ArrayPool<byte>.Shared.Rent(length);
-                byte[] outputBuffer = ArrayPool<byte>.Shared.Rent(length);
-
-                try
-                {
-                    int bytesEncoded = Encoding.ASCII.GetBytes(
-                        base64Content.AsSpan(offset, length),
-                        inputBuffer);
-
-                    bool isFinalBlock = (offset + length >= base64Content.Length);
-
-                    if (isFinalBlock)
-                    {
-                        byte[] finalOutput = transform.TransformFinalBlock(inputBuffer, 0, bytesEncoded);
-                        await fileStream.WriteAsync(finalOutput, cancellationToken);
-                        totalBytesWritten += finalOutput.Length;
-                    }
-                    else
-                    {
-                        int outputBytes = transform.TransformBlock(
-                            inputBuffer, 0, bytesEncoded,
-                            outputBuffer, 0);
-
-                        await fileStream.WriteAsync(
-                            outputBuffer.AsMemory(0, outputBytes),
-                            cancellationToken);
-
-                        totalBytesWritten += outputBytes;
-                    }
-
-                    // Check size limit during processing
-                    if (maxFileSizeInBytes.HasValue && totalBytesWritten > maxFileSizeInBytes.Value)
-                    {
-                        throw new RequestValidationException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
-                    }
-
-                    offset += length;
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(inputBuffer);
-                    ArrayPool<byte>.Shared.Return(outputBuffer);
+                    await DecodeAsync(filled);
+                    filled = 0;
                 }
             }
 
+            // The last group: complete it if the caller left the padding off. One leftover character
+            // can't be base64 at all.
+            switch (filled % 4)
+            {
+                case 1:
+                    throw new RequestValidationException($"File `{fileName}` content is not valid base64.");
+                case 2:
+                    block[filled++] = '=';
+                    block[filled++] = '=';
+                    break;
+                case 3:
+                    block[filled++] = '=';
+                    break;
+            }
+            if (filled > 0)
+                await DecodeAsync(filled);
+
             return (tempPath, totalBytesWritten);
-        }
-        catch (FormatException)
-        {
-            // FromBase64Transform throws this for anything that is not base64.
-            try { File.Delete(tempPath); } catch { }
-            throw new RequestValidationException($"File `{fileName}` content is not valid base64.");
         }
         catch
         {
@@ -984,6 +1041,36 @@ public class ParametersBuilder
             try { File.Delete(tempPath); } catch { }
             throw;
         }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(block);
+            ArrayPool<byte>.Shared.Return(output);
+        }
+    }
+
+    /// <summary>The whitespace base64 decoders skip: space and \t \n \v \f \r.</summary>
+    private static bool IsBase64Whitespace(char c) => c == ' ' || (c >= '\t' && c <= '\r');
+
+    /// <summary>
+    /// The content with its '=' padding restored when it is plain base64 that left the padding off.
+    /// Anything else (already padded, a data URI, not base64 at all) is returned unchanged, because the
+    /// query receives it as text and may expect exactly what the caller sent.
+    /// </summary>
+    private static string PadIfUnpaddedBase64(string content)
+    {
+        long significant = 0;
+        foreach (var c in content)
+        {
+            if (IsBase64Whitespace(c)) continue;
+            if (!(char.IsAsciiLetterOrDigit(c) || c == '+' || c == '/')) return content;
+            significant++;
+        }
+        return (significant % 4) switch
+        {
+            2 => content.TrimEnd(' ', '\t', '\n', '\v', '\f', '\r') + "==",
+            3 => content.TrimEnd(' ', '\t', '\n', '\v', '\f', '\r') + "=",
+            _ => content,
+        };
     }
 
     /// <summary>
@@ -1315,14 +1402,48 @@ public class ParametersBuilder
         if (!_formContentTypes.Contains(contentType, StringComparer.OrdinalIgnoreCase))
             return nullProtectionParams();
 
+        // A form content type with no body (some clients send one on a GET) has nothing to read, as
+        // before 1.7.4.
+        if (context.Request.ContentLength == 0
+            || context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpRequestBodyDetectionFeature>()?.CanHaveBody == false)
+            return nullProtectionParams();
+
         try
         {
 
-            // Read the form data
-            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            // Read the form data. A body that is malformed or ends early is the caller's problem; a body
+            // over the size limit (BadHttpRequestException, 413) and a cancelled request pass through.
+            IFormCollection form;
+            try
+            {
+                form = await context.Request.ReadFormAsync(context.RequestAborted);
+            }
+            // Only the plain IOException the multipart parser raises for a malformed or cut-off body.
+            // Subtypes (BadHttpRequestException keeps its 413, a dropped connection, a missing temp
+            // folder) and disk faults (another HResult, e.g. disk full while the body is buffered)
+            // are the server's or the connection's, not the caller's.
+            catch (IOException ex) when (ex.GetType() == typeof(IOException)
+                && ex.HResult == unchecked((int)0x80131620) // COR_E_IO: no OS error behind it
+                && !context.RequestAborted.IsCancellationRequested)
+            {
+                throw new RequestValidationException("The form data could not be read.");
+            }
+
+            // File parts on an upload route need a files field to claim them; without one they would be
+            // neither stored nor passed to the query.
+            void RefusePartsWithoutAFilesField()
+            {
+                if (!string.IsNullOrWhiteSpace(filesField) && form.Files.Count > 0)
+                    throw new RequestValidationException(
+                        $"Uploaded file `{form.Files[0].FileName}` has no entry in `{filesField}`.");
+            }
 
             if (form == null || form.Count < 1)
+            {
+                RefusePartsWithoutAFilesField();
                 return nullProtectionParams();
+            }
+            bool filesFieldProcessed = false;
 
             using var ms = new MemoryStream();
             using var writer = new Utf8JsonWriter(ms, _jsonWriterOptions);
@@ -1373,7 +1494,11 @@ public class ParametersBuilder
                 using var jsonDocScope = jsonDoc;
                 writer.WritePropertyName(filesField!);
                 await ProcessFiles(jsonDoc.RootElement, writer, form.Files); // ← Pass JsonElement + form files
+                filesFieldProcessed = true;
             }
+
+            if (!filesFieldProcessed)
+                RefusePartsWithoutAFilesField();
 
             writer.WriteEndObject();
 
@@ -1385,17 +1510,10 @@ public class ParametersBuilder
                 QueryParamsRegex = formDataVarRegex
             };
         }
-        catch (Exception ex) when (ex is RequestValidationException or BadHttpRequestException or InvalidDataException)
-        {
-            // An invalid upload, a body over the size limit (BadHttpRequestException, 413) or a form
-            // over one of the FormOptions limits (InvalidDataException) must reach the caller, not be
-            // dropped while the request carries on with every form field null.
-            throw;
-        }
-        catch
-        {
-            return nullProtectionParams();
-        }
+        // No catch here. An invalid upload, a body over the size limit, a form over a FormOptions
+        // limit, or an unexpected failure while saving a part must reach the caller (as a 400, 413
+        // or 500 from GetParamsOrErrorAsync), not be dropped while the request carries on with every
+        // form field null and reports success.
         finally
         {
             // Reset stream position for next middleware

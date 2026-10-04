@@ -237,6 +237,8 @@ Handle file additions, updates, and deletions:
 
 An upload that breaks one of these rules is refused with `400` and a message saying why, for example ``File extension `.exe` is not permitted.``. The rules cover an invalid file name, a disallowed extension, a file that is too large, too many files, content that is not valid base64, a JSON body that is not an object, and a files field that is not a JSON array. That holds for JSON and multipart uploads alike. Nothing is stored and the query does not run. A request body larger than `max_payload_size_in_bytes` gets `413`, whether it is JSON or a form.
 
+Base64 content may leave off its trailing `=` padding; it is still decoded in full. In a multipart upload, each metadata entry takes the next file part with its name, so several files with the same name (phones often call every photo `image.jpg`) are each stored with their own content. An entry with no part of its own is passed to the query unchanged, as an existing file. When an entry for a file already stored (it carries a `relative_path`) and a new entry share a name, the new entry gets the part. A file part that no entry names is refused with `400`, and so is a multipart body that can't be read.
+
 ## Related Topics
 
 - [File Downloads](10-file-downloads.md) - Downloading uploaded files

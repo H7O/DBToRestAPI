@@ -11,19 +11,19 @@ names the note that explains the background.
   destination hosts (global, overridable per endpoint) would close that. Background:
   [SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1, "Not done, and why".
 
-- **Base64 upload content without padding is silently truncated.** A JSON upload whose
-  `content_base64` lacks its trailing `=` padding is stored without its last bytes, and the
-  request reports success. The streaming decoder in `WriteBase64ToTempFileStreaming` should
-  either restore the padding or refuse the content with a 400. Found by the 1.7.3 review; it
-  predates that release. Background: [ParametersBuilder.cs](DBToRestAPI/Services/ParametersBuilder.cs).
-
-- **Two multipart file parts with the same name keep only the first one's content.** Metadata
-  entries are matched to file parts by file name, so a second part with the same name is never
-  read, and both entries store the first part's bytes. Duplicate names should be refused with a
-  400, or matched by position. Found by the 1.7.3 review; it predates that release. Background:
-  `ProcessFiles` in [ParametersBuilder.cs](DBToRestAPI/Services/ParametersBuilder.cs).
-
 ## Done
+
+- **Uploads could store something other than what was sent.** Fixed in 1.7.4. Base64 content
+  without its trailing `=` padding lost its last one or two bytes (the streaming decoder dropped
+  an incomplete last group), and two multipart parts with the same name were both stored with the
+  first part's bytes. Unpadded base64 is now completed before decoding (a length no base64 can
+  have is a 400), each multipart entry claims its own part in order, and a part no entry names is
+  a 400 instead of being ignored. The decoder no longer uses FromBase64Transform, which could
+  also throw (a 500) on valid content over 8 KB with whitespace near its chunk boundaries. The
+  multipart path no longer swallows failures: a form that can't be read is a 400, and an
+  unexpected failure is a logged 500 instead of a request that runs on without its files and
+  reports success. A form content type with no body is still read as no parameters.
+  See [UploadIntegrityTests.cs](DBToRestAPI.Tests/UploadIntegrityTests.cs).
 
 - **An invalid upload returned an empty 500, or was silently dropped.** Fixed in 1.7.3. Upload
   validation errors (file name, extension, size, count, content that is not base64, metadata
