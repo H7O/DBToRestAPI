@@ -235,6 +235,8 @@ Handle file additions, updates, and deletions:
 - Size limit enforcement
 - Validate file ownership in SQL before operations
 
+An upload that breaks one of these rules is refused with `400` and a message saying why, for example ``File extension `.exe` is not permitted.``. The rules cover an invalid file name, a disallowed extension, a file that is too large, too many files, content that is not valid base64, a JSON body that is not an object, and a files field that is not a JSON array. That holds for JSON and multipart uploads alike. Nothing is stored and the query does not run. A request body larger than `max_payload_size_in_bytes` gets `413`, whether it is JSON or a form.
+
 ## Related Topics
 
 - [File Downloads](10-file-downloads.md) - Downloading uploaded files

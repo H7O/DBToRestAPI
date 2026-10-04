@@ -160,7 +160,7 @@ public class FileStorePathTests
     [InlineData(@"a\b.pdf")]
     public void Upload_FileNameWithASeparatorIsRejectedOnEveryOs(string fileName)
     {
-        Assert.Throws<ArgumentException>(() => ParametersBuilder.ValidateAndGetNormalizeFileName(fileName));
+        Assert.Throws<RequestValidationException>(() => ParametersBuilder.ValidateAndGetNormalizeFileName(fileName));
     }
 
     [Theory]

@@ -174,7 +174,12 @@ namespace DBToRestAPI.Middlewares
 
             #region get parameters
             // retrieve the parameters (which consists of query string parameters and headers)
-            var qParams = await this._paramsBuilder.GetParamsAsync();
+            var (qParams, paramsError) = await this._paramsBuilder.GetParamsOrErrorAsync(_errorCode);
+            if (paramsError != null)
+            {
+                await context.Response.DeferredWriteAsJsonAsync(paramsError);
+                return;
+            }
 
             if (qParams == null)
                 {

@@ -11,12 +11,30 @@ names the note that explains the background.
   destination hosts (global, overridable per endpoint) would close that. Background:
   [SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1, "Not done, and why".
 
-- **An upload with an invalid file name returns an empty 500.** `ValidateAndGetNormalizeFileName`
-  throws `ArgumentException` (for example for `a\b.txt` on Windows), and nothing above it turns
-  that into a 400 with a message the caller can act on. Background:
-  [ParametersBuilder.cs](DBToRestAPI/Services/ParametersBuilder.cs), `ValidateAndGetNormalizeFileName`.
+- **Base64 upload content without padding is silently truncated.** A JSON upload whose
+  `content_base64` lacks its trailing `=` padding is stored without its last bytes, and the
+  request reports success. The streaming decoder in `WriteBase64ToTempFileStreaming` should
+  either restore the padding or refuse the content with a 400. Found by the 1.7.3 review; it
+  predates that release. Background: [ParametersBuilder.cs](DBToRestAPI/Services/ParametersBuilder.cs).
+
+- **Two multipart file parts with the same name keep only the first one's content.** Metadata
+  entries are matched to file parts by file name, so a second part with the same name is never
+  read, and both entries store the first part's bytes. Duplicate names should be refused with a
+  400, or matched by position. Found by the 1.7.3 review; it predates that release. Background:
+  `ProcessFiles` in [ParametersBuilder.cs](DBToRestAPI/Services/ParametersBuilder.cs).
 
 ## Done
+
+- **An invalid upload returned an empty 500, or was silently dropped.** Fixed in 1.7.3. Upload
+  validation errors (file name, extension, size, count, content that is not base64, metadata
+  shape) escaped parameter building, so a JSON upload got an empty 500. The multipart path
+  swallowed them, along with malformed metadata and a body over the size limit, so the request
+  ran on with every form field null and could report success. They are now a
+  `RequestValidationException`, which both paths let through and which becomes a 400 that says
+  why. A body over `max_payload_size_in_bytes` is a 413 for JSON and forms alike, a form over a
+  `FormOptions` limit is a 400, and anything else that fails while reading parameters is a JSON
+  500 with the error code. See `ParametersBuilder.GetParamsOrErrorAsync` in
+  [ParametersBuilder.cs](DBToRestAPI/Services/ParametersBuilder.cs).
 
 - **Keep a download's `relative_path` inside its store.** Shipped in 1.7.2. Before, the path a
   download query returned was joined to the store's `base_path` unchecked, so `..`, an absolute

@@ -1,6 +1,7 @@
 using Com.H.Data.Common;
 using Com.H.IO;
 using DBToRestAPI.Settings;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Identity.Client;
@@ -121,6 +122,62 @@ public class ParametersBuilder
             return filesDataFieldName;
             #endregion
 
+        }
+    }
+
+    /// <summary>
+    /// Runs <see cref="GetParamsAsync"/> and turns a failure into the response to send instead of an
+    /// exception. Without this, those exceptions reached Kestrel and the caller got an empty 500.
+    /// <list type="bullet">
+    /// <item>A <see cref="RequestValidationException"/> (the caller sent an invalid upload) becomes a 400
+    /// carrying its message.</item>
+    /// <item>A request body the server refused to read keeps the status Kestrel gave it (413 for one that
+    /// is too large), and a form over one of the FormOptions limits is a 400.</item>
+    /// <item>Cancellation still propagates, and anything else becomes a logged 500.</item>
+    /// </list>
+    /// </summary>
+    public async Task<(List<DbQueryParams>? Params, ObjectResult? Error)> GetParamsOrErrorAsync(string errorCode)
+    {
+        try
+        {
+            return (await GetParamsAsync(), null);
+        }
+        catch (RequestValidationException ex)
+        {
+            // The message can quote a caller-supplied file name, so no control character (line break,
+            // ANSI escape) reaches the log as is.
+            var forLog = string.Concat(ex.Message.Select(c => char.IsControl(c) ? '?' : c));
+            _logger.LogDebug("{Time}: Request rejected while reading its parameters: {Message}",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), forLog);
+            return (null, new ObjectResult(new { success = false, message = ex.Message }) { StatusCode = 400 });
+        }
+        catch (BadHttpRequestException ex)
+        {
+            return (null, new ObjectResult(new { success = false, message = "The request body could not be read." })
+            {
+                StatusCode = ex.StatusCode
+            });
+        }
+        catch (InvalidDataException)
+        {
+            // A form over one of the FormOptions limits (value length, value count, multipart headers).
+            return (null, new ObjectResult(new { success = false, message = "The form data could not be read." })
+            {
+                StatusCode = 400
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "{Time}: Failed to read the request's parameters",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+            return (null, new ObjectResult(new
+            {
+                success = false,
+                message = $"An unexpected error occurred processing your request (Contact your service provider support and provide them with error code `{errorCode}`)"
+            })
+            {
+                StatusCode = 500
+            });
         }
     }
 
@@ -368,6 +425,10 @@ public class ParametersBuilder
 
                 JsonElement root = document.RootElement;
 
+                // The files field is looked up as a property of the body, so the body must be an object.
+                if (root.ValueKind != JsonValueKind.Object)
+                    throw new RequestValidationException("The request body must be a JSON object.");
+
                 writer.WriteStartObject();
 
                 foreach (JsonProperty property in root.EnumerateObject())
@@ -421,7 +482,7 @@ public class ParametersBuilder
     {
         // check if jsonArray is indeed an array, if not throw exception
         if (filesArray.ValueKind != JsonValueKind.Array)
-            throw new ArgumentException($"Invalid JSON format: Property must be an array");
+            throw new RequestValidationException($"Invalid JSON format: Property must be an array");
 
         // Check if array is empty, if so just write empty array
         if (filesArray.GetArrayLength() == 0)
@@ -505,10 +566,10 @@ public class ParametersBuilder
         foreach (var fileElement in filesArray.EnumerateArray())
         {
             if (maxNumberOfFiles.HasValue && fileCount >= maxNumberOfFiles.Value)
-                throw new ArgumentException($"Number of files exceeds the maximum allowed limit of {maxNumberOfFiles.Value}");
+                throw new RequestValidationException($"Number of files exceeds the maximum allowed limit of {maxNumberOfFiles.Value}");
 
             if (fileElement.ValueKind != JsonValueKind.Object)
-                throw new ArgumentException("Invalid JSON format: Each file entry must be a JSON object");
+                throw new RequestValidationException("Invalid JSON format: Each file entry must be a JSON object");
 
             if (isMultipartMode)
             {
@@ -529,7 +590,7 @@ public class ParametersBuilder
                     || fileNameProperty.ValueKind != JsonValueKind.String
                     || string.IsNullOrWhiteSpace(fileNameProperty.GetString()))
                 {
-                    throw new ArgumentException($"Invalid JSON format: Each file object must contain a non-empty string property `{fileNameField}` representing the file name");
+                    throw new RequestValidationException($"Invalid JSON format: Each file object must contain a non-empty string property `{fileNameField}` representing the file name");
                 }
                 var fileName = fileNameProperty.GetString()!;
                 var matchingFormFile = formFiles!
@@ -615,7 +676,7 @@ public class ParametersBuilder
             || fileNameProperty.ValueKind != JsonValueKind.String
             || string.IsNullOrWhiteSpace(fileNameProperty.GetString()))
         {
-            throw new ArgumentException($"Invalid JSON format: Each file object must contain a non-empty string property `{fileNameField}` representing the file name");
+            throw new RequestValidationException($"Invalid JSON format: Each file object must contain a non-empty string property `{fileNameField}` representing the file name");
         }
 
         var fileName = fileNameProperty.GetString()!;
@@ -673,7 +734,7 @@ public class ParametersBuilder
 
             if (maxFileSizeInBytes.HasValue && fileSize > maxFileSizeInBytes.Value)
             {
-                throw new ArgumentException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
+                throw new RequestValidationException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
             }
 
             writer.WriteNumber("size", fileSize);
@@ -732,7 +793,7 @@ public class ParametersBuilder
         // Check file size
         if (maxFileSizeInBytes.HasValue && formFile.Length > maxFileSizeInBytes.Value)
         {
-            throw new ArgumentException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
+            throw new RequestValidationException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
         }
 
         // Get or generate file ID
@@ -897,7 +958,7 @@ public class ParametersBuilder
                     // Check size limit during processing
                     if (maxFileSizeInBytes.HasValue && totalBytesWritten > maxFileSizeInBytes.Value)
                     {
-                        throw new ArgumentException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
+                        throw new RequestValidationException($"File `{fileName}` exceeds the maximum allowed size of {maxFileSizeInBytes.Value} bytes");
                     }
 
                     offset += length;
@@ -910,6 +971,12 @@ public class ParametersBuilder
             }
 
             return (tempPath, totalBytesWritten);
+        }
+        catch (FormatException)
+        {
+            // FromBase64Transform throws this for anything that is not base64.
+            try { File.Delete(tempPath); } catch { }
+            throw new RequestValidationException($"File `{fileName}` content is not valid base64.");
         }
         catch
         {
@@ -1019,8 +1086,10 @@ public class ParametersBuilder
     /// </summary>
     /// <param name="fileName">The user-provided file name to validate (not a path).</param>
     /// <param name="permittedFileExtensions">Extension whitelist (including the dot, e.g., ".txt"). If null or empty, all extensions are allowed.</param>
-    /// <exception cref="ArgumentException">Thrown when the file name is invalid.</exception>
-    /// <exception cref="SecurityException">Thrown when the file name could escape the base directory.</exception>
+    /// <exception cref="RequestValidationException">Thrown when the file name is invalid.</exception>
+    /// <exception cref="SecurityException">Thrown when the name still resolves outside the temp folder used
+    /// for the check. The method's other checks already reject every caller-supplied way to do that, so
+    /// this means the server's temp folder setup is unusual, and it is reported as a server error.</exception>
     /// <returns>Normalized file name</returns>
     /// <remarks>
     /// IMPORTANT: Extension whitelist configuration must include the dot prefix (e.g., ".txt", ".pdf")
@@ -1035,13 +1104,21 @@ public class ParametersBuilder
 
         if (string.IsNullOrWhiteSpace(fileName))
         {
-            throw new ArgumentException("File name cannot be empty or whitespace.");
+            throw new RequestValidationException("File name cannot be empty or whitespace.");
         }
 
-        // Normalize to NFC form to prevent Unicode bypass attacks
-        if (!fileName.IsNormalized(NormalizationForm.FormC))
+        // Normalize to NFC form to prevent Unicode bypass attacks. Both calls throw ArgumentException
+        // for text that is not valid Unicode, such as a lone surrogate.
+        try
         {
-            fileName = fileName.Normalize(NormalizationForm.FormC);
+            if (!fileName.IsNormalized(NormalizationForm.FormC))
+            {
+                fileName = fileName.Normalize(NormalizationForm.FormC);
+            }
+        }
+        catch (ArgumentException)
+        {
+            throw new RequestValidationException("File name is not valid Unicode text.");
         }
 
 
@@ -1049,14 +1126,14 @@ public class ParametersBuilder
         // These can be used to bypass validation or hide malicious content
         if (fileName.Any(c => InvisibleChars.Contains(c)))
         {
-            throw new ArgumentException($"File name `{fileName}` contains invisible Unicode characters.");
+            throw new RequestValidationException($"File name `{fileName}` contains invisible Unicode characters.");
         }
 
         // Check for control characters early (includes null bytes)
         // (0x00-0x1F)
         if (fileName.Any(c => char.IsControl(c)))
         {
-            throw new ArgumentException($"File name `{fileName}` contains control characters.");
+            throw new RequestValidationException($"File name `{fileName}` contains control characters.");
         }
 
 
@@ -1066,7 +1143,7 @@ public class ParametersBuilder
         // in case files were first uploaded to linux then accessed on Windows later, or copied to Windows)
         if (fileName.Contains(':'))
         {
-            throw new ArgumentException($"File name `{fileName}` contains colon character (potential alternate data stream).");
+            throw new RequestValidationException($"File name `{fileName}` contains colon character (potential alternate data stream).");
         }
 
         // validate if file name has invalid characters
@@ -1097,7 +1174,7 @@ public class ParametersBuilder
 
         if (invalidChars.Count > 0)
         {
-            throw new ArgumentException(
+            throw new RequestValidationException(
                 $"File name `{fileName}` contains invalid characters: {string.Join(", ", invalidChars.Select(c => $"`{c}`"))}");
         }
 
@@ -1116,13 +1193,13 @@ public class ParametersBuilder
         // validate if file name is too long
         if (fileName.Length > 150)
         {
-            throw new ArgumentException($"File name `{fileName}` is too long. Maximum length is 150 characters.");
+            throw new RequestValidationException($"File name `{fileName}` is too long. Maximum length is 150 characters.");
         }
 
         // validate if file name has path traversal characters
         if (fileName.Contains(".."))
         {
-            throw new ArgumentException($"File name `{fileName}` contains invalid path traversal sequence `..`");
+            throw new RequestValidationException($"File name `{fileName}` contains invalid path traversal sequence `..`");
         }
 
         // validate if file name has directory separator characters. Both '/' and '\' are refused on every
@@ -1130,7 +1207,7 @@ public class ParametersBuilder
         // like \tmp\x.pdf would otherwise become a rooted path outside the store.
         if (fileName.IndexOfAny(['/', '\\']) >= 0)
         {
-            throw new ArgumentException($"File name `{fileName}` contains invalid directory separator characters.");
+            throw new RequestValidationException($"File name `{fileName}` contains invalid directory separator characters.");
         }
 
         // Check if the base filename (without extension) is reserved
@@ -1140,27 +1217,27 @@ public class ParametersBuilder
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
         if (WindowsReservedNames.Contains(fileNameWithoutExtension))
         {
-            throw new ArgumentException($"File name `{fileName}` uses a reserved Windows device name.");
+            throw new RequestValidationException($"File name `{fileName}` uses a reserved Windows device name.");
         }
 
         // Trim and check for changes (also Windows specific, but good practice to have it on linux too for the same reasons as above)
         var trimmedFileName = fileName.Trim(' ', '.');
         if (trimmedFileName != fileName)
         {
-            throw new ArgumentException($"File name cannot start or end with spaces or dots.");
+            throw new RequestValidationException($"File name cannot start or end with spaces or dots.");
         }
 
         // Check for files that are only dots (Windows restriction)
         if (fileName.All(c => c == '.'))
         {
-            throw new ArgumentException($"File name cannot consist only of dots.");
+            throw new RequestValidationException($"File name cannot consist only of dots.");
         }
 
 
         // Check for leading hyphen (can cause issues with command-line tools)
         if (fileName.StartsWith("-"))
         {
-            throw new ArgumentException($"File name cannot start with a hyphen.");
+            throw new RequestValidationException($"File name cannot start with a hyphen.");
         }
 
         // Optional: Check for multiple extensions (uncomment if needed)
@@ -1183,7 +1260,8 @@ public class ParametersBuilder
 
         if (!testFullPath.StartsWith(testBasePath, comparison))
         {
-            throw new SecurityException($"File path escapes the base directory.");
+            // Not the caller's doing (see this method's SecurityException note), so it stays a server error.
+            throw new SecurityException("File path escapes the base directory.");
         }
 
 
@@ -1193,12 +1271,12 @@ public class ParametersBuilder
 
             if (string.IsNullOrWhiteSpace(fileExtension))
             {
-                throw new ArgumentException("File must have an extension.");
+                throw new RequestValidationException("File must have an extension.");
             }
 
             if (!permittedFileExtensions.Contains(fileExtension, StringComparer.OrdinalIgnoreCase))
             {
-                throw new ArgumentException($"File extension `{fileExtension}` is not permitted.");
+                throw new RequestValidationException($"File extension `{fileExtension}` is not permitted.");
             }
         }
         return fileName;
@@ -1283,7 +1361,16 @@ public class ParametersBuilder
                 if (string.IsNullOrWhiteSpace(jsonArrayText))
                     continue;
 
-                using var jsonDoc = JsonDocument.Parse(jsonArrayText);
+                JsonDocument jsonDoc;
+                try
+                {
+                    jsonDoc = JsonDocument.Parse(jsonArrayText);
+                }
+                catch (JsonException)
+                {
+                    throw new RequestValidationException($"The `{filesField}` form field must be a JSON array of file entries.");
+                }
+                using var jsonDocScope = jsonDoc;
                 writer.WritePropertyName(filesField!);
                 await ProcessFiles(jsonDoc.RootElement, writer, form.Files); // ← Pass JsonElement + form files
             }
@@ -1297,6 +1384,13 @@ public class ParametersBuilder
                 DataModel = Encoding.UTF8.GetString(ms.ToArray()),
                 QueryParamsRegex = formDataVarRegex
             };
+        }
+        catch (Exception ex) when (ex is RequestValidationException or BadHttpRequestException or InvalidDataException)
+        {
+            // An invalid upload, a body over the size limit (BadHttpRequestException, 413) or a form
+            // over one of the FormOptions limits (InvalidDataException) must reach the caller, not be
+            // dropped while the request carries on with every form field null.
+            throw;
         }
         catch
         {

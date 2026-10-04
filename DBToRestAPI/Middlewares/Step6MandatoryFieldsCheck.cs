@@ -128,7 +128,12 @@ namespace DBToRestAPI.Middlewares
             }
             #endregion
             // retrieve the parameters (which consists of route, query string, form data, json body, and headers parameters)
-            var qParams = await this._paramsBuilder.GetParamsAsync();
+            var (qParams, paramsError) = await this._paramsBuilder.GetParamsOrErrorAsync(_errorCode);
+            if (paramsError != null)
+            {
+                await context.Response.DeferredWriteAsJsonAsync(paramsError);
+                return;
+            }
 
             if (qParams == null)
             {
