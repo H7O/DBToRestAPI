@@ -29,10 +29,12 @@ public class RouteConfigResolver
     private readonly IEncryptedConfiguration _configuration;
 
     private readonly AtomicGate _reloadingGate = new();
-    
-    public RouteConfigResolver(IEncryptedConfiguration configuration)
+    private readonly InertApiKeysWarning _inertApiKeysWarning;
+
+    public RouteConfigResolver(IEncryptedConfiguration configuration, ILogger<RouteConfigResolver>? logger = null)
     {
         _configuration = configuration;
+        _inertApiKeysWarning = new InertApiKeysWarning(logger);
         LoadRoutes(); // initial load
         ChangeToken.OnChange(
             () => _configuration.GetSection("routes").GetReloadToken(), 
@@ -76,6 +78,9 @@ public class RouteConfigResolver
 
             _exactRoutes = newExactRoutes;
             _wildcardRoutes = newWildcardRoutes;
+
+            _inertApiKeysWarning.Check(newExactRoutes.Select(r => (r.Key, r.Value))
+                .Concat(newWildcardRoutes.Select(r => (r.Prefix + "/*", r.Config))));
         }
         finally
         {

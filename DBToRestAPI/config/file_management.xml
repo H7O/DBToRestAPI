@@ -43,7 +43,7 @@
         the below two field can be overriden by the individual query in `queries` settings
         and if not defined there, these global settings will be used here.
         And if not defined here, the default values in code will be used: 
-        `name` for filename field and `content_base64` for base64 content field.
+        `name` for filename field and `base64_content` for base64 content field.
         
         precidence order is: API node in sql.xml > global setting here -> default in code.
     -->

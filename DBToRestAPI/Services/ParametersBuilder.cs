@@ -205,6 +205,8 @@ public class ParametersBuilder
 
         qParams = new List<DbQueryParams>();
 
+        RefuseFilesFieldOutsideTheBody();
+
         // order of adding to qParams matters
         // as the later added items have higher priority
 
@@ -276,6 +278,24 @@ public class ParametersBuilder
         context.Items["parameters"] = qParams;
         return qParams;
 
+    }
+
+    /// <summary>
+    /// On a route with a files field, the files array the query sees must be the one the engine built
+    /// from the request body. A query string parameter or a header with the same name answers to the
+    /// same <c>{{name}}</c> (the query string wins over the body, and a header fills in when the body
+    /// leaves the field out), so either would hand the query a files array of the caller's own, marked
+    /// as new uploads, with nothing uploaded. Both are refused.
+    /// </summary>
+    private void RefuseFilesFieldOutsideTheBody()
+    {
+        var filesField = this.FilesDataFieldName;
+        if (string.IsNullOrWhiteSpace(filesField)) return;
+
+        // Both collections ignore case, as the query's lookup does.
+        var request = Context.Request;
+        if (request.Query.ContainsKey(filesField) || request.Headers.ContainsKey(filesField))
+            throw new RequestValidationException($"`{filesField}` can only be sent in the request body.");
     }
 
     private DbQueryParams? ExtractSettingsParams()
@@ -440,14 +460,22 @@ public class ParametersBuilder
 
                 writer.WriteStartObject();
 
+                // The query looks parameters up ignoring case and a later copy replaces an earlier one, so
+                // the files field is matched ignoring case and may appear only once. Otherwise a second
+                // copy (`Attachments` next to `attachments`) would reach the query unprocessed.
+                bool filesFieldSeen = false;
                 foreach (JsonProperty property in root.EnumerateObject())
                 {
-                    if (!property.NameEquals(filesField ?? string.Empty))
+                    if (!property.Name.Equals(filesField, StringComparison.OrdinalIgnoreCase))
                     {
                         property.WriteTo(writer);
                     }
                     else
                     {
+                        if (filesFieldSeen)
+                            throw new RequestValidationException($"`{filesField}` appears more than once in the request body.");
+                        filesFieldSeen = true;
+
                         // Write the property name first, then the array value
                         writer.WritePropertyName(property.Name);
                         await ProcessFiles(property.Value, writer);
@@ -578,9 +606,10 @@ public class ParametersBuilder
 
 
         // Pair metadata entries with uploaded parts before writing anything, each part claimed once.
-        // An entry that already carries a relative_path names a stored file (an existing file kept as is
-        // in a partial update), so entries without one claim parts first and it only gets a part left
-        // over. Within each group an exact-case name match goes before a case-insensitive one, so
+        // An entry that already carries a relative_path names a stored file (an existing file kept in a
+        // partial update), so entries without one claim parts first and it only gets a part left
+        // over. An id alone is no sign of a stored file: a new entry may carry a caller-chosen id.
+        // Within each group an exact-case name match goes before a case-insensitive one, so
         // Image.jpg and image.jpg are not paired crosswise.
         // Every entry counts toward the limit, so refuse an oversized array before pairing does any work.
         if (maxNumberOfFiles.HasValue && filesArray.GetArrayLength() > maxNumberOfFiles.Value)
@@ -636,7 +665,7 @@ public class ParametersBuilder
         int fileCount = 0;
         int entryIndex = -1;
         // iterate over each file in the array and build the new array with extra fields namely:
-        // id, relative_path, extension, size, mime_type, local_temp_path (if content_base64 is passed)
+        // id, relative_path, extension, size, mime_type, backend_temp_file_path (if content_base64 is passed)
         foreach (var fileElement in filesArray.EnumerateArray())
         {
             entryIndex++;
@@ -657,7 +686,7 @@ public class ParametersBuilder
                 //    throw new ArgumentException($"Mismatch between metadata entries ({filesArray.GetArrayLength()}) and uploaded files ({formFiles.Count})");
 
                 // if it's an existing file entry without an uploaded file, skip processing
-                // just add it to the output as is
+                // just add it to the output (see WriteExistingFileEntry)
                 // to know whether or not it's an existing file entry
                 // see if the formFiles has a file with the same name or not
                 // if not then it's an existing file entry
@@ -667,12 +696,11 @@ public class ParametersBuilder
                 {
                     throw new RequestValidationException($"Invalid JSON format: Each file object must contain a non-empty string property `{fileNameField}` representing the file name");
                 }
-                var fileName = fileNameProperty.GetString()!;
                 assignedParts.TryGetValue(entryIndex, out var matchingFormFile);
                 if (matchingFormFile == null)
                 {
-                    // existing file entry - write as is
-                    fileElement.WriteTo(writer);
+                    // existing file entry - passed on without the fields only the engine sets
+                    WriteExistingFileEntry(fileElement, writer, fileContentField);
                     fileCount++;
                     continue;
                 }
@@ -683,6 +711,7 @@ public class ParametersBuilder
                     matchingFormFile,
                     writer,
                     fileNameField,
+                    fileContentField,
                     relativeFilePathStructure,
                     maxFileSizeInBytes,
                     passFilesContentToQuery,
@@ -693,7 +722,7 @@ public class ParametersBuilder
             else
             {
                 // JSON mode: check if this file has base64 content
-                // If not, it's an existing file entry - write as-is (supports partial uploads on update)
+                // If not, it's an existing file entry - passed on (supports partial uploads on update)
                 // this is a temporary measure until having the time to implement logic that can
                 // detect the existance of the property without loading the whole content in memory
                 // perhaps I should only check if the property exists without checking its value
@@ -703,8 +732,8 @@ public class ParametersBuilder
                     || contentProperty.ValueKind != JsonValueKind.String
                     || string.IsNullOrWhiteSpace(contentProperty.GetString()))
                 {
-                    // existing file entry - write as is
-                    fileElement.WriteTo(writer);
+                    // existing file entry - passed on without the fields only the engine sets
+                    WriteExistingFileEntry(fileElement, writer, fileContentField);
                     fileCount++;
                     continue;
                 }
@@ -729,6 +758,34 @@ public class ParametersBuilder
         RefuseUnclaimedFormFiles();
         writer.WriteEndArray();
 
+    }
+
+    /// <summary>
+    /// Fields the engine writes on a file entry it stores, besides the id, the file name and the content
+    /// field. A query reads them as the engine's word, so the caller never gets to set them: on a stored
+    /// entry the caller's copies are dropped, and on an existing file entry they are removed.
+    /// </summary>
+    private static readonly HashSet<string> _engineFileFields = new(StringComparer.OrdinalIgnoreCase)
+        { "relative_path", "extension", "mime_type", "size", "backend_temp_file_path", "is_new_upload" };
+
+    private static bool IsEngineFileField(string name, string fileContentField)
+        => _engineFileFields.Contains(name) || name.Equals(fileContentField, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Writes an entry no upload belongs to (an existing file kept in a partial update). Everything on it
+    /// came from the caller, so the fields the engine would have set are left off: a caller cannot mark
+    /// it as a new upload, or point it at another file in the store with a <c>relative_path</c> of its
+    /// own. The query identifies the file by its <c>id</c>, against its own records.
+    /// </summary>
+    private static void WriteExistingFileEntry(JsonElement fileElement, Utf8JsonWriter writer, string fileContentField)
+    {
+        writer.WriteStartObject();
+        foreach (var prop in fileElement.EnumerateObject())
+        {
+            if (!IsEngineFileField(prop.Name, fileContentField))
+                prop.WriteTo(writer);
+        }
+        writer.WriteEndObject();
     }
 
     /// <summary>
@@ -824,10 +881,11 @@ public class ParametersBuilder
         // Copy any additional properties from original file object
         foreach (var prop in fileElement.EnumerateObject())
         {
-            // Skip properties we've already written
-            if (prop.Name == fileNameField ||
-                prop.Name == fileContentField ||
-                prop.Name == "id")
+            // Skip properties we've already written, and the caller's copies of the ones only the
+            // engine sets (a second relative_path or is_new_upload would follow the engine's own)
+            if (prop.Name.Equals(fileNameField, StringComparison.OrdinalIgnoreCase) ||
+                prop.Name.Equals("id", StringComparison.OrdinalIgnoreCase) ||
+                IsEngineFileField(prop.Name, fileContentField))
                 continue;
 
             writer.WritePropertyName(prop.Name);
@@ -847,6 +905,7 @@ public class ParametersBuilder
         IFormFile formFile,
         Utf8JsonWriter writer,
         string fileNameField,
+        string fileContentField,
         string relativeFilePathStructure,
         long? maxFileSizeInBytes,
         bool passFilesContentToQuery,
@@ -890,7 +949,9 @@ public class ParametersBuilder
         }
 
         var relativePath = BuildRelativeFilePath(relativeFilePathStructure, fileName, fileId);
-        var mimeType = formFile.ContentType ?? GetMimeTypeFromFileName(fileName);
+        // From the checked file name, as for a JSON upload. The part's own Content-Type header is the
+        // caller's to set, and downloads serve the stored mime_type back as the response type.
+        var mimeType = GetMimeTypeFromFileName(fileName);
 
         // Write file object
         writer.WriteStartObject();
@@ -941,17 +1002,20 @@ public class ParametersBuilder
                 await stream.CopyToAsync(ms, cancellationToken);
             }
 
+            // Under the configured content field name, as for a JSON upload, so one query reads both
             var base64 = Convert.ToBase64String(ms.ToArray());
-            writer.WriteString("base64_content", base64);
+            writer.WriteString(fileContentField, base64);
             writer.WriteBoolean("is_new_upload", true);
         }
 
         // Copy any additional properties from metadata JSON
         foreach (var prop in fileMetadata.EnumerateObject())
         {
-            // Skip properties we've already written
+            // Skip properties we've already written, and the caller's copies of the ones only the
+            // engine sets (a second relative_path or is_new_upload would follow the engine's own)
             if (prop.Name.Equals(fileNameField, StringComparison.OrdinalIgnoreCase) ||
-                prop.Name.Equals("id", StringComparison.OrdinalIgnoreCase))
+                prop.Name.Equals("id", StringComparison.OrdinalIgnoreCase) ||
+                IsEngineFileField(prop.Name, fileContentField))
                 continue;
 
             writer.WritePropertyName(prop.Name);
@@ -1438,7 +1502,7 @@ public class ParametersBuilder
                         $"Uploaded file `{form.Files[0].FileName}` has no entry in `{filesField}`.");
             }
 
-            if (form == null || form.Count < 1)
+            if (form.Count < 1)
             {
                 RefusePartsWithoutAFilesField();
                 return nullProtectionParams();
@@ -1476,8 +1540,10 @@ public class ParametersBuilder
                     || kvp.Value.Count < 1)
                     continue;
 
-                // only process the first value for filesField
-                // reason for that is that files metadata should be passed as a single JSON array string
+                // files metadata should be passed as a single JSON array string; a second copy of the
+                // field (form keys merge ignoring case) is refused, as in a JSON body
+                if (kvp.Value.Count > 1)
+                    throw new RequestValidationException($"`{filesField}` appears more than once in the request body.");
                 var jsonArrayText = kvp.Value[0];
                 if (string.IsNullOrWhiteSpace(jsonArrayText))
                     continue;

@@ -127,7 +127,7 @@ Error codes 50000-51000 map to HTTP 0-1000.
 | `<query>` | SQL wrapped in `<![CDATA[...]]>` |
 | `<count_query>` | Optional count for pagination |
 | `<connection_string_name>` | Use different database |
-| `<api_keys_collections>` | Require API key from collection |
+| `<api_keys_collections>` | Require API key from collection (the only tag that protects a route; an `<api_keys>` block in a route is ignored) |
 | `<authorize>` | JWT/OIDC authentication |
 | `<cache>` | Response caching |
 | `<cors>` | Cross-origin settings |

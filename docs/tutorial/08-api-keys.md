@@ -65,6 +65,8 @@ Add the `<api_keys_collections>` tag to any endpoint in `sql.xml`:
 
 The value is a comma-separated list of collection names. A key from **any** listed collection is accepted.
 
+> Only `<api_keys_collections>` protects an endpoint. Keys can't be listed inside the endpoint: an `<api_keys>` block there is ignored. Without `<api_keys_collections>` beside it the endpoint stays open, and the engine logs a warning naming it at start-up and whenever the configuration reloads.
+
 In this example:
 - `vendor-key-abc123` → accepted (from `external_vendors`)
 - `vendor-key-def456` → accepted (from `external_vendors`)

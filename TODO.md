@@ -13,6 +13,32 @@ names the note that explains the background.
 
 ## Done
 
+- **A caller could set the fields an upload entry gets from the engine.** Fixed in 1.7.5. A caller
+  could hand the query a files array of their own, marked `is_new_upload` and pointing at any file
+  in the store, so an update query that inserts new uploads would record a row for someone else's
+  file. There were four ways in. The files field in a query string parameter or a header (both
+  answer to the same `{{attachments}}`), or a second copy in the body in another case, replaced
+  the array the engine built. An entry that brought no file (an existing file in a partial update)
+  reached the query exactly as sent. A stored entry copied the caller's own fields after the
+  engine's, so it could carry a second `relative_path` or `is_new_upload`. And a multipart part's
+  `mime_type` was its own Content-Type header. Now the files field comes only from the body, once;
+  an existing entry arrives without `relative_path`, `extension`, `mime_type`, `size`,
+  `backend_temp_file_path`, `is_new_upload` or the content field, and the query matches it by `id`;
+  a stored entry drops the caller's values for those names; and `mime_type` always comes from the
+  file name. Upgrade note: a query copied from the old docs that inserts every entry should add
+  `WHERE JSON_VALUE(value, '$.is_new_upload') = 'true'`, as the docs now do. A multipart upload
+  with `pass_files_content_to_query` writes the content under the configured content field name,
+  as a JSON upload does, instead of always `base64_content`. See
+  [UploadEngineFieldsTests.cs](DBToRestAPI.Tests/UploadEngineFieldsTests.cs).
+
+- **A route with `<api_keys>` instead of `<api_keys_collections>` was open without a word.** Fixed
+  in 1.7.5. Only `<api_keys_collections>` protects a route and nothing reads a route's
+  `<api_keys>`, so such a route answered callers without a key while reading as protected. The
+  engine now logs a warning naming each such route, and each `<api_keys_collections>` that names
+  no collection (keys pasted in from api_keys.xml, say), at start-up and when the configuration is
+  reloaded. The API key and gateway docs say which tag protects a route. See
+  [InertApiKeysWarning.cs](DBToRestAPI/Services/InertApiKeysWarning.cs).
+
 - **Uploads could store something other than what was sent.** Fixed in 1.7.4. Base64 content
   without its trailing `=` padding lost its last one or two bytes (the streaming decoder dropped
   an incomplete last group), and two multipart parts with the same name were both stored with the

@@ -172,7 +172,7 @@ public class UploadIntegrityTests
         });
 
         Assert.Null(error);
-        Assert.Equal("old/image.txt", entries![0].GetProperty("relative_path").GetString());
+        Assert.Equal("old-id", entries![0].GetProperty("id").GetString());
         Assert.False(entries[0].TryGetProperty("backend_temp_file_path", out _));
         Assert.Equal("NEW", newStored);
     }

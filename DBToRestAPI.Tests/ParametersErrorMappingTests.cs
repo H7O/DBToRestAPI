@@ -121,13 +121,27 @@ public class ParametersErrorMappingTests
         Assert.Contains("not valid Unicode", ex.Message);
     }
 
+    /// <summary>A part's content that fails when it is read, as a failing disk would.</summary>
+    private sealed class FailingStream() : MemoryStream([120])
+    {
+        private static Exception Failure => new InvalidOperationException("simulated failure while saving a part");
+        public override int Read(byte[] buffer, int offset, int count) => throw Failure;
+        public override int Read(Span<byte> buffer) => throw Failure;
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw Failure;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => throw Failure;
+    }
+
     [Fact]
     public async Task UnexpectedFailureWhileSavingAPart_Is500InsteadOfBeingDropped()
     {
-        // A part without headers, so reading its content type throws. It stands in for any server-side
-        // failure while a part is saved (a disk error, say), which used to drop every form field and
-        // let the request report success.
-        var brokenPart = new FormFile(new MemoryStream([120]), 0, 1, "file", "a.txt");
+        // A part whose content can't be read. It stands in for any server-side failure while a part is
+        // saved (a disk error, say), which used to drop every form field and let the request report
+        // success.
+        var brokenPart = new FormFile(new FailingStream(), 0, 1, "file", "a.txt")
+        {
+            Headers = new HeaderDictionary(),
+            ContentType = "text/plain",
+        };
 
         AssertRefused(await RunAsync(FormRequest(FormWithFiles("""[{"name":"a.txt"}]""", brokenPart))), 500, "test-error-code");
     }

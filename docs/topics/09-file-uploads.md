@@ -42,6 +42,10 @@ Parent-directory cleanup is intentionally skipped because this engine is designe
     <max_file_size_in_bytes>10485760</max_file_size_in_bytes>
     <max_number_of_files>5</max_number_of_files>
     
+    <!-- Field names in each file entry (code defaults: name, base64_content) -->
+    <filename_field_in_payload>file_name</filename_field_in_payload>
+    <base64_content_field_in_payload>base64_content</base64_content_field_in_payload>
+    
     <!-- Local stores -->
     <local_file_store>
       <primary>
@@ -90,7 +94,7 @@ Parent-directory cleanup is intentionally skipped because this engine is designe
     DECLARE @contact_id UNIQUEIDENTIFIER = {{contact_id}};
     DECLARE @files_json NVARCHAR(MAX) = {{attachments}};
     
-    -- Insert file metadata
+    -- Insert file metadata for the files this request stored
     INSERT INTO files (id, contact_id, file_name, relative_path, mime_type, size)
     SELECT 
       JSON_VALUE(value, '$.id'),
@@ -99,7 +103,8 @@ Parent-directory cleanup is intentionally skipped because this engine is designe
       JSON_VALUE(value, '$.relative_path'),
       JSON_VALUE(value, '$.mime_type'),
       JSON_VALUE(value, '$.size')
-    FROM OPENJSON(@files_json);
+    FROM OPENJSON(@files_json)
+    WHERE JSON_VALUE(value, '$.is_new_upload') = 'true';
     
     -- Return uploaded files
     SELECT id, file_name, relative_path, mime_type, size
@@ -156,6 +161,12 @@ The system generates and passes this JSON to your SQL:
 ]
 ```
 
+For a file the request stored, the engine writes `id` (a new GUID, or the caller's own when `accept_caller_defined_file_ids` is on), the file name (the caller's, once checked), `relative_path`, `extension` and `mime_type` (both from the file name), `size` and `is_new_upload` itself. It adds `backend_temp_file_path`, or the content itself under the content field when `pass_files_content_to_query` is on. The caller's own fields (`description` above) are copied after them, but a value the caller sends under one of those names is dropped.
+
+The files field itself comes only from the request body. The query looks parameters up ignoring case, and a query string parameter or a header answers to the same `{{attachments}}`, so the same name in the query string or a header, or twice in the body in any case, is refused with `400`. When `files_json_field_or_form_field_name` is set globally rather than per endpoint, that holds on every route.
+
+An entry that brings no file (no content in JSON, no part of its own in multipart) is an existing file, as in a partial update. The engine passes it to the query without `relative_path`, `extension`, `mime_type`, `size`, `backend_temp_file_path`, `is_new_upload` or the content field. None of those would be the engine's word, and a caller could otherwise mark the entry as a new upload pointing at someone else's file. Everything left on it, `id` included, is what the caller sent, so match it by `id` against your own rows for the same record, as the update query below does, and insert rows only for entries with `is_new_upload`.
+
 ## Configuration Options
 
 ### Endpoint-Level
@@ -167,7 +178,9 @@ The system generates and passes this JSON to your SQL:
 | `max_file_size_in_bytes` | Override max size |
 | `max_number_of_files` | Override max count |
 | `files_json_field_or_form_field_name` | JSON field name for metadata |
-| `pass_files_content_to_query` | Include base64 in SQL (default: false) |
+| `filename_field_in_payload` | Name of the file name field in each entry (default: `name`) |
+| `base64_content_field_in_payload` | Name of the base64 content field in each entry (default: `base64_content`) |
+| `pass_files_content_to_query` | Pass the content to SQL as base64 under the content field, instead of storing it (default: false). A multipart upload uses the same field name as a JSON one. |
 
 ### Store Options
 
@@ -237,7 +250,7 @@ Handle file additions, updates, and deletions:
 
 An upload that breaks one of these rules is refused with `400` and a message saying why, for example ``File extension `.exe` is not permitted.``. The rules cover an invalid file name, a disallowed extension, a file that is too large, too many files, content that is not valid base64, a JSON body that is not an object, and a files field that is not a JSON array. That holds for JSON and multipart uploads alike. Nothing is stored and the query does not run. A request body larger than `max_payload_size_in_bytes` gets `413`, whether it is JSON or a form.
 
-Base64 content may leave off its trailing `=` padding; it is still decoded in full. In a multipart upload, each metadata entry takes the next file part with its name, so several files with the same name (phones often call every photo `image.jpg`) are each stored with their own content. An entry with no part of its own is passed to the query unchanged, as an existing file. When an entry for a file already stored (it carries a `relative_path`) and a new entry share a name, the new entry gets the part. A file part that no entry names is refused with `400`, and so is a multipart body that can't be read.
+Base64 content may leave off its trailing `=` padding; it is still decoded in full. In a multipart upload, each metadata entry takes the next file part with its name, so several files with the same name (phones often call every photo `image.jpg`) are each stored with their own content. An entry with no part of its own is passed to the query as an existing file (see [File Metadata](#file-metadata)). When an entry for a file already stored (it carries a `relative_path`) and a new entry share a name, the new entry gets the part. So send an existing file back with the `relative_path` the engine gave it: an `id` alone doesn't mark a stored file, since a new entry may carry one too. A file part that no entry names is refused with `400`, and so is a multipart body that can't be read.
 
 ## Related Topics
 

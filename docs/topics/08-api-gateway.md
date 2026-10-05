@@ -106,6 +106,7 @@ Add authentication to external APIs:
 
 - Client must send valid `x-api-key`
 - Key is not forwarded to external API
+- Only `<api_keys_collections>` protects a route. A route with an `<api_keys>` block and no collections is open, and the engine logs a warning naming it at start-up and whenever the configuration reloads.
 
 ## Caching
 

@@ -55,6 +55,8 @@ Protect endpoints using centralized API key collections.
 
 Keys from **any** listed collection are accepted.
 
+Only `<api_keys_collections>`, holding a comma-separated list of collection names, protects an endpoint. The keys themselves live in `api_keys.xml`, never in the endpoint: an endpoint that declares an `<api_keys>` block instead, or puts keys inside its `<api_keys_collections>`, is not protected and answers callers who send no key. The engine logs a warning naming such an endpoint at start-up and whenever the configuration reloads.
+
 ## Usage Examples
 
 ### Single Collection

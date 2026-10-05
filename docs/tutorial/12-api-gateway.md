@@ -144,6 +144,8 @@ curl -H "x-api-key: api key 1" http://localhost:5000/protected_cat_facts
 
 Notice `excluded_headers` includes `x-api-key` — your API key is consumed locally and not forwarded to catfact.ninja.
 
+The tag must be `<api_keys_collections>`. A route with an `<api_keys>` block instead is not protected (it answers without a key), and the engine logs a warning naming it at start-up and whenever the configuration reloads.
+
 ## Caching External API Responses
 
 Cache proxied responses to reduce calls to external APIs:

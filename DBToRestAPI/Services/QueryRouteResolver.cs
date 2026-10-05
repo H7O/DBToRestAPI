@@ -41,10 +41,12 @@ public class QueryRouteResolver
 
 
     private readonly AtomicGate _reloadingGate = new();
+    private readonly InertApiKeysWarning _inertApiKeysWarning;
 
-    public QueryRouteResolver(IEncryptedConfiguration configuration)
+    public QueryRouteResolver(IEncryptedConfiguration configuration, ILogger<QueryRouteResolver>? logger = null)
     {
         _configuration = configuration;
+        _inertApiKeysWarning = new InertApiKeysWarning(logger);
         LoadRoutes(); // initial load
         ChangeToken.OnChange(
             () => _configuration.GetSection("queries").GetReloadToken(),
@@ -140,6 +142,8 @@ public class QueryRouteResolver
             _exactRoutes = newExactRoutes;
             _routesWithVariables = newRoutesWithVariables;
             // _exactRouteVerbs = newExactRouteVerbs;
+
+            _inertApiKeysWarning.Check(newExactRoutes.Concat(newRoutesWithVariables).Select(r => (r.NormalizedRoute, r.Config)));
         }
         finally
         {

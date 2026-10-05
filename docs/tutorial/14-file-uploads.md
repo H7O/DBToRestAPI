@@ -44,6 +44,10 @@ Define where files are stored in `/config/file_management.xml`:
     <max_file_size_in_bytes>10485760</max_file_size_in_bytes>
     <max_number_of_files>5</max_number_of_files>
 
+    <!-- Field names in each file entry (code defaults: name, base64_content) -->
+    <filename_field_in_payload>file_name</filename_field_in_payload>
+    <base64_content_field_in_payload>base64_content</base64_content_field_in_payload>
+
     <!-- Local file stores -->
     <local_file_store>
       <primary>
@@ -123,7 +127,7 @@ Add the upload endpoint to `sql.xml`:
       return;
     end
 
-    -- Insert file metadata from the generated JSON
+    -- Insert file metadata from the generated JSON, for the files this request stored
     insert into contact_files (id, contact_id, file_name, relative_path, mime_type, file_size)
     select 
       TRY_CAST(JSON_VALUE(value, '$.id') as UNIQUEIDENTIFIER),
@@ -132,7 +136,8 @@ Add the upload endpoint to `sql.xml`:
       JSON_VALUE(value, '$.relative_path'),
       JSON_VALUE(value, '$.mime_type'),
       JSON_VALUE(value, '$.size')
-    from OPENJSON(@files_json);
+    from OPENJSON(@files_json)
+    where JSON_VALUE(value, '$.is_new_upload') = 'true';
 
     -- Return uploaded files
     select id, file_name, relative_path, mime_type, file_size
@@ -198,6 +203,8 @@ After saving the files, the application creates a JSON array and passes it to yo
 ```
 
 Your SQL parses this JSON to store the metadata however you see fit.
+
+The file name is the one the caller sent, once checked. The engine sets the other fields above itself and drops any value the caller sends under those names. An entry that brings no file is an existing file (as in a partial update), and reaches your SQL without `relative_path`, `is_new_upload` and the other fields the engine sets. That is why the insert above keeps only entries with `is_new_upload`. The `attachments` field itself must come in the request body: the same name in the query string or a header is refused with `400`.
 
 ## Create the Files Table
 
