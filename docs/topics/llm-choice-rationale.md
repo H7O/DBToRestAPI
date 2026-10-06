@@ -60,12 +60,14 @@ the cascading context cost of diagnosing and fixing them.
 DbToRestAPI makes it structurally difficult for an agent to introduce security
 vulnerabilities — even by accident.
 
-### SQL Injection Is Impossible
+### SQL Injection Through Placeholders Is Impossible
 
 Every `{{param}}` placeholder is resolved via parameterized queries — the same
 mechanism as `sp_executesql` parameter binding. Parameter values are **never**
-string-concatenated into SQL. An agent cannot accidentally create a SQL injection
-vulnerability, regardless of how it constructs the query.
+string-concatenated into SQL. An agent cannot create a SQL injection vulnerability
+through a placeholder. Two rules keep it that way. Never put a placeholder inside
+quotes: `'{{email}}'` is the literal text of the internal parameter name, not the
+value. And never build SQL text from a value and run it with `EXEC`.
 
 ```sql
 -- What the agent writes:
@@ -92,13 +94,17 @@ The SQL `THROW` statement maps directly to HTTP responses:
 | `THROW 50409, 'Conflict', 1;` | 409 Conflict |
 | `THROW 50500, 'Server error', 1;` | 500 Internal Server Error |
 
-Error codes 50000–51000 map to HTTP status codes 0–1000. This works across all
-supported databases (SQL Server `THROW`, PostgreSQL `RAISE EXCEPTION`, MySQL `SIGNAL`,
-Oracle `RAISE_APPLICATION_ERROR`).
+An error numbered `50000 + status` becomes that HTTP status: use `50400` to `50599`.
+This works with SQL Server `THROW`, PostgreSQL `RAISE EXCEPTION` (inside a procedure the query
+`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. In 1.7.5,
+Oracle and DB2 custom errors are not mapped yet and arrive as a generic 400. See
+[Errors, status codes and rollback](../reference/errors.md).
 
 An agent writing a DbToRestAPI endpoint produces a secure API by default. There is
-no way to "forget" to add security middleware, misconfigure an error handler, or
-accidentally expose a stack trace.
+no way to "forget" to add security middleware or misconfigure an error handler.
+Stack traces go only to a request whose `debug-mode` header matches
+`debug_mode_header_value` in `settings.xml`. The shipped sample sets one, so delete
+it before deploying.
 
 ---
 
@@ -182,7 +188,7 @@ User asks for: SPA with auth + file uploads + external payment API + CORS
 
 DbToRestAPI:
   ├── Auth → <authorize><provider>azure_b2c</provider></authorize>
-  ├── File uploads → <file_management><stores>primary</stores></file_management>
+  ├── File uploads → <file_management><files_json_field_or_form_field_name>attachments</files_json_field_or_form_field_name><stores>primary</stores></file_management>
   ├── External API → {http{"url":"...","auth":{...},"retry":{...}}http}
   ├── CORS → <cors><pattern>^.*\.myapp\.com$</pattern></cors>
   ├── Background processing → "no_wait": true (two XML endpoints, zero infrastructure)
@@ -314,6 +320,11 @@ No compilation. No restart. No deployment. The feedback loop is: edit a text fil
 make an HTTP request. This is exactly what agents are optimized to do, and it eliminates
 the build/deploy latency that slows down iterative development with compiled backends.
 
+Two exceptions. A few settings (the payload size limit, Kestrel and TLS, a connection's
+`provider`) are read only at start-up. And in a clone, `dotnet run` serves copies of the
+config files from its build output, so restart it after editing `DBToRestAPI/config/`.
+[AGENTS.md](../../AGENTS.md) lists both.
+
 ---
 
 ## What an Agent Workflow Actually Looks Like
@@ -326,7 +337,7 @@ and file attachment uploads."*
 1. **Read `llms.txt`** — full backend mental model loaded (~6KB, one fetch)
 2. **Edit `settings.xml`** — set connection string, configure OIDC provider
 3. **Edit `sql.xml`** — define endpoints:
-   - `POST /contacts` — with `{http{...}http}` for email validation, `{auth{sub}}` for ownership
+   - `POST /contacts` — with `{http{...}http}` for email validation, `{auth{user_id}}` for ownership
    - `GET /contacts/{{id}}` — with ownership check via JWT claim
    - `PUT /contacts/{{id}}` — with mandatory parameters
    - `DELETE /contacts/{{id}}`
@@ -525,10 +536,15 @@ The same patient screen requires a single endpoint definition:
   <route>patients/{{id}}</route>
   <verb>PUT</verb>
   <authorize><provider>clinic_oidc</provider></authorize>
-  <file_management><stores>patient_docs</stores></file_management>
+  <file_management>
+    <files_json_field_or_form_field_name>attachments</files_json_field_or_form_field_name>
+    <stores>patient_docs</stores>
+  </file_management>
   <query><![CDATA[
+    SET XACT_ABORT ON;  -- any error rolls back the whole transaction below
+
     -- Step 1: Authorize (does this user own this patient record?)
-    DECLARE @user_id UNIQUEIDENTIFIER = {auth{sub}};
+    DECLARE @user_id NVARCHAR(200) = {auth{user_id}};
     IF NOT EXISTS (SELECT 1 FROM patient_access WHERE patient_id = {{id}} AND user_id = @user_id)
       THROW 50403, 'Access denied', 1;
 
@@ -539,7 +555,13 @@ The same patient screen requires a single endpoint definition:
     -- Step 3: Atomic save (patient + children + document metadata)
     BEGIN TRANSACTION;
       UPDATE patients SET name = {{name}}, dob = {{dob}}, phone = {{phone}} WHERE id = {{id}};
-      -- Merge addresses, payment types, document metadata...
+      -- Merge addresses, payment types...
+      -- Record only the files the engine stored (is_new_upload)
+      INSERT INTO documents (guid, patient_id, file_name, relative_path, uploaded_at)
+        SELECT JSON_VALUE(value, '$.id'), {{id}}, JSON_VALUE(value, '$.name'),
+               JSON_VALUE(value, '$.relative_path'), GETUTCDATE()
+        FROM OPENJSON({{attachments}})
+        WHERE JSON_VALUE(value, '$.is_new_upload') = 'true';
       -- Insert audit log entry
       INSERT INTO audit_log (patient_id, changed_by, changed_at, changes)
         VALUES ({{id}}, @user_id, GETUTCDATE(), {{changes_json}});
@@ -561,7 +583,11 @@ The same patient screen requires a single endpoint definition:
 - Files arrive with the same request (multipart or base64) — no separate upload step
 - If `THROW 50403` fires (unauthorized), uploaded files are **automatically rolled back**
 - If `THROW 50400` fires (validation), uploaded files are **automatically rolled back**
-- If the transaction fails, uploaded files are **automatically rolled back**
+- If the transaction fails, uploaded files are **automatically rolled back**, and
+  `SET XACT_ABORT ON` rolls back the transaction's rows
+- The engine deletes files, not rows. The rows stay consistent because both checks run
+  before any write and the writes share one transaction. An error after `COMMIT` (in the
+  final `SELECT`, say) would still delete the files, while the committed rows stay.
 - The response contains the full enriched aggregate including document metadata with
   server-assigned GUIDs and the updated audit log
 - A second team building a mobile app uses the exact same endpoint
@@ -573,7 +599,7 @@ The same patient screen requires a single endpoint definition:
 const response = await fetch(`/patients/${id}`, {
   method: 'PUT',
   headers: { 'Authorization': `Bearer ${token}` },
-  body: formData  // patient fields + file attachments in one payload
+  body: formData  // patient fields + "attachments" (a JSON list of the files) + the file parts
 });
 const patient = await response.json();
 // patient.addresses, patient.payment_types, patient.documents, patient.audit_log
@@ -607,7 +633,7 @@ enrichment. The AI agent reasons about the system in one compact surface.
 | Concern | Thin-CRUD Platform (Day 100) | DbToRestAPI (Day 100) |
 |---------|------------------------------|----------------------|
 | API contract | Spaghetti of table-level calls + separate file ops | Resource-oriented aggregates matching business domain |
-| File atomicity | Orphaned files from failed/abandoned saves | Automatic rollback on any failure |
+| File atomicity | Orphaned files from failed/abandoned saves | Stored files deleted automatically on any error status (400+) |
 | Authorization | Scattered across RLS + storage policies + edge functions | Single SQL check per endpoint, files included |
 | Audit trail | Custom triggers or client-side logging per table | SQL-generated, returned in response |
 | New feature cost | More orchestration layers, more compensation logic | Another SQL endpoint, same clean pattern |
@@ -628,12 +654,12 @@ enrichment. The AI agent reasons about the system in one compact surface.
 | Context cost per feature | Near zero (XML tag) | High (implement from scratch) | Low for CRUD; high for anything beyond CRUD |
 | Feature ceiling | Production-ready (15+ built-in features) | Depends on what agent builds | CRUD is free; aggregate saves, file atomicity, embedded HTTP require workarounds |
 | Missing feature cost | None — features are built-in | Cascade: architect → implement → integrate → carry | Orchestration: staging, compensation, cleanup, multi-surface auth |
-| SQL injection risk | Structurally impossible (parameterization) | Depends on agent's code quality | Low (parameterized), but RLS misconfig risk |
+| SQL injection risk | Impossible through placeholders (parameterization) | Depends on agent's code quality | Low (parameterized), but RLS misconfig risk |
 | Error handling | SQL `THROW` → HTTP status (automatic) | Must implement middleware | Platform-specific error surfaces |
 | Backend visibility | Single config file, re-readable | Spread across 10–20+ files | Spread across tables, RLS policies, storage policies, edge functions |
 | Feedback loop | Instant (save → test) | Build → restart → test | Instant for CRUD; deploy cycle for edge functions |
 | Aggregate save | Native — one endpoint, one payload, one atomic outcome | Must implement, but full control | Not native — must decompose into table-level calls + separate file ops |
-| File atomicity | Automatic rollback on any failure | Must implement | No built-in rollback — orphaned files on failure |
+| File atomicity | Stored files deleted automatically on any error status (400+) | Must implement | No built-in rollback — orphaned files on failure |
 | External API calls | Built-in, concurrent, structured response | Must implement from scratch | Edge functions (separate deploy, separate surface) |
 | Database-driven logic | Built-in (skip + query chaining) | Must implement from scratch | Database functions + RPC (limited orchestration) |
 | Background processing | Built-in (`no_wait` + query chaining) | Message queue + worker service + retry logic | Edge functions + queue (separate infrastructure) |

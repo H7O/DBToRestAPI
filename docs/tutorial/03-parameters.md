@@ -8,12 +8,14 @@ When you write `{{name}}` in your SQL, the application looks for a value called 
 
 | Priority | Source         | Example                                         |
 |----------|----------------|--------------------------------------------------|
-| 1 (highest) | Query string  | `GET /contacts?name=Alice`                       |
-| 2        | Route segment  | `GET /contacts/{{name}}`                          |
-| 3        | Request body   | `POST /contacts` with `{"name": "Alice"}`         |
+| 1 (highest) | Route segment  | `GET /contacts/{{name}}`                          |
+| 2        | Query string   | `GET /contacts?name=Alice`                       |
+| 3        | Request body (JSON or form) | `POST /contacts` with `{"name": "Alice"}`         |
 | 4 (lowest)  | HTTP headers   | Header `name: Alice`                              |
 
-If the same parameter appears in multiple sources, the higher-priority source wins. For example, if the query string has `?name=Alice` and the body has `{"name": "Bob"}`, the SQL receives `Alice`.
+If the same parameter appears in multiple sources, the higher-priority source wins. For example, if the query string has `?name=Alice` and the body has `{"name": "Bob"}`, the SQL receives `Alice`. On the route `contacts/{{name}}`, a request to `/contacts/Carol?name=Alice` gives `Carol`.
+
+JWT claims and settings variables don't take part in this order. They use their own placeholders, `{auth{...}}` and `{s{...}}`, so they never fill a `{{name}}`.
 
 > **All parameter names are case-insensitive.** `{{name}}`, `{{Name}}`, and `{{NAME}}` all resolve to the same value.
 
@@ -299,7 +301,9 @@ curl http://localhost:5000/contacts/00000000-0000-0000-0000-000000000000
 
 ```json
 {
-  "error": "Contact with id 00000000-0000-0000-0000-000000000000 does not exist"
+  "success": false,
+  "message": "Contact with id 00000000-0000-0000-0000-000000000000 does not exist",
+  "error_number": 404
 }
 ```
 
@@ -307,7 +311,7 @@ curl http://localhost:5000/contacts/00000000-0000-0000-0000-000000000000
 
 ### What You Learned
 
-- The four parameter sources and their priority order (query string > route > body > headers)
+- The four parameter sources and their priority order (route > query string > body > headers)
 - How to use route parameters (`/contacts/{{id}}`) for clean REST URLs
 - How to combine route and query string parameters
 - How to access HTTP headers as parameters

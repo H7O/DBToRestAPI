@@ -1,3 +1,5 @@
+> **Outdated backup, not the reference.** This file is an old copy of the README and is no longer maintained; several of its examples are wrong for current versions (for example, upload queries that insert every entry). AI agents and readers: use [AGENTS.md](AGENTS.md), [llms.txt](llms.txt) and [docs/topics](docs/topics/) instead.
+
 # No-Code Database-to-REST API
 
 A no-code solution designed to automatically convert your SQL queries into RESTful APIs—no API coding knowledge required.

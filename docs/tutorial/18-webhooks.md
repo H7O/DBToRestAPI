@@ -57,27 +57,36 @@ Partner                     Your API
 
 ## Step 1: The Accept Endpoint
 
-This endpoint does three things:
+This endpoint does four things:
 
-1. Records the incoming request in a `webhook_requests` table.
-2. Fires off the processing endpoint using `no_wait`.
-3. Returns `202 Accepted` immediately.
+1. Looks up the partner by its key, which also gives the partner's callback URL.
+2. Records the incoming request in a `webhook_requests` table.
+3. Fires off the processing endpoint using `no_wait`.
+4. Returns `202 Accepted` immediately.
 
 ```xml
 <webhook_accept>
   <route>webhooks/accept</route>
   <verb>POST</verb>
-  <mandatory_parameters>callback_url,payload</mandatory_parameters>
+  <mandatory_parameters>partner_key,payload</mandatory_parameters>
   <success_status_code>202</success_status_code>
 
-  <!-- Query 1: Record the request -->
+  <!-- Query 1: Look up the partner and record the request -->
   <query><![CDATA[
-    DECLARE @callback_url NVARCHAR(2000) = {{callback_url}};
+    DECLARE @partner_key NVARCHAR(200) = {{partner_key}};
     DECLARE @payload NVARCHAR(MAX) = {{payload}};
+    DECLARE @partner_id INT, @callback_url NVARCHAR(2000);
 
-    INSERT INTO webhook_requests (callback_url, payload, status, created_at)
+    -- The callback URL comes from the partner registry, never from the request
+    SELECT @partner_id = id, @callback_url = callback_url
+    FROM partners WHERE api_key = @partner_key;
+
+    IF @partner_id IS NULL
+      THROW 50403, 'Unknown partner key', 1;
+
+    INSERT INTO webhook_requests (partner_id, callback_url, payload, status, created_at)
     OUTPUT inserted.id AS request_id, inserted.status
-    VALUES (@callback_url, @payload, 'pending', GETUTCDATE());
+    VALUES (@partner_id, @callback_url, @payload, 'pending', GETUTCDATE());
   ]]></query>
 
   <!-- Query 2: Fire the processing endpoint in the background -->
@@ -90,15 +99,15 @@ This endpoint does three things:
           "x-api-key": "{s{internal_api_key}}"
         },
         "body": {
-          "request_id": "{{request_id}}"
+          "request_id": "{pq{request_id}}"
         },
-        "no_wait": true
+        "no_wait": true, "timeout_seconds": 600
       }
     }http};
 
     -- @process is NULL (no_wait = background call)
     -- Return the acknowledgment
-    SELECT '{{request_id}}' AS request_id, 'pending' AS status;
+    SELECT {pq{request_id}} AS request_id, 'pending' AS status;
   ]]></query>
 </webhook_accept>
 ```
@@ -110,6 +119,9 @@ Key details:
 - **`"no_wait": true`** — the HTTP call to `/webhooks/process` fires on a
   background thread.  The SQL variable (`@process`) receives `NULL`
   immediately, and the response is sent to the caller without waiting.
+- **`"timeout_seconds": 600`** — the background call still has a timeout
+  (30 seconds by default). When it expires, the Process request it started is
+  cancelled, so set it longer than the processing and its callback retries take.
 - **`"x-api-key": "{s{internal_api_key}}"`** — authenticates the background
   call against the Process endpoint's `api_keys_collections` using a
   [settings variable](19-settings-vars.md), so the key never appears in
@@ -117,8 +129,22 @@ Key details:
 - **`{s{base_url}}`** — another settings variable holding the root URL of
   your own API (e.g., `https://api.example.com`).
 - The `OUTPUT` clause on the `INSERT` returns the new `request_id`, which
-  flows into Query 2 as `{{request_id}}` via
-  [multi-query chaining](17-multi-query.md).
+  flows into Query 2 as `{pq{request_id}}` via
+  [multi-query chaining](17-multi-query.md). `{pq{...}}` reads only the
+  results of earlier queries. A plain `{{request_id}}` would also take a
+  request value of the same name when the column is `NULL` or the query
+  returned no row. See
+  [reading earlier results](../topics/14-query-chaining.md#reading-earlier-results-pqname).
+- **The callback URL comes from your `partners` table.** The caller sends
+  only its key, so it can't choose where your server sends requests.
+
+> **Never call a URL the caller sent you.** The engine has no host
+> allow-list for `{http{ ... }http}` calls. If the callback URL comes from the
+> request, any caller can make your server send requests to any host,
+> including internal ones the internet can't reach. Register each partner's
+> callback URL yourself and look it up in SQL, as above. If partners must send
+> a URL, reject it before you store it unless it matches a URL registered for
+> that partner.
 
 ---
 
@@ -148,11 +174,10 @@ waiting.
     WHERE id = @id;
   ]]></query>
 
-  <!-- Query 2: Do the heavy processing and notify -->
+  <!-- Query 2: Do the heavy processing -->
   <query><![CDATA[
-    DECLARE @request_id INT = {{request_id}};
-    DECLARE @callback_url NVARCHAR(2000) = {{callback_url}};
-    DECLARE @payload NVARCHAR(MAX) = {{payload}};
+    DECLARE @request_id INT = {pq{request_id}};
+    DECLARE @payload NVARCHAR(MAX) = {pq{payload}};
 
     -- =============================================
     -- Your business logic here
@@ -168,13 +193,19 @@ waiting.
     SET status = @result, processed_at = GETUTCDATE()
     WHERE id = @request_id;
 
-    -- Notify the partner via their callback URL
+    SELECT @request_id AS request_id, @result AS result;
+  ]]></query>
+
+  <!-- Query 3: Notify the partner via their registered callback URL -->
+  <query><![CDATA[
+    DECLARE @request_id INT = {pq{request_id}};
+
     DECLARE @notification NVARCHAR(MAX) = {http{
       {
-        "url": "{{callback_url}}",
+        "url": "{pq{callback_url}}",
         "method": "POST",
         "body": {
-          "request_id": "{{request_id}}",
+          "request_id": "{pq{request_id}}",
           "status": "completed",
           "result": "processed successfully"
         }
@@ -188,7 +219,7 @@ waiting.
     WHERE id = @request_id;
 
     SELECT @request_id AS request_id,
-           @result AS status,
+           {pq{result}} AS status,
            JSON_VALUE(@notification, '$.status_code') AS callback_status_code;
   ]]></query>
 </webhook_process>
@@ -200,9 +231,14 @@ Key details:
   this endpoint so only your own API (or trusted services) can call it, not
   the outside world.
 - **Query 1** loads the original request data.  Its single-row output flows
-  into Query 2 via chaining (`{{callback_url}}`, `{{payload}}`).
-- **Query 2** performs the processing, sends the callback notification using a
-  normal (waited) `{http{...}http}` call, and logs the result.
+  into the later queries via chaining (`{pq{callback_url}}`, `{pq{payload}}`).
+  Columns from every earlier query stay available, so Query 3 still sees
+  Query 1's `callback_url`.
+- **Query 2** performs the processing.
+- **Query 3** sends the callback notification using a normal (waited)
+  `{http{...}http}` call, and logs the result.  The call has its own query
+  because a query's embedded HTTP calls run before its SQL.  Placed in
+  Query 2, it would tell the partner `completed` before the work had run.
 
 ---
 
@@ -217,22 +253,29 @@ Add your API's base URL and the internal API key to `settings.xml`:
   <internal_api_key>your-internal-secret</internal_api_key>
 </vars>
 
-<!-- Encrypt the key -->
-<sections_to_encrypt>
-  <section>vars:internal_api_key</section>
-</sections_to_encrypt>
+<!-- Encrypt both copies of the key -->
+<settings_encryption>
+  <sections_to_encrypt>
+    <section>vars:internal_api_key</section>
+    <section>api_keys_collections:internal_keys</section>
+  </sections_to_encrypt>
+</settings_encryption>
 ```
 
-And create an `internal_keys` collection in `api_keys.xml`:
+And create an `internal_keys` collection in `api_keys.xml`, inside its existing `<api_keys_collections>` element:
 
 ```xml
-<!-- api_keys.xml -->
-<api_keys>
-  <internal_keys>
-    <api_key>{s{internal_api_key}}</api_key>
-  </internal_keys>
-</api_keys>
+<!-- api_keys.xml: the same secret as vars:internal_api_key -->
+<settings>
+  <api_keys_collections>
+    <internal_keys>
+      <key>your-internal-secret</key>
+    </internal_keys>
+  </api_keys_collections>
+</settings>
 ```
+
+The shipped `api_keys.xml` already has an `<api_keys_collections>` element: add `<internal_keys>` inside it, never a second `<api_keys_collections>` beside it. Keys must sit under `<api_keys_collections>`, and `{s{...}}` placeholders are not resolved in `api_keys.xml`, so write the key itself. The `api_keys_collections:internal_keys` section in the `<settings_encryption>` block above encrypts it. The shipped `settings.xml` already has a `<settings_encryption>` block, so add both `<section>` lines to its `<sections_to_encrypt>` instead of adding a second block.
 
 The Accept endpoint already includes the `x-api-key` header in its embedded
 HTTP call (see Query 2 above), using `{s{internal_api_key}}` to pull the key
@@ -242,11 +285,21 @@ from settings at runtime.
 
 ## Database Table
 
-Here is a simple table to track webhook requests (SQL Server):
+Here are the two tables (SQL Server).  `partners` is the registry you
+maintain: each partner's key and the callback URL you agreed with them.
+`webhook_requests` tracks each request:
 
 ```sql
+CREATE TABLE partners (
+    id                   INT IDENTITY(1,1) PRIMARY KEY,
+    name                 NVARCHAR(200)     NOT NULL,
+    api_key              NVARCHAR(200)     NOT NULL UNIQUE,
+    callback_url         NVARCHAR(2000)    NOT NULL  -- registered by you, never by the caller
+);
+
 CREATE TABLE webhook_requests (
     id                   INT IDENTITY(1,1) PRIMARY KEY,
+    partner_id           INT               NOT NULL REFERENCES partners(id),
     callback_url         NVARCHAR(2000)    NOT NULL,
     payload              NVARCHAR(MAX),
     status               NVARCHAR(50)      NOT NULL DEFAULT 'pending',
@@ -270,7 +323,7 @@ POST /webhooks/accept
 Content-Type: application/json
 
 {
-  "callback_url": "https://partner.example.com/callback",
+  "partner_key": "the-key-you-issued-to-this-partner",
   "payload": "{\"order_id\": 42, \"amount\": 129.99}"
 }
 ```
@@ -281,12 +334,13 @@ Content-Type: application/json
 HTTP/1.1 202 Accepted
 
 {
-  "request_id": "17",
+  "request_id": 17,
   "status": "pending"
 }
 ```
 
-**3. Receive the callback later (seconds/minutes):**
+**3. Receive the callback later (seconds/minutes), at the URL registered for
+the partner in `partners`:**
 
 ```
 POST https://partner.example.com/callback
@@ -312,10 +366,10 @@ exponential backoff — no manual loops needed:
 ```sql
 DECLARE @notification NVARCHAR(MAX) = {http{
   {
-    "url": "{{callback_url}}",
+    "url": "{pq{callback_url}}",
     "method": "POST",
     "body": {
-      "request_id": "{{request_id}}",
+      "request_id": "{pq{request_id}}",
       "status": "completed"
     },
     "retry": {
@@ -328,8 +382,8 @@ DECLARE @notification NVARCHAR(MAX) = {http{
 }http};
 ```
 
-This retries up to 3 times on server errors, waiting 2s → 4s → 8s between
-attempts.  See the [embedded HTTP calls reference](../topics/17-embedded-http-calls.md#retry-configuration)
+This makes up to 3 attempts in total (the first call and 2 retries) on the listed status codes
+or a network error, waiting 2 s and then 4 s.  See the [embedded HTTP calls reference](../topics/17-embedded-http-calls.md#retry-configuration)
 for all retry options.
 
 ### Status polling endpoint
@@ -362,19 +416,23 @@ parallel background processing:
 -- Fire enrichment service
 DECLARE @enrich NVARCHAR(MAX) = {http{
   { "url": "{s{base_url}}/internal/enrich",
-    "body": { "request_id": "{{request_id}}" },
-    "no_wait": true }
+    "method": "POST",
+    "headers": { "x-api-key": "{s{internal_api_key}}" },
+    "body": { "request_id": "{pq{request_id}}" },
+    "no_wait": true, "timeout_seconds": 600 }
 }http};
 
 -- Fire notification service
 DECLARE @notify NVARCHAR(MAX) = {http{
   { "url": "{s{base_url}}/internal/notify",
-    "body": { "request_id": "{{request_id}}" },
-    "no_wait": true }
+    "method": "POST",
+    "headers": { "x-api-key": "{s{internal_api_key}}" },
+    "body": { "request_id": "{pq{request_id}}" },
+    "no_wait": true, "timeout_seconds": 600 }
 }http};
 
--- Both fire in the background; response returns immediately
-SELECT '{{request_id}}' AS request_id, 'processing' AS status;
+-- Both fire in the background. The response returns immediately.
+SELECT {pq{request_id}} AS request_id, 'processing' AS status;
 ```
 
 ---
@@ -387,36 +445,41 @@ The two-endpoint pattern above is the simplest form.  The combination of
 
 ### Validate Before Accepting
 
-The Accept endpoint doesn't have to blindly return `202`.  Because embedded
-HTTP calls are **pre-processed before the SQL runs**, you can place validation
-in an earlier query and only fire the `no_wait` call in a later one.
-If validation fails, the chain stops and the caller gets an error — the
-background work never starts:
+The Accept endpoint in Step 1 already rejects an unknown partner key before
+anything is fired.  Because embedded HTTP calls are **pre-processed before
+the SQL runs**, you can place any validation in an earlier query and only
+fire the `no_wait` call in a later one.  If validation fails, the chain stops
+and the caller gets an error — the background work never starts.  Here
+Query 1 also rejects a missing or malformed payload:
 
 ```xml
 <webhook_accept>
   <route>webhooks/accept</route>
   <verb>POST</verb>
-  <mandatory_parameters>callback_url,payload</mandatory_parameters>
+  <mandatory_parameters>partner_key,payload</mandatory_parameters>
   <success_status_code>202</success_status_code>
 
   <!-- Query 1: Validate the request (no HTTP calls here) -->
   <query><![CDATA[
-    DECLARE @callback_url NVARCHAR(2000) = {{callback_url}};
+    DECLARE @partner_key NVARCHAR(200) = {{partner_key}};
     DECLARE @payload NVARCHAR(MAX) = {{payload}};
+    DECLARE @partner_id INT, @callback_url NVARCHAR(2000);
 
-    -- Reject malformed payloads
-    IF ISJSON(@payload) = 0
+    -- Reject unknown partners. The callback URL comes from the registry.
+    SELECT @partner_id = id, @callback_url = callback_url
+    FROM partners WHERE api_key = @partner_key;
+
+    IF @partner_id IS NULL
+      THROW 50403, 'Unknown partner key', 1;
+
+    -- Reject missing or malformed payloads (ISJSON(NULL) is NULL, so test IS NULL first)
+    IF @payload IS NULL OR ISJSON(@payload) = 0
       THROW 50400, 'payload must be valid JSON', 1;
 
-    -- Reject unknown partners
-    IF NOT EXISTS (SELECT 1 FROM partners WHERE callback_url = @callback_url)
-      THROW 50403, 'Unregistered callback URL', 1;
-
     -- Validation passed — record the request
-    INSERT INTO webhook_requests (callback_url, payload, status, created_at)
+    INSERT INTO webhook_requests (partner_id, callback_url, payload, status, created_at)
     OUTPUT inserted.id AS request_id
-    VALUES (@callback_url, @payload, 'pending', GETUTCDATE());
+    VALUES (@partner_id, @callback_url, @payload, 'pending', GETUTCDATE());
   ]]></query>
 
   <!-- Query 2: Only runs if Query 1 succeeded -->
@@ -426,14 +489,23 @@ background work never starts:
         "url": "{s{base_url}}/webhooks/process",
         "method": "POST",
         "headers": { "x-api-key": "{s{internal_api_key}}" },
-        "body": { "request_id": "{{request_id}}" },
-        "no_wait": true
+        "body": { "request_id": "{pq{request_id}}" },
+        "no_wait": true, "timeout_seconds": 600
       }
     }http};
 
-    SELECT '{{request_id}}' AS request_id, 'pending' AS status;
+    SELECT {pq{request_id}} AS request_id, 'pending' AS status;
   ]]></query>
 </webhook_accept>
+```
+
+If your partners must send their callback URL with each request, check it
+against the registry in Query 1, before it is stored:
+
+```sql
+IF NOT EXISTS (SELECT 1 FROM partners
+               WHERE id = @partner_id AND callback_url = {{callback_url}})
+  THROW 50403, 'Unregistered callback URL', 1;
 ```
 
 The key insight: because embedded HTTP calls are pre-processed at the query
@@ -452,13 +524,13 @@ endpoint can validate across multiple systems before accepting:
   IF NOT EXISTS (SELECT 1 FROM partners WHERE api_key = {{partner_key}})
     THROW 50403, 'Invalid partner key', 1;
 
-  SELECT partner_id, partner_name, callback_url
+  SELECT id AS partner_id, name AS partner_name, callback_url
   FROM partners WHERE api_key = {{partner_key}};
 ]]></query>
 
 <!-- Query 2: Check rate limits (main database) -->
 <query><![CDATA[
-  DECLARE @partner_id INT = {{partner_id}};
+  DECLARE @partner_id INT = {pq{partner_id}};
   DECLARE @recent INT = (
     SELECT COUNT(*) FROM webhook_requests
     WHERE partner_id = @partner_id AND created_at > DATEADD(MINUTE, -1, GETUTCDATE())
@@ -469,7 +541,7 @@ endpoint can validate across multiple systems before accepting:
 
   INSERT INTO webhook_requests (partner_id, callback_url, payload, status, created_at)
   OUTPUT inserted.id AS request_id
-  VALUES (@partner_id, {{callback_url}}, {{payload}}, 'pending', GETUTCDATE());
+  VALUES (@partner_id, {pq{callback_url}}, {{payload}}, 'pending', GETUTCDATE());
 ]]></query>
 
 <!-- Query 3: Fire background processing -->
@@ -479,17 +551,19 @@ endpoint can validate across multiple systems before accepting:
       "url": "{s{base_url}}/webhooks/process",
       "method": "POST",
       "headers": { "x-api-key": "{s{internal_api_key}}" },
-      "body": { "request_id": "{{request_id}}" },
-      "no_wait": true
+      "body": { "request_id": "{pq{request_id}}" },
+      "no_wait": true, "timeout_seconds": 600
     }
   }http};
 
-  SELECT '{{request_id}}' AS request_id, 'pending' AS status;
+  SELECT {pq{request_id}} AS request_id, 'pending' AS status;
 ]]></query>
 ```
 
 Two databases, three queries, full validation — and the caller still gets a
-fast `202` or an immediate error.
+fast `202` or an immediate error.  Query 2 reads the partner's registered URL
+with `{pq{callback_url}}`.  With `{{callback_url}}`, a `NULL` URL in the
+registry would let a `callback_url` field in the request take its place.
 
 ### Progress Callbacks
 
@@ -514,15 +588,15 @@ chained queries, you can notify the partner at **each stage** of processing:
 
   <!-- Query 2: Stage 1 — validate, notify progress -->
   <query><![CDATA[
-    DECLARE @callback_url NVARCHAR(2000) = {{callback_url}};
+    DECLARE @callback_url NVARCHAR(2000) = {pq{callback_url}};
 
     -- Notify: validation started
     DECLARE @cb1 NVARCHAR(MAX) = {http{
       {
-        "url": "{{callback_url}}",
+        "url": "{pq{callback_url}}",
         "method": "POST",
         "body": {
-          "request_id": "{{request_id}}",
+          "request_id": "{pq{request_id}}",
           "status": "validating",
           "progress": 25
         }
@@ -530,18 +604,18 @@ chained queries, you can notify the partner at **each stage** of processing:
     }http};
 
     -- ... do validation work ...
-    UPDATE webhook_requests SET status = 'validated' WHERE id = {{request_id}};
-    SELECT {{request_id}} AS request_id, '{{callback_url}}' AS callback_url, '{{payload}}' AS payload;
+    UPDATE webhook_requests SET status = 'validated' WHERE id = {pq{request_id}};
+    SELECT {pq{request_id}} AS request_id, {pq{callback_url}} AS callback_url, {pq{payload}} AS payload;
   ]]></query>
 
   <!-- Query 3: Stage 2 — enrich, notify progress -->
   <query><![CDATA[
     DECLARE @cb2 NVARCHAR(MAX) = {http{
       {
-        "url": "{{callback_url}}",
+        "url": "{pq{callback_url}}",
         "method": "POST",
         "body": {
-          "request_id": "{{request_id}}",
+          "request_id": "{pq{request_id}}",
           "status": "enriching",
           "progress": 50
         }
@@ -549,18 +623,18 @@ chained queries, you can notify the partner at **each stage** of processing:
     }http};
 
     -- ... do enrichment work ...
-    UPDATE webhook_requests SET status = 'enriched' WHERE id = {{request_id}};
-    SELECT {{request_id}} AS request_id, '{{callback_url}}' AS callback_url;
+    UPDATE webhook_requests SET status = 'enriched' WHERE id = {pq{request_id}};
+    SELECT {pq{request_id}} AS request_id, {pq{callback_url}} AS callback_url;
   ]]></query>
 
   <!-- Query 4: Final — complete, notify done -->
   <query><![CDATA[
     DECLARE @cb3 NVARCHAR(MAX) = {http{
       {
-        "url": "{{callback_url}}",
+        "url": "{pq{callback_url}}",
         "method": "POST",
         "body": {
-          "request_id": "{{request_id}}",
+          "request_id": "{pq{request_id}}",
           "status": "completed",
           "progress": 100,
           "result": "all stages complete"
@@ -570,9 +644,9 @@ chained queries, you can notify the partner at **each stage** of processing:
 
     UPDATE webhook_requests
     SET status = 'completed', processed_at = GETUTCDATE()
-    WHERE id = {{request_id}};
+    WHERE id = {pq{request_id}};
 
-    SELECT {{request_id}} AS request_id, 'completed' AS status;
+    SELECT {pq{request_id}} AS request_id, 'completed' AS status;
   ]]></query>
 </webhook_process>
 ```
@@ -594,8 +668,11 @@ callbacks from sending stale progress.
   partner's URL.
 - Protecting internal endpoints with API keys keeps the processing endpoint
   private.
+- The callback URL comes from a partner registry in your database, never
+  from the request.  The engine has no host allow-list for embedded HTTP
+  calls, so a URL from the caller could point your server at any host.
 - Multi-query chaining passes request data between the Accept and Process
-  stages.
+  stages.  Chained queries read earlier results with `{pq{name}}`.
 - Because embedded HTTP calls are pre-processed per query, placing them in a
   later chained query lets you validate first — the call only fires if all
   preceding queries succeed.

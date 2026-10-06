@@ -82,7 +82,7 @@ If `<connection_string_name>` is omitted, the `default` connection string is use
 
 ## Cross-Database Error Handling
 
-Each database engine has its own syntax for raising errors. The application normalizes them all into HTTP status codes:
+Each database engine has its own syntax for raising errors. The application turns most of them into HTTP status codes. [Errors, status codes and rollback](../reference/errors.md) lists which ones work:
 
 ### SQL Server
 ```sql
@@ -91,10 +91,25 @@ THROW 50409, 'Already exists', 1;
 ```
 
 ### PostgreSQL
+`RAISE` works only in PL/pgSQL, and a `DO` block can't see request parameters. So put the check in a procedure and `CALL` it from the endpoint's query with the request values. (A function would be called with `SELECT`, whose row would replace your response.)
 ```sql
-RAISE EXCEPTION '[50404] Not found';
-RAISE EXCEPTION '[50409] Already exists';
+-- once, in the database
+-- It takes the id as text and checks its format before casting: a failed cast's error message
+-- repeats the input, so a caller could otherwise put a [5xxxx] token in it and pick the status.
+CREATE OR REPLACE PROCEDURE require_contact(contact_id text) LANGUAGE plpgsql AS $$
+BEGIN
+  IF contact_id IS NULL OR contact_id !~ '^[0-9]{1,9}$' THEN
+    RAISE EXCEPTION '[50404] Not found';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = contact_id::integer) THEN
+    RAISE EXCEPTION '[50404] Not found';
+  END IF;
+END $$;
+
+-- in the endpoint's query, before any statement that returns rows
+CALL require_contact(CAST({{id}} AS text));
 ```
+A `NULL` id matches no row, so it gets the 404 too. [Errors, status codes and rollback](../reference/errors.md#raising-an-error-from-sql) has a validation example.
 
 ### MySQL / MariaDB
 ```sql
@@ -103,22 +118,36 @@ SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';
 
 ### Oracle
 ```sql
--- Oracle uses -20000 to -20999 range
--- -20404 maps to HTTP 404
-RAISE_APPLICATION_ERROR(-20404, 'Not found');
+-- Oracle uses the -20000 to -20999 range, from PL/SQL only (a BEGIN ... END; block or a procedure).
+-- Not mapped in 1.7.5: the engine expects a negative error number, but the
+-- Oracle driver reports a positive one, so this arrives as the generic 400.
+BEGIN
+  RAISE_APPLICATION_ERROR(-20404, 'Not found');
+END;
 ```
 
 ### SQLite
 ```sql
-SELECT RAISE(ABORT, '[50404] Not found');
+-- Once, in the database. Only inside a trigger: SQLite refuses RAISE() anywhere else,
+-- and the caller gets the generic 400.
+CREATE TRIGGER orders_require_customer
+BEFORE INSERT ON orders
+WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id = NEW.customer_id)
+BEGIN
+  SELECT RAISE(ABORT, '[50404] Customer not found');
+END;
 ```
 
 ### IBM DB2
 ```sql
-SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '[50404] Not found';
+-- Only inside a compound statement (BEGIN ... END) or a procedure.
+-- Not mapped in 1.7.5: arrives as the generic 400.
+BEGIN
+  SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
+END
 ```
 
-The key pattern: embed the HTTP status code (404, 409, etc.) in the error code or message, and the application extracts it.
+The key pattern: embed the HTTP status code (404, 409, etc.) in the error code or message, and the application extracts it. In version 1.7.5 the Oracle and DB2 forms are not mapped yet and arrive as a generic 400. See [Errors, status codes and rollback](../reference/errors.md) for the details and for what the client receives.
 
 ## Practical Example: A Cross-Database Endpoint
 
@@ -144,6 +173,8 @@ Using [Query Chaining](17-multi-query.md) (covered in a later topic), you can qu
 ```
 
 Each `<query>` in a chain can target a different database!
+
+Only the last query's result reaches the caller, so in the example above the response holds only Query 2's columns: to include the contacts, Query 2 must read Query 1's rows. Each earlier result is passed to the next query: read a single row's columns as `{pq{name}}`, and the rows as a JSON array with `{pq{json}}`. Use `{pq{...}}` rather than `{{...}}` for these: with `{{name}}`, a `NULL` column, zero rows or several rows let a request value with the same name fill the placeholder instead.
 
 ## Database-Specific SQL Tips
 

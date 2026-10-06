@@ -95,25 +95,56 @@ SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';
 ```
 
 ### PostgreSQL
+`RAISE` works only in PL/pgSQL, and a `DO` block can't see request parameters. Put the check in a procedure and `CALL` it from the endpoint's query with the request values. (A function would have to be called with `SELECT`, which returns a row, and the engine reads only the first result set, so that row would replace your response.)
 ```sql
-RAISE EXCEPTION '[50404] Not found';
+-- once, in the database
+-- It takes the id as text and checks its format before casting: a failed cast's error message
+-- repeats the input, so a caller could otherwise put a [5xxxx] token in it and pick the status.
+CREATE OR REPLACE PROCEDURE require_contact(contact_id text) LANGUAGE plpgsql AS $$
+BEGIN
+  IF contact_id IS NULL OR contact_id !~ '^[0-9]{1,9}$' THEN
+    RAISE EXCEPTION '[50404] Not found';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = contact_id::integer) THEN
+    RAISE EXCEPTION '[50404] Not found';
+  END IF;
+END $$;
+
+-- in the endpoint's query, before any statement that returns rows
+CALL require_contact(CAST({{id}} AS text));
 ```
+**Note:** A `NULL` id matches no row, so it gets the 404 too. The message keeps a `P0001:` prefix (known issue). A validation example: [errors.md](../reference/errors.md#raising-an-error-from-sql).
 
 ### Oracle
 ```sql
-RAISE_APPLICATION_ERROR(-20404, 'Not found');
+BEGIN
+  RAISE_APPLICATION_ERROR(-20404, 'Not found');
+END;
 ```
-**Note:** Oracle uses -20000 to -20999 range. `-20404` → HTTP 404.
+**Note:** `RAISE_APPLICATION_ERROR` is PL/SQL, so it runs only inside a `BEGIN ... END;` block or a procedure. The engine expects the -20000 to -20999 range (`-20404` → HTTP 404), but the Oracle driver reports the number as positive, so in 1.7.5 this arrives as the generic 400 (known issue).
 
 ### SQLite
 ```sql
-SELECT RAISE(ABORT, '[50404] Not found');
+-- once, in the database: SQLite accepts RAISE() only inside a trigger
+CREATE TRIGGER orders_require_customer
+BEFORE INSERT ON orders
+WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id = NEW.customer_id)
+BEGIN
+  SELECT RAISE(ABORT, '[50404] Customer not found');
+END;
 ```
+**Note:** An endpoint's `INSERT INTO orders` for an unknown customer then gets the 404. Outside a trigger, SQLite refuses `RAISE()` and the caller gets the generic 400.
 
 ### DB2
 ```sql
-SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
+-- Only inside a compound statement (BEGIN ... END) or a procedure.
+BEGIN
+  SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
+END
 ```
+**Note:** In 1.7.5 this arrives as the generic 400: the engine reads the first `[nnnnn]` in the message, which is the SQLSTATE (known issue).
+
+The response body, every other status, and when uploaded files are rolled back: [Errors, status codes and rollback](../reference/errors.md).
 
 ## Query Chaining Across Databases
 
@@ -128,20 +159,22 @@ Execute queries across multiple databases in one API call:
     SELECT id, email FROM users WHERE id = {{user_id}};
   ]]></query>
   
-  <!-- Query 2: PostgreSQL analytics -->
+  <!-- Query 2: PostgreSQL analytics, using Query 1's id column -->
   <query connection_string_name="postgres"><![CDATA[
     SELECT event_type, COUNT(*) as count
-    FROM events WHERE user_id = {{id}}
+    FROM events WHERE user_id = {pq{id}}
     GROUP BY event_type;
   ]]></query>
   
-  <!-- Query 3: DB2 mainframe -->
+  <!-- Query 3: DB2 mainframe, using Query 1's id column -->
   <query connection_string_name="db2"><![CDATA[
     SELECT ACCOUNT_STATUS FROM MAINFRAME.ACCOUNTS
-    WHERE USER_ID = {{id}};
+    WHERE USER_ID = {pq{id}};
   ]]></query>
 </cross_database_workflow>
 ```
+
+Read an earlier query's columns with `{pq{name}}`. With `{{name}}`, a `NULL` column, zero rows or several rows let a request value with the same name fill the placeholder instead. Only the last query's rows reach the caller. See [Query Chaining](14-query-chaining.md).
 
 ## Per-Query Timeout
 
@@ -173,13 +206,13 @@ Execute queries across multiple databases in one API call:
 <!-- Writes go to primary -->
 <create_order>
   <connection_string_name>primary</connection_string_name>
-  <query>INSERT INTO orders...</query>
+  <query><![CDATA[INSERT INTO orders...]]></query>
 </create_order>
 
 <!-- Reads from replica -->
 <list_orders>
   <connection_string_name>replica</connection_string_name>
-  <query>SELECT * FROM orders...</query>
+  <query><![CDATA[SELECT * FROM orders...]]></query>
 </list_orders>
 ```
 

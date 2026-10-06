@@ -11,6 +11,131 @@ names the note that explains the background.
   destination hosts (global, overridable per endpoint) would close that. Background:
   [SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1, "Not done, and why".
 
+The items below were found on 2026-10-06 while testing the docs with docs-only agents graded
+against the code. Each was read in the code; none has a test yet.
+
+- **`{auth{sub}}` is documented everywhere but not filled.** The default `JwtSecurityTokenHandler`
+  (Step4JwtAuthorization.cs, token validation) renames `sub` to the name-identifier URI, so the
+  claims dictionary has `user_id` but no `sub`. Claims merged from the UserInfo endpoint are
+  stored as `JsonElement` values (`GetUserInfoAsync` deserialises into `Dictionary<string, object>`),
+  which SQL drivers can't bind, so a query using one fails with the generic 400. Fix both in the
+  engine, then remove the "use `{auth{user_id}}`" caveats from the docs.
+- **Custom SQL errors don't map on every database** (ApiController.cs, `TryGetCustomDbError`):
+  - PostgreSQL messages keep the `P0001:` SQLSTATE prefix (use `MessageText`).
+  - Oracle expects a negative `Number`, but ODP.NET reports a positive one.
+  - DB2 takes the first `[nnnnn]` in the message, which is the SQLSTATE.
+  - ODBC and OleDb have no branch.
+  - SQLite can raise only inside a trigger: consider registering a function such as `throw_http(404, 'msg')`.
+  - SQL Server `RAISERROR('text', 16, 1)` reports 50000, which becomes status 0.
+- **Unmapped database errors return 400** (ApiController.cs, `BadRequest` with the generic
+  message). A timeout or an unreachable database looks like a client error. Consider 500.
+- **`<cache>` on a file download route breaks the download.** `CachableQueryResult` only
+  handles `ObjectResult`, so the file result is replaced and its stream leaks.
+- **Rollback with `overwrite_existing_files` deletes the overwritten file**, so a failed request
+  destroys the previous content instead of restoring it.
+- **A write that fails part-way leaves a partial file.** Step7 records a path for rollback only
+  after its copy or upload completes. Record it before, or delete the destination in the catch.
+- **Silent upload and download misconfigurations.** Each of these returns success, or a 404 at
+  request time, with nothing stored or served:
+  - an upload route without `files_json_field_or_form_field_name`;
+  - no `stores`, or only unknown store names;
+  - a local store without `base_path`, or an SFTP store missing credentials;
+  - a second `<local_file_store>` or `<sftp_file_store>` element in one file, which numbers the
+    siblings so that no store name matches;
+  - a download route without `<store>`, or with an unknown one.
+  Warn at start-up, as `InertApiKeysWarning` does for API keys.
+- **An `application/json` body that isn't valid JSON is read as no parameters** (every
+  parameter NULL) instead of being refused with 400.
+- **Step8 small bugs:** the `response_type` fallback reads `file_management:file_management:response_type`,
+  and the `regex:file_variables_pattern` lookup discards its result.
+- **OpenAPI:** upload endpoints have no request schema, and the default error schema
+  (`error_message`) doesn't match the runtime body (`success`, `message`, `error_number`).
+- **The shipped `settings.xml` sets `debug_mode_header_value` to 54321.** Anyone sending that header
+  gets stack traces. Ship the sample without the element. Don't ship it empty: `IsDebugMode`
+  (SettingsService.cs) compares header and setting as strings, so an empty value matches an empty
+  `debug-mode` header. Treat an empty configured value as "off".
+- **An error raised after the first result set is lost.** Com.H.Data.Common reads only the first
+  result set and never calls `NextResult`, so on SQL Server and SQLite `SELECT ...; THROW 50404 ...`
+  returns a success and keeps the uploads. Consider draining the remaining results after reading,
+  so trailing errors surface. Documented as a rule for now.
+- **Configuration reload, reported by review and not yet reproduced end to end:**
+  - The route resolvers and `SettingsEncryptionService` subscribe to the same root reload token. On
+    alternate reloads the resolvers may rebuild from the previous merged snapshot.
+  - On Linux and macOS without `settings_encryption:data_protection_key_path`,
+    `SettingsEncryptionService` returns before it registers its change token, so nothing would
+    hot-reload.
+  - A connection's provider is cached for the life of the process (`DbConnectionFactory`), so
+    changing it needs a restart.
+- **`max_payload_size_in_bytes` configures Kestrel only.** Under IIS in-process hosting (the
+  default), ASP.NET Core's `IISServerOptions.MaxRequestBodySize` (30,000,000 bytes) applies
+  instead, and IIS's `maxAllowedContentLength` before it. The engine could set
+  `IISServerOptions.MaxRequestBodySize` from the same setting. `maxAllowedContentLength` still
+  needs a `web.config`.
+- **`required_scopes` fails for tokens that carry `scp`** (Entra ID, Okta). Step4JwtAuthorization
+  reads `FindAll("scp")` and `FindAll("scope")`, but .NET has renamed `scp` to
+  `http://schemas.microsoft.com/identity/claims/scope`, so such tokens never satisfy the check
+  and get 403. Read the mapped type too, or turn off inbound claim mapping and adapt the
+  `email`/`roles` look-ups.
+- **`{auth{user_id}}` never falls back to `oid`.** The code tries NameIdentifier, then `sub`, then
+  `oid`, but .NET has renamed `oid` to the objectidentifier claim type, so the last step never
+  matches. A provider that sends a constant subject ("Not supported") gives every user the same
+  id. Read the mapped objectidentifier claim, and ignore a "Not supported" subject.
+- **Only the config files listed in `DBToRestAPI.csproj` are copied to the build output.** A new
+  `config/*.xml` file named in `<additional_configurations>` makes `dotnet run` fail at start-up
+  until it gets its own csproj entry. Consider a `config\*.xml` glob.
+- **Download `http` source:** no host allow-list, and its error messages echo the full URL.
+- **CORS:** the engine sends no `Access-Control-Expose-Headers`, so cross-origin pages can't read
+  `Content-Disposition` on downloads.
+The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
+
+- **The cache key of a database route is only the element name plus the `<invalidators>` values**
+  (CacheService.cs). It has no verb, route values, query string or caller. A cached route that
+  answers several verbs serves a cached GET answer to a write, so the write never runs. A route
+  value missing from `<invalidators>` shares one entry across all ids. Invalidator values are
+  read from every parameter source, so one named like a `<vars>` key or a JWT claim takes that
+  value. The key uses `section.Key`, which is `0`, `1`... for duplicate sibling endpoints. Add the
+  method, the resolved route and `section.Path` to the key, and warn at load about cached routes
+  with several verbs or route values missing from `<invalidators>`.
+- **Raw markers in `{http{}}` blocks can take request values.** A marker outside a JSON string
+  (`"body": {{body}}`) is meant for a chained value. But when that column is `NULL`, or the
+  previous query returned no row or several, a request field with the same name is inserted as
+  raw JSON. It can add a second `"url"` and send the block's credential headers to another host.
+  Accept only `{pq{}}` and `{s{}}` values there, or require exactly one JSON value.
+- **`{http{}}` matching ignores SQL comments.** A complete marker in a comment makes a real call.
+  An unclosed one pairs with the next block's `}http}`, and the SQL in between is deleted.
+- **JSON numbers are bound as `double`** (Com.H.Data.Common `DataExtensions`). On SQL Server, a
+  number declared `NVARCHAR` becomes text with 6 significant digits. Consider binding integral and
+  exact numbers as `decimal`.
+- **No configuration validation at load:**
+  - an element name repeated across files merges both endpoints silently;
+  - a repeated verb + route resolves to the first match silently;
+  - unknown tags (for example `<cache_duration_seconds>`) are ignored.
+- **`given_name` and `family_name` are renamed by .NET's claim mapping**, so the UserInfo fallback's
+  check never finds them and every new token triggers a UserInfo request. `{auth{given_name}}`
+  is never filled from the token itself.
+- **Regex override keys are read inconsistently.** The shipped `regex.xml` sets
+  `regex:query_string_variables_pattern`, `regex:route_variables_pattern` and
+  `regex:form_variables_pattern`, which the code never reads.
+- **`PATCH` is accepted by routing, CORS and OpenAPI, but `ApiController` has no `[HttpPatch]`**,
+  so a PATCH probably ends in 405. Not run-tested.
+- **A body with another content type** (`text/plain`, `application/*+json`) gives `NULL` for every
+  body parameter and a success, never `415`. The `json/` route prefix is the only workaround, and
+  it is undocumented.
+- **CORS:** when any `<authorize>` section exists, credentials are on for every route and the
+  default allowed headers leave out `X-Auth-Provider`.
+- **Docs: finish the agent-first rewrite** ([docs/AUTHORING.md](docs/AUTHORING.md)).
+  Uploads, downloads and errors are done, and the `{auth{sub}}` examples, query chaining's error
+  format and the parameter priority order were corrected. Still to do:
+  - 02-configuration, which shows endpoints without `<queries>`;
+  - tutorials 02, 05, 07, 08 and 09, which show error bodies as `{"error": ...}`;
+  - 03-crud's `204` example with `OUTPUT`, which can't write a body;
+  - tutorial 23's broken links;
+  - 11-cors, whose defaults change when an `<authorize>` section exists;
+  - the webhook pages' status-polling endpoints, which are public and use sequential ids;
+  - `RateLimitCallerIdentity.cs`'s comment about an `oid` fallback that never matches.
+  Then add `docs/reference/tags.md` and `placeholders.md`, examples tested in CI, and docs
+  bundled in release archives.
+
 ## Done
 
 - **A caller could set the fields an upload entry gets from the engine.** Fixed in 1.7.5. A caller

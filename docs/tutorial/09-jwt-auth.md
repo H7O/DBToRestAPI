@@ -32,7 +32,7 @@ Define your OIDC provider in `/config/auth_providers.xml`:
         <validate_audience>true</validate_audience>
         <validate_lifetime>true</validate_lifetime>
         <clock_skew_seconds>300</clock_skew_seconds>
-        <userinfo_fallback_claims>email,name,given_name,family_name</userinfo_fallback_claims>
+        <userinfo_fallback_claims>email,name</userinfo_fallback_claims>
         <userinfo_cache_duration_seconds>300</userinfo_cache_duration_seconds>
       </azure_b2c>
 
@@ -177,14 +177,12 @@ Response (HTTP 401) — the middleware rejects it before SQL runs.
 
 ## Accessing Claims with `{auth{claim}}`
 
-Once authenticated, all JWT claims are available in your SQL using the `{auth{claim}}` syntax:
+Once authenticated, the token's claims are available in your SQL using the `{auth{claim}}` syntax, under the names described below:
 
 ```sql
 declare @email nvarchar(500) = {auth{email}};
-declare @user_id nvarchar(100) = {auth{sub}};
+declare @user_id nvarchar(100) = {auth{user_id}};
 declare @name nvarchar(500) = {auth{name}};
-declare @first_name nvarchar(500) = {auth{given_name}};
-declare @last_name nvarchar(500) = {auth{family_name}};
 declare @roles nvarchar(500) = {auth{roles}};
 ```
 
@@ -192,22 +190,25 @@ declare @roles nvarchar(500) = {auth{roles}};
 
 | Claim | Syntax | Description |
 |-------|--------|-------------|
-| `sub` | `{auth{sub}}` | Subject — unique user identifier |
+| `user_id` | `{auth{user_id}}` | The user's id, the token's subject (`sub`) |
 | `email` | `{auth{email}}` | User's email address |
 | `name` | `{auth{name}}` | Full display name |
-| `given_name` | `{auth{given_name}}` | First name |
-| `family_name` | `{auth{family_name}}` | Last name |
 | `roles` | `{auth{roles}}` | User roles (if included in token) |
-| `scope` | `{auth{scope}}` | Token scopes |
+| `scope` | `{auth{scope}}` | Token scopes, from a claim named `scope` |
+
+.NET renames many token claims on the way in: `sub`, `oid`, `given_name`, `family_name`, `tid`, `scp` and others. The engine always adds short names for `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`. Any other claim must be written with its full claim type. A claim .NET doesn't rename keeps its name from the token, such as `scope`. A renamed claim is available only under its long type (see below). So in 1.7.5 `{auth{sub}}`, `{auth{given_name}}` and `{auth{family_name}}` are never filled from the token, and `{auth{tid}}` and `{auth{scp}}` are never filled at all: don't use them. While `given_name` or `family_name` is listed in `userinfo_fallback_claims` (the default, and the shipped `auth_providers.xml`), the engine also calls the provider's UserInfo endpoint for each new token and adds the fields it returns (`sub`, `given_name`, `family_name` and so on) under their short names, as JSON values the database driver can't bind, so a query that uses one fails with the generic 400. Read the given and family names as `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname}}` and `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname}}`.
+
+A provider that sends the same subject for every user gives every user the same `user_id`. For example, an Azure AD B2C user flow with the subject claim turned off sends `Not supported` as the subject. Configure the provider to send a unique subject (in B2C, the object ID).
 
 ### Special Characters in Claim Names
 
-Some providers use dots or URLs as claim names. In the `{auth{}}` syntax, these get mapped to underscores:
+Some providers use dots or URLs as claim names. Write the claim exactly as its claim type, including dots and slashes. Don't replace them with underscores:
 
-| Original Claim | Syntax |
+| Claim type | Syntax |
 |----------------|--------|
-| `user.email` | `{auth{user_email}}` |
-| `http://schemas.example.com/role` | `{auth{http___schemas_example_com_role}}` |
+| `user.email` | `{auth{user.email}}` |
+| `http://schemas.example.com/role` | `{auth{http://schemas.example.com/role}}` |
+| `tid` (renamed by .NET) | `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}` |
 
 ## Role and Scope Requirements
 
@@ -266,8 +267,8 @@ begin
   set @role = 'user';
 end
 
--- Check authorization for this specific action
-if @role not in ('admin', 'manager')
+-- Check authorization for this specific action (is null first: null not in (...) is never true)
+if @role is null or @role not in ('admin', 'manager')
 begin
   throw 50403, 'Insufficient permissions. Admin or manager role required.', 1;
   return;

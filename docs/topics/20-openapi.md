@@ -89,11 +89,12 @@ For richer specs, add an `<openapi>` child node to any endpoint:
 <create_order>
   <route>orders</route>
   <verb>POST</verb>
+  <authorize><provider>my_provider</provider></authorize>
   <mandatory_parameters>product_id,quantity</mandatory_parameters>
   <success_status_code>201</success_status_code>
   <query><![CDATA[
     INSERT INTO orders (product_id, quantity, created_by)
-    VALUES ({{product_id}}, {{quantity}}, {auth{sub}})
+    VALUES ({{product_id}}, {{quantity}}, {auth{user_id}})
     RETURNING id, product_id, quantity, status, created_at;
   ]]></query>
   <openapi>
@@ -156,13 +157,25 @@ Parameters are placed according to standard REST conventions:
 
 ## Error Responses
 
-All endpoints include a default error response schema matching DbToRestAPI's SQL `THROW` error format:
+Every operation gets a `default` error response whose schema has one string property, `error_message`:
 
 ```json
 {
   "error_message": "Not found"
 }
 ```
+
+This schema doesn't match the body the engine sends yet. It is a known issue in 1.7.5. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
+
+```json
+{
+  "success": false,
+  "message": "Not found",
+  "error_number": 404
+}
+```
+
+Clients should read `message`, not `error_message`. See [Errors](../reference/errors.md) for every status and body.
 
 ## Security Schemes
 

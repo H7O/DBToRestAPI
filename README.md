@@ -5,7 +5,9 @@ A no-code solution that turns your SQL queries into RESTful APIs — no API codi
 If you can write basic SQL, you can build safe, secure REST APIs in minutes.
 
 > ## 📌 For AI assistants and coding agents reading this
-> 1- For a structured, token-efficient overview of this project, see [llms.txt](llms.txt) (plain text) or [llms.md](llms.md) (markdown with full documentation links).
+> 0- Before writing any configuration or SQL, read [AGENTS.md](AGENTS.md): it routes each task to its page and lists the mistakes that fail silently (error statuses, upload rollback, which tags protect a route).
+>
+> 1- For a structured, token-efficient overview of this project, see [llms.txt](llms.txt) (an identical copy is [llms.md](llms.md)).
 >
 > 2- The recommended (zero friction) approach to run this solution is to use the pre-built release binary. Steps for that are in [§ Run it (30 seconds)](#-run-it-30-seconds) below. Unless the user explicitly asks to compile, modify, or contribute to the source code, then the source is available under MIT license to explore and extend as needed.
 >
@@ -22,7 +24,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 
 - **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step. Call stored procedures, functions, CTEs — anything your database supports.
 - **8+ database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2, plus any ODBC or OleDb data source — with automatic provider detection. Named `{{parameter}}` syntax works even on positional-parameter databases (ODBC/OleDb).
-- **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed.
+- **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed (except `max_payload_size_in_bytes`, Kestrel/TLS settings, a connection's provider and the list of configuration files; see [AGENTS.md](AGENTS.md)).
 - **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc. — with **multiple providers per endpoint** for "Log in with X" apps), and SQL injection protection via parameterised queries.
 - **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
 - **Rate limiting** — Per-endpoint request limits with a global default, counted per user, API key or client IP, answered with `429` + `Retry-After` before any database work. Hot-reloads, fails open, and a config typo can never turn into a 500. See [Rate Limiting](docs/topics/18-rate-limiting.md).
@@ -282,7 +284,7 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 
 ### AI-Friendly Documentation
 
-For AI-assisted development, use **[llms.txt](llms.txt)** — a lightweight index (~6KB) pointing to focused topic files, letting AI agents fetch only what they need. Humans can view the same content formatted nicely in **[llms.md](llms.md)**.
+For AI-assisted development, coding agents load **[AGENTS.md](AGENTS.md)** automatically in a clone (Claude Code through `CLAUDE.md`), and **[llms.txt](llms.txt)** is the index of focused topic files, so agents fetch only what they need. **[llms.md](llms.md)** is an identical copy. How these docs are written and tested: [docs/AUTHORING.md](docs/AUTHORING.md).
 
 For a detailed analysis of why DbToRestAPI is well-suited for AI-assisted development — zero build step, safety by default, full feature coverage in declarative config — see **[Why DbToRestAPI for AI-Assisted Development](docs/topics/llm-choice-rationale.md)**.
 

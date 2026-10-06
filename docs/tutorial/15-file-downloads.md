@@ -1,6 +1,6 @@
 # File Downloads
 
-In the previous topic, you uploaded files and stored their metadata. Now let's serve those files back to clients — streaming them from local storage, SFTP, database, or even remote HTTP URLs.
+In the previous topic, you uploaded files and stored their metadata. Now let's serve those files back to clients. Files are streamed from local storage, SFTP or a URL, or decoded from base64 stored in the database.
 
 ## The Key: `response_structure` = `file`
 
@@ -23,8 +23,8 @@ A download endpoint is like any other endpoint, but with two differences:
 
   <query>
     <![CDATA[
-    declare @contact_id UNIQUEIDENTIFIER = {{contact_id}};
-    declare @file_id UNIQUEIDENTIFIER = {{file_id}};
+    declare @contact_id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{contact_id}});
+    declare @file_id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{file_id}});
     declare @error_msg nvarchar(500);
 
     if not exists (
@@ -44,20 +44,22 @@ A download endpoint is like any other endpoint, but with two differences:
 </download_contact_document>
 ```
 
+`TRY_CONVERT` turns an id that isn't a GUID into NULL, so it gets the same 404 as an unknown id. With a plain `declare @file_id UNIQUEIDENTIFIER = {{file_id}}`, the conversion fails and the caller gets the generic 400.
+
 ### How It Works
 
 1. SQL returns `file_name` and `relative_path`
 2. The application uses `<store>primary</store>` to resolve the full path, and refuses (with a 404) any `relative_path` that would land outside that store
-3. The file is **streamed** to the client (never fully loaded into memory)
-4. The browser receives proper headers (`Content-Disposition`, `Content-Type`)
+3. The file is **streamed** from the store to the client
+4. The browser receives proper headers (`Content-Disposition: attachment` with the file name, and `Content-Type`)
 
 ### Test It
 
 ```bash
-curl -O http://localhost:5000/contacts/abc-123/documents/def-456
+curl -OJ http://localhost:5000/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890/documents/f0e1d2c3-b4a5-6789-0abc-def123456789
 ```
 
-The `-O` flag saves the file with its original name.
+`-O` saves the file, and `-J` names it from the server's `Content-Disposition` header. With `-O` alone, curl would name it `f0e1d2c3-b4a5-6789-0abc-def123456789`.
 
 ## Three File Sources
 
@@ -68,6 +70,8 @@ Your SQL tells the application where to find the file by returning specific colu
 | `base64_content` | Inline from database | Highest |
 | `relative_path` | File store (local/SFTP) | Middle |
 | `http` | Remote URL (proxied) | Lowest |
+
+`base64_content` is used only when it holds non-empty text. The store is used whenever the row has a `relative_path` column, even when its value is NULL. A NULL `relative_path` makes the engine use `file_name` as the path. `http` is used only when there is no `relative_path` column at all.
 
 ### Source 1: File Store (Local/SFTP)
 
@@ -80,7 +84,7 @@ SELECT
 FROM contact_files WHERE id = @file_id;
 ```
 
-The `<store>` setting must match a store name from `file_management.xml`.
+The `<store>` setting must match a store name from `file_management.xml`. Without it, or with an unknown name, the download is a `404`. Return the MIME type as a `mime_type` column if you stored one; otherwise it is guessed from `file_name`.
 
 ### Source 2: Database (Base64)
 
@@ -95,14 +99,14 @@ For small files stored directly in the database:
     SELECT 
       file_name,
       base64_content,
-      'application/pdf' AS content_type
+      'application/pdf' AS mime_type
     FROM files_table WHERE id = {{id}};
     ]]>
   </query>
 </download_from_db>
 ```
 
-No `<file_management>` block needed — the content comes from the database directly.
+No `<file_management>` block needed — the content comes from the database directly. The column must hold base64 text: a binary (`varbinary`, `BLOB`) column is ignored. The whole file is decoded in memory, so keep this for small files.
 
 ### Source 3: Remote URL (HTTP Proxy)
 
@@ -122,7 +126,7 @@ Stream a file from an external URL:
 </download_from_url>
 ```
 
-The application fetches the file from the URL and streams it to the client. Useful for proxying files from CDNs or partner APIs.
+The application fetches the file from the URL and streams it to the client. Useful for proxying files from CDNs or partner APIs. Build the URL from your own data, never from caller input: the server will fetch whatever URL the query returns.
 
 ## Protected Downloads
 
@@ -136,7 +140,7 @@ The application fetches the file from the URL and streams it to the client. Usef
   <response_structure>file</response_structure>
   <file_management><store>primary</store></file_management>
   <query><![CDATA[
-    SELECT file_name, relative_path FROM contact_files WHERE id = {{id}};
+    SELECT file_name, relative_path FROM contact_files WHERE id = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
   ]]></query>
 </download_protected>
 ```
@@ -152,21 +156,16 @@ The application fetches the file from the URL and streams it to the client. Usef
   <file_management><store>primary</store></file_management>
   <query>
     <![CDATA[
-    declare @id UNIQUEIDENTIFIER = {{id}};
+    declare @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
     declare @user_email nvarchar(500) = {auth{email}};
 
-    -- Verify the authenticated user owns this file
-    if not exists (
-      select 1 from contact_files cf
-      join contacts c on cf.contact_id = c.id
-      where cf.id = @id and c.owner_email = @user_email
-    )
-    begin
-      throw 50403, 'Access denied', 1;
-      return;
-    end
-
-    select file_name, relative_path from contact_files where id = @id;
+    -- The ownership check is part of the WHERE clause. Another user's file
+    -- and a file that doesn't exist both return no row, which is a 404,
+    -- so the caller can't learn which files exist.
+    select cf.file_name, cf.relative_path
+    from contact_files cf
+    join contacts c on cf.contact_id = c.id
+    where cf.id = @id and c.owner_email = @user_email;
     ]]>
   </query>
 </download_my_file>
@@ -202,15 +201,18 @@ from file_variants where id = {{id}};
 | `THROW 50403` in SQL | 403 |
 | File not found in store | 404 |
 | `relative_path` points outside the store | 404 |
-| Store not configured | 500 |
-| SFTP connection failed | 500 |
-| HTTP proxy error | 502 |
+| No `<store>`, or an unknown store name | 404 |
+| SFTP connection or login failed | 400 (generic message) |
+| The `http` URL answered with an error | the remote server's status |
+| The `http` URL is unreachable, `base64_content` isn't valid base64, or the `mime_type` value isn't a valid media type | 400 (generic message) |
+
+Error bodies are JSON with `"success": false` and a `message`. Errors raised from SQL also include `error_number`. See [Errors, status codes and rollback](../reference/errors.md) for every case.
 
 ## Performance Notes
 
-- **Streaming**: Files are streamed in chunks — never fully loaded into memory
-- **Any file size**: Works with files of any size
-- **SFTP pooling**: Connections are reused for efficiency
+- **Streaming**: Files from a store or a URL are streamed in chunks. Base64 content from the database is decoded in memory.
+- **SFTP**: Each download opens its own connection.
+- **No caching**: Don't add `<cache>` to a download endpoint; in this version it breaks the download.
 
 ---
 

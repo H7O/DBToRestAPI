@@ -2,6 +2,16 @@
 
 > No-code solution to convert SQL queries into RESTful APIs
 
+## Instructions for AI agents
+
+In a clone, read [AGENTS.md](AGENTS.md) first: it routes tasks to pages and lists the rules whose violation fails silently. The ones that matter most:
+
+- Reject a request with a status, never with `200` and an error flag: raise `50000 + status` from SQL (SQL Server: `THROW 50400, 'Reason', 1;`; SQLite only from a trigger; other databases: [errors.md](docs/reference/errors.md)). The body is `{"success":false,"message":"Reason","error_number":400}`. Raise before the first statement that returns rows.
+- Files uploaded by a request that ends with a status of 400 or higher are deleted automatically. Write no cleanup code, but put your inserts in a transaction: rows are not rolled back. Insert only upload entries with `is_new_upload`. See [09-file-uploads.md](docs/topics/09-file-uploads.md).
+- `<authorize>` protects a route with JWT, and there the user's id is `{auth{user_id}}`. Of the API-key tags, only `<api_keys_collections>` protects a route. Look up every XML tag before using it: unknown tags are ignored silently.
+- The shipped demo database is SQLite; most examples here are SQL Server. Write the dialect of your connection.
+- A cache hit runs no SQL, so authorization written in SQL is skipped. `{http{` blocks fire even inside `IF` branches and comments. In query chains, read earlier results with `{pq{name}}`. See AGENTS.md rules 14-18.
+
 ## What It Is
 
 DbToRestAPI automatically exposes your SQL queries as REST endpoints. Write SQL, get APIs — no ORM, no code generation, no proprietary query languages.
@@ -34,7 +44,7 @@ HTTP Request → Route Matching → Parameter Injection → SQL Execution → JS
 </get_user>
 ```
 
-Request: `GET /users/abc-123` → Returns user JSON
+Request: `GET /users/abc-123` → Returns user JSON. (SQL Server dialect; the bundled demo database is SQLite, whose endpoints are in the shipped `config/sql.xml`.)
 
 ## Documentation Topics
 
@@ -42,6 +52,7 @@ Fetch only what you need:
 
 | Topic | File | When to Use |
 |-------|------|-------------|
+| Errors & Status Codes | [errors.md](docs/reference/errors.md) | Rejecting requests from SQL (THROW 50400 and each database's equivalent), the exact JSON body of every status, when uploaded files are rolled back, client handling |
 | Quick Start | [01-overview.md](docs/topics/01-overview.md) | Getting started, philosophy, first endpoint |
 | Configuration | [02-configuration.md](docs/topics/02-configuration.md) | settings.xml, sql.xml, connection strings |
 | CRUD Operations | [03-crud-operations.md](docs/topics/03-crud-operations.md) | Create, Read, Update, Delete patterns |
@@ -50,8 +61,8 @@ Fetch only what you need:
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
 | Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |
 | API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs |
-| File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Local/SFTP, multipart, base64 |
-| File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | Streaming from DB, local, SFTP, HTTP |
+| File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Files plus form fields in one request (multipart or JSON base64), local/SFTP stores, validation and limits, what the query receives (is_new_upload), automatic rollback, partial updates (keep/remove/add), complete form example |
+| File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | response_structure file, `<store>`, the columns the query returns (relative_path, file_name, mime_type, base64_content, http), owner-only downloads, Content-Disposition, 404 cases |
 | CORS | [11-cors.md](docs/topics/11-cors.md) | Pattern matching, credentials, preflight |
 | Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0, multiple providers per endpoint |
 | Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
@@ -88,7 +99,8 @@ for orphaned files, configure authorization across multiple policy surfaces. The
 is forced to fit the platform's limitations.
 
 On DbToRestAPI, this is one XML endpoint with SQL. Files arrive in the same request.
-If auth fails or validation fails, uploaded files roll back automatically. The response
+Auth and input validation run before anything is stored, and if the query then rejects the
+request (for example `THROW 50403, 'Not allowed', 1;`), the uploaded files are deleted automatically. The response
 contains the full enriched aggregate. A mobile team reuses the same endpoint.
 
 **The root question**: "Will this platform let the backend remain elegant on day 100?"
@@ -110,11 +122,11 @@ DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
 | Database | Syntax | HTTP Result |
 |----------|--------|-------------|
 | SQL Server | `THROW 50404, 'Not found', 1;` | 404 |
-| MySQL | `SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404;` | 404 |
-| PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` | 404 |
-| Oracle | `RAISE_APPLICATION_ERROR(-20404, 'Not found');` | 404 |
+| MySQL | `SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';` | 404 |
+| PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` in a procedure you `CALL` with the values (a `DO` block can't see parameters) | 404 |
+| SQLite | `RAISE(ABORT, '[50404] Not found')`, inside a trigger only | 404 |
 
-Error codes 50000-51000 map to HTTP 0-1000.
+An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: an error after it is lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.5. Every status and body: [errors.md](docs/reference/errors.md).
 
 ### Key XML Tags
 | Tag | Purpose |
@@ -178,7 +190,7 @@ Client sends: `x-api-key: secret-key-123`
 <!-- Multiple providers on one endpoint ("Log in with X"); or use * for any configured provider -->
 <authorize><provider>google,azure_b2c,auth0</provider></authorize>
 ```
-Access claims: `{auth{email}}`, `{auth{sub}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`.
+Access claims: `{auth{user_id}}` (the user's id, from the token's subject), `{auth{email}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`. Don't use `{auth{sub}}`: it is not reliably filled in 1.7.5.
 For multi-provider endpoints the provider is selected by the `X-Auth-Provider` hint header
 (overridable), else by the token's `iss`. Selection only *routes* — the token is still fully
 validated (signature, issuer, audience, lifetime) against the chosen provider.
@@ -201,7 +213,7 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- On failure (status_code=0): JSON_VALUE(@result, '$.error.message')
 -- Skip a call conditionally: "skip": "{{should_skip}}" (truthy = true/1/yes → variable receives NULL)
 -- Fire-and-forget: "no_wait": true → call runs on background thread, variable receives NULL immediately
--- Database-driven skip: combine with query chaining — Query 1 outputs a flag column, Query 2 uses it as "skip": "{{flag}}"
+-- Database-driven skip: combine with query chaining — Query 1 outputs a flag column, Query 2 uses it as "skip": "{pq{flag}}" ({pq{}} so a request value can't stand in for it)
 -- Webhook pattern: use no_wait + multi-query chaining for accept→process→notify workflows (see below)
 -- Built-in retry: "retry": {"max_attempts": 3, "delay_ms": 2000, "exponential_backoff": true, "retry_status_codes": [500,502,503,504]}
 -- Caller-supplied values in a URL: "query": {"id": "{{id}}"} (percent-encoded) — never inside the "url" string
@@ -229,12 +241,30 @@ See [19-webhooks.md](docs/topics/19-webhooks.md) for complete configuration refe
 <query connection_string_name="analytics_db">SELECT * FROM events WHERE user_id = {{id}};</query>
 ```
 
-### File Download
+### File Upload (files + form fields in one request, SQL Server)
+```xml
+<file_management>
+  <files_json_field_or_form_field_name>attachments</files_json_field_or_form_field_name>
+  <stores>my_store</stores>
+</file_management>
+<query><![CDATA[
+  INSERT INTO files (id, record_id, file_name, relative_path, mime_type)
+  SELECT JSON_VALUE(value, '$.id'), {{record_id}}, JSON_VALUE(value, '$.name'),
+         JSON_VALUE(value, '$.relative_path'), JSON_VALUE(value, '$.mime_type')
+  FROM OPENJSON({{attachments}}) WHERE JSON_VALUE(value, '$.is_new_upload') = 'true';
+]]></query>
+```
+Both settings are required, and `my_store` must be defined in `config/file_management.xml` (inside the existing `<local_file_store>`, with a `base_path`). Without a known store, nothing is stored, yet the request succeeds and the insert records files that don't exist. Without the files field, the engine doesn't process the entries at all, so the query sees whatever the caller sent, `is_new_upload` and `relative_path` included. Full example, request formats and partial updates: [09-file-uploads.md](docs/topics/09-file-uploads.md).
+
+### File Download (SQL Server)
 ```xml
 <response_structure>file</response_structure>
-<query>SELECT file_name, relative_path FROM files WHERE id = {{id}};</query>
+<file_management><store>my_store</store></file_management>
+<query><![CDATA[
+  SELECT file_name, relative_path, mime_type FROM files WHERE id = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
+]]></query>
 ```
-`relative_path` must resolve inside the store's `base_path`. Anything else (`..`, an absolute path elsewhere, a UNC path) is refused with 404.
+`<store>` is required for `relative_path`. `relative_path` must resolve inside the store's `base_path`; anything else (`..`, an absolute path elsewhere, a UNC path) is refused with 404. The type column is `mime_type`, not `content_type`. See [10-file-downloads.md](docs/topics/10-file-downloads.md).
 
 ### Static File Serving (website / SPA)
 ```xml

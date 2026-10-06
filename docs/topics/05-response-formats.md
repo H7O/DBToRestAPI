@@ -81,6 +81,7 @@ Add `count_query` for paginated responses:
 **Response:**
 ```json
 {
+  "success": true,
   "count": 150,
   "data": [
     {"id": 1, "name": "Item 1"},
@@ -155,7 +156,7 @@ Set `response_structure` to `file` for downloads:
     SELECT 
       file_name,        -- Download filename
       relative_path,    -- Path in file store
-      content_type      -- MIME type (optional)
+      mime_type         -- MIME type (optional; the column must be named mime_type)
     FROM files WHERE id = {{id}};
   ]]></query>
 </download_file>
@@ -191,9 +192,14 @@ Return one of these from your query:
 
 | Scenario | Response |
 |----------|----------|
-| Query returns no rows | Empty array `[]` or `null` |
-| With count_query, no rows | `{"count": 0, "data": []}` |
-| Single response, no rows | `null` |
+| `single` or `auto`, no row, success code 200 | `204 No Content` with an empty body |
+| `single` or `auto`, no row, any other success code | That status with an empty body |
+| `single` or `auto`, no row, with `root_node` | `{"<root_node>": null}` with the success code |
+| `single` or `auto`, no row, `<cache>` on the route | Body `null` with the success code |
+| `array`, no rows | `[]`, or `{"<root_node>": []}` with `root_node` |
+| With `count_query`, no rows | `{"success": true, "count": 0, "data": []}` |
+
+An empty body is not JSON. A client that parses every response should check for `204` or an empty body first. See [Errors, status codes and rollback](../reference/errors.md) for every status the engine sends.
 
 ## Controlling Column Names
 

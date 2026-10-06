@@ -411,7 +411,7 @@ Query 1 checks the database and outputs a `skip_http` flag. Query 2 uses it to c
         "method": "POST",
         "headers": { "X-API-Key": "{s{enrichment_api_key}}" },
         "body": { "email": "{{email}}" },
-        "skip": "{{skip_http}}"
+        "skip": "{pq{skip_http}}"
       }
     }http};
 
@@ -451,7 +451,7 @@ Query 1 checks the database and outputs a `skip_http` flag. Query 2 uses it to c
 </enrich_contact>
 ```
 
-**Why this works:** Query 1 executes first and outputs `skip_http` alongside `id` and `email`. Because Query 1 returns a single row, all output columns automatically become `{{column_name}}` parameters available to Query 2 (see [Query Chaining — Parameter Passing](14-query-chaining.md#parameter-passing)). When Query 2's Phase 1 pre-processing resolves `"skip": "{{skip_http}}"`, it reads `"1"` or `"0"` from that parameter — before any SQL in Query 2 runs. If `skip_http` is `"1"`, the HTTP call never fires and `@enrichment` receives `NULL`. If it's `"0"`, the call executes normally. The database made the decision; no application code, no extra round-trips.
+**Why this works:** Query 1 executes first and outputs `skip_http` alongside `id` and `email`. Because Query 1 returns a single row, all output columns automatically become `{{column_name}}` parameters available to Query 2 (see [Query Chaining — Parameter Passing](14-query-chaining.md#parameter-passing)). When Query 2's Phase 1 pre-processing resolves `"skip": "{pq{skip_http}}"`, it reads `"1"` or `"0"` from that parameter — before any SQL in Query 2 runs. If `skip_http` is `"1"`, the HTTP call never fires and `@enrichment` receives `NULL`. If it's `"0"`, the call executes normally. The database made the decision; no application code, no extra round-trips. Use `{pq{skip_http}}` rather than `{{skip_http}}`: if Query 1 returned `NULL` or no row, `{{skip_http}}` would take a request value with the same name, letting the caller decide.
 
 > **When to use this pattern:** pay-per-call APIs (avoid unnecessary charges), rate-limited APIs (protect your quota), slow external services (skip when data is already fresh), and idempotent enrichment workflows (safely re-run without double-calling).
 

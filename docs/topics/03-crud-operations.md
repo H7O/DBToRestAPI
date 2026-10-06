@@ -54,7 +54,8 @@ Complete patterns for Create, Read, Update, and Delete operations.
   <mandatory_parameters>id</mandatory_parameters>
   
   <query><![CDATA[
-    DECLARE @id UNIQUEIDENTIFIER = {{id}};
+    -- A malformed id becomes NULL, which matches no row: a 404, not a conversion error.
+    DECLARE @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
     
     IF NOT EXISTS (SELECT 1 FROM [contacts] WHERE id = @id)
     BEGIN
@@ -113,12 +114,15 @@ Complete patterns for Create, Read, Update, and Delete operations.
   <verb>GET</verb>
   
   <query><![CDATA[
-    DECLARE @name NVARCHAR(500) = {{name}};
-    DECLARE @phone NVARCHAR(100) = {{phone}};
-    DECLARE @take INT = ISNULL({{take}}, 100);
-    DECLARE @skip INT = ISNULL({{skip}}, 0);
-    DECLARE @sort_by NVARCHAR(50) = ISNULL({{sort_by}}, 'name');
-    DECLARE @sort_order NVARCHAR(10) = ISNULL({{sort_order}}, 'asc');
+    -- An empty query-string value arrives as '', not NULL: NULLIF turns it back into "no filter".
+    DECLARE @name NVARCHAR(500) = NULLIF({{name}}, '');
+    DECLARE @phone NVARCHAR(100) = NULLIF({{phone}}, '');
+    DECLARE @take INT = ISNULL(TRY_CONVERT(INT, NULLIF({{take}}, '')), 100);
+    DECLARE @skip INT = ISNULL(TRY_CONVERT(INT, NULLIF({{skip}}, '')), 0);
+    DECLARE @sort_by NVARCHAR(50) = ISNULL(NULLIF({{sort_by}}, ''), 'name');
+    DECLARE @sort_order NVARCHAR(10) = ISNULL(NULLIF({{sort_order}}, ''), 'asc');
+    IF @take < 1 OR @take > 1000 SET @take = 100;
+    IF @skip < 0 SET @skip = 0;
     
     IF @sort_by NOT IN ('name', 'phone') SET @sort_by = 'name';
     IF @sort_order NOT IN ('asc', 'desc') SET @sort_order = 'asc';
@@ -136,8 +140,8 @@ Complete patterns for Create, Read, Update, and Delete operations.
   ]]></query>
   
   <count_query><![CDATA[
-    DECLARE @name NVARCHAR(500) = {{name}};
-    DECLARE @phone NVARCHAR(100) = {{phone}};
+    DECLARE @name NVARCHAR(500) = NULLIF({{name}}, '');
+    DECLARE @phone NVARCHAR(100) = NULLIF({{phone}}, '');
     
     SELECT COUNT(*) FROM [contacts]
     WHERE (@name IS NULL OR name LIKE '%' + @name + '%')
@@ -157,7 +161,7 @@ Complete patterns for Create, Read, Update, and Delete operations.
   <mandatory_parameters>id,name,phone</mandatory_parameters>
   
   <query><![CDATA[
-    DECLARE @id UNIQUEIDENTIFIER = {{id}};
+    DECLARE @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
     DECLARE @name NVARCHAR(500) = {{name}};
     DECLARE @phone NVARCHAR(100) = {{phone}};
     
@@ -184,10 +188,10 @@ Complete patterns for Create, Read, Update, and Delete operations.
   <mandatory_parameters>id</mandatory_parameters>
   
   <query><![CDATA[
-    DECLARE @id UNIQUEIDENTIFIER = {{id}};
+    DECLARE @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
     DECLARE @action NVARCHAR(50) = {{action}};
     
-    IF @action NOT IN ('activate', 'deactivate')
+    IF @action IS NULL OR @action NOT IN ('activate', 'deactivate')
     BEGIN
       THROW 50400, 'Invalid action', 1;
       RETURN;
@@ -221,7 +225,7 @@ Complete patterns for Create, Read, Update, and Delete operations.
   <success_status_code>204</success_status_code>
   
   <query><![CDATA[
-    DECLARE @id UNIQUEIDENTIFIER = {{id}};
+    DECLARE @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
     
     IF NOT EXISTS (SELECT 1 FROM [contacts] WHERE id = @id)
     BEGIN
@@ -240,7 +244,7 @@ Complete patterns for Create, Read, Update, and Delete operations.
 
 ```xml
 <query><![CDATA[
-  DECLARE @id UNIQUEIDENTIFIER = {{id}};
+  DECLARE @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
   
   IF NOT EXISTS (SELECT 1 FROM [contacts] WHERE id = @id AND deleted_at IS NULL)
   BEGIN
@@ -263,9 +267,12 @@ Complete patterns for Create, Read, Update, and Delete operations.
 |----------|--------|
 | SQL Server | `THROW 50404, 'Not found', 1;` |
 | MySQL | `SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';` |
-| PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` |
-| Oracle | `RAISE_APPLICATION_ERROR(-20404, 'Not found');` |
-| SQLite | `SELECT RAISE(ABORT, '[50404] Not found');` |
+| PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` inside a procedure that the query calls with the request values, such as `CALL check_category({{category}});` ([example](../reference/errors.md#raising-an-error-from-sql)). Plain SQL has no `RAISE`, and a `DO` block can't see request parameters. |
+| Oracle | `BEGIN RAISE_APPLICATION_ERROR(-20404, 'Not found'); END;` (not mapped in 1.7.5: arrives as the generic 400) |
+| SQLite | `SELECT RAISE(ABORT, '[50404] Not found');` inside a trigger only. Outside one, it is the generic 400. |
+| IBM DB2 | `SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';` inside a compound statement (`BEGIN ... END`) or a procedure (not mapped in 1.7.5: arrives as the generic 400) |
+
+The response body, every other status, and when uploaded files are rolled back: [Errors, status codes and rollback](../reference/errors.md).
 
 ### Common Patterns
 

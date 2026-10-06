@@ -69,7 +69,7 @@ Enterprise-grade authentication with Azure B2C, Google, Auth0, Okta, and any OID
   
   <query><![CDATA[
     DECLARE @user_email NVARCHAR(500) = {auth{email}};
-    DECLARE @user_id NVARCHAR(100) = {auth{sub}};
+    DECLARE @user_id NVARCHAR(100) = {auth{user_id}};
     
     SELECT * FROM user_data WHERE email = @user_email;
   ]]></query>
@@ -179,7 +179,7 @@ Use `{auth{claim_name}}` syntax:
 
 ```sql
 DECLARE @email NVARCHAR(500) = {auth{email}};
-DECLARE @user_id NVARCHAR(100) = {auth{sub}};
+DECLARE @user_id NVARCHAR(100) = {auth{user_id}};
 DECLARE @name NVARCHAR(500) = {auth{name}};
 DECLARE @roles NVARCHAR(500) = {auth{roles}};
 ```
@@ -188,15 +188,19 @@ DECLARE @roles NVARCHAR(500) = {auth{roles}};
 
 | Claim | Syntax | Description |
 |-------|--------|-------------|
-| `sub` | `{auth{sub}}` | User ID |
+| `user_id` | `{auth{user_id}}` | The user's id, the token's subject (`sub`) |
 | `email` | `{auth{email}}` | Email |
 | `name` | `{auth{name}}` | Full name |
-| `given_name` | `{auth{given_name}}` | First name |
-| `family_name` | `{auth{family_name}}` | Last name |
 | `roles` | `{auth{roles}}` | Roles (pipe-delimited) |
-| `scope` | `{auth{scope}}` | Scopes |
+| `scope` | `{auth{scope}}` | Scopes, from a claim named `scope` |
 | `auth_time` | `{auth{auth_time}}` | Login instant as Unix time (seconds): the `auth_time` claim when present, otherwise `iat` |
 | `auth_provider` | `{auth{auth_provider}}` | Resolved provider name (e.g. `google`, `azure_b2c`) |
+
+.NET renames many token claims on the way in: `sub`, `oid`, `given_name`, `family_name`, `tid`, `scp` and others. The engine always adds short names for `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`. Any other claim must be written with its full claim type. A claim .NET doesn't rename keeps its name from the token, such as `scope`. A renamed claim is available only under its long type (see [Special Characters](#special-characters)). So in 1.7.5 `{auth{sub}}`, `{auth{given_name}}` and `{auth{family_name}}` are never filled from the token, and `{auth{tid}}` and `{auth{scp}}` are never filled at all: don't use them. While `given_name` or `family_name` is listed in `userinfo_fallback_claims` (the default, and the shipped `auth_providers.xml`), the engine also calls the provider's UserInfo endpoint for each new token and adds the fields it returns (`sub`, `given_name`, `family_name` and so on) under their short names, as JSON values the database driver can't bind, so a query that uses one fails with the generic 400. Read the given and family names as `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname}}` and `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname}}`.
+
+A provider that sends the same subject for every user gives every user the same `user_id`. For example, an Azure AD B2C user flow with the subject claim turned off sends `Not supported` as the subject. Configure the provider to send a unique subject (in B2C, the object ID).
+
+On a route without `<authorize>`, every `{auth{...}}` placeholder is `NULL`.
 
 `{auth{auth_time}}` is the moment the user logged in, unified across providers: the `auth_time`
 claim when the provider sends one (it survives silent token refreshes), otherwise `iat`. Compare it
@@ -212,8 +216,10 @@ IF EXISTS (SELECT 1 FROM users WHERE email = {auth{email}} AND sessions_invalida
 
 ### Special Characters
 
-Claims with dots/slashes use underscores:
-- `user.email` → `{auth{user_email}}`
+Write a claim exactly as its claim type, including dots and slashes. Don't replace them with underscores:
+- `user.email` → `{auth{user.email}}`
+- `http://schemas.example.com/role` → `{auth{http://schemas.example.com/role}}`
+- `tid`, renamed by .NET → `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}`
 
 ## Authorization Patterns
 
@@ -228,8 +234,8 @@ DECLARE @email NVARCHAR(500) = {auth{email}};
 DECLARE @role NVARCHAR(100);
 SELECT @role = role FROM app_users WHERE email = @email;
 
--- Check authorization
-IF @role != 'admin'
+-- Check authorization. A user with no row leaves @role NULL, so test IS NULL first.
+IF @role IS NULL OR @role <> 'admin'
 BEGIN
   THROW 50403, 'Admin access required', 1;
   RETURN;

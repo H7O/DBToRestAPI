@@ -403,7 +403,7 @@ The `skip` value is resolved **before** SQL runs, so it can't come from SQL in t
 
 1. **Query 1** runs SQL and outputs a flag column (e.g., `skip_http` = `'1'` or `'0'`)
 2. Because Query 1 returns a single row, its columns become `{{column_name}}` parameters for Query 2
-3. **Query 2** uses `"skip": "{{skip_http}}"` — the value comes from Query 1's SQL result
+3. **Query 2** uses `"skip": "{pq{skip_http}}"`: the value comes from Query 1's SQL result. Use `{pq{...}}` rather than `{{...}}` here: if Query 1 returned `NULL` or no row, `{{skip_http}}` would take a request value with the same name, letting the caller decide
 
 ```xml
 <!-- Query 1: Check if enrichment is needed -->
@@ -419,7 +419,7 @@ The `skip` value is resolved **before** SQL runs, so it can't come from SQL in t
     {
       "url": "{s{enrichment_api_url}}/lookup",
       "body": { "email": "{{email}}" },
-      "skip": "{{skip_http}}"
+      "skip": "{pq{skip_http}}"
     }
   }http};
 

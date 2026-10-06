@@ -4,13 +4,17 @@ The previous topic showed how to protect endpoints and access basic claims. In t
 
 ## Quick Recap: The `{auth{claim}}` Syntax
 
-When a JWT-protected endpoint executes, all claims from the token (plus any fetched from UserInfo) are available:
+When a JWT-protected endpoint executes, the validated token's claims are available:
 
 ```sql
-declare @user_id nvarchar(100) = {auth{sub}};
+declare @user_id nvarchar(100) = {auth{user_id}};
 declare @email nvarchar(500) = {auth{email}};
 declare @name nvarchar(500) = {auth{name}};
 ```
+
+`{auth{user_id}}` is the token's subject (`sub`). .NET renames many token claims on the way in: `sub`, `oid`, `given_name`, `family_name`, `tid`, `scp` and others. The engine always adds short names for `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`. Any other claim must be written with its full claim type (see [Special Characters in Claim Names](09-jwt-auth.md#special-characters-in-claim-names)). So in 1.7.5 `{auth{sub}}`, `{auth{given_name}}` and `{auth{family_name}}` are never filled from the token, and `{auth{tid}}` and `{auth{scp}}` are never filled at all: don't use them. While `given_name` or `family_name` is listed in `userinfo_fallback_claims` (the default, and the shipped `auth_providers.xml`), the engine also calls the provider's UserInfo endpoint for each new token and adds the fields it returns (`sub`, `given_name`, `family_name` and so on) under their short names, as JSON values the database driver can't bind, so a query that uses one fails with the generic 400. Read the given and family names as `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname}}` and `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname}}`.
+
+A provider that sends the same subject for every user gives every user the same `user_id`. For example, an Azure AD B2C user flow with the subject claim turned off sends `Not supported` as the subject. Configure the provider to send a unique subject (in B2C, the object ID).
 
 These work just like `{{param}}` — they're injected into the SQL before execution. But unlike regular parameters which come from the HTTP request, `{auth{}}` values come from the **validated JWT token** and **cannot be spoofed** by the caller.
 
@@ -83,7 +87,7 @@ order by created_at desc;
 
 This is a powerful pattern because the tenant filter is injected from the token — no chance of cross-tenant data leaks.
 
-> Note: The claim name for tenant identifiers varies by provider. Azure AD/Entra ID uses tid, while other providers may use tenant_id, app_tid, or custom claim names. Check your OIDC provider's documentation for the exact claim name and configure your <authorize> section accordingly.
+> Note: The claim name for tenant identifiers varies by provider. A custom claim such as `tenant_id` keeps its name. Azure AD/Entra ID sends `tid`, which .NET renames, so read it as `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}`. Check your OIDC provider's documentation for the exact claim name.
 
 ## Pattern 3: Audit Trails
 
@@ -163,13 +167,13 @@ Create user accounts automatically on first authenticated request:
     <![CDATA[
     declare @email nvarchar(500) = {auth{email}};
     declare @name nvarchar(500) = {auth{name}};
-    declare @sub nvarchar(100) = {auth{sub}};
+    declare @user_id nvarchar(100) = {auth{user_id}};
 
     -- Auto-register on first login
     if not exists (select 1 from app_users where email = @email)
     begin
-      insert into app_users (id, email, name, provider_sub, role, created_at)
-      values (newid(), @email, @name, @sub, 'user', getutcdate());
+      insert into app_users (id, email, name, provider_user_id, role, created_at)
+      values (newid(), @email, @name, @user_id, 'user', getutcdate());
     end
 
     -- Return user profile

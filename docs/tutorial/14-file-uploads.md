@@ -18,7 +18,7 @@ The application handles the file storage. Your SQL handles the metadata.
 Uploaded files are written to the configured store(s) before your SQL query runs, but the request still behaves atomically from the caller's perspective:
 
 - If the downstream SQL step succeeds and the request returns a success status, the uploaded files remain in place.
-- If the SQL step throws an exception, or the request ends with a `4xx` or `5xx` response, the application automatically deletes the files that were uploaded for that request.
+- If the SQL step raises an error, or the request ends with a `4xx` or `5xx` response, the application automatically deletes the files that were uploaded for that request. (A custom error numbered below `50400` gives a status below 400, which doesn't count as a failure, so use `50400` to `50599`, raised before any statement that returns rows.)
 - Rollback uses the full generated `relative_path`, so nested folder structures created by `<relative_file_path_structure>` are cleaned up correctly.
 - Stores marked `<optional>true</optional>` can still be skipped if unavailable; rollback only applies to stores where the file was actually written.
 - Empty parent directories are intentionally left in place.
@@ -34,19 +34,18 @@ Define where files are stored in `/config/file_management.xml`:
 ```xml
 <settings>
   <file_management>
-    <!-- Path structure for stored files -->
-    <relative_file_path_structure>
-      {date{yyyy}}/{date{MMM}}/{date{dd}}/{{guid}}/{file{name}}
-    </relative_file_path_structure>
+    <!-- Path structure for stored files. Keep it on one line: whitespace inside the element becomes part of the path. -->
+    <relative_file_path_structure>{date{yyyy}}/{date{MMM}}/{date{dd}}/{{guid}}/{file{name}}</relative_file_path_structure>
 
     <!-- Global restrictions -->
     <permitted_file_extensions>.pdf,.docx,.png,.jpg,.jpeg</permitted_file_extensions>
     <max_file_size_in_bytes>10485760</max_file_size_in_bytes>
     <max_number_of_files>5</max_number_of_files>
 
-    <!-- Field names in each file entry (code defaults: name, base64_content) -->
-    <filename_field_in_payload>file_name</filename_field_in_payload>
-    <base64_content_field_in_payload>base64_content</base64_content_field_in_payload>
+    <!-- Field names in each file entry. These are the shipped config's values;
+         without these two settings the defaults are name and base64_content. -->
+    <filename_field_in_payload>name</filename_field_in_payload>
+    <base64_content_field_in_payload>content_base64</base64_content_field_in_payload>
 
     <!-- Local file stores -->
     <local_file_store>
@@ -82,8 +81,8 @@ The `<relative_file_path_structure>` controls how uploaded files are organized:
 | `{date{yyyy}}` | `2025` |
 | `{date{MMM}}` | `Jan` |
 | `{date{dd}}` | `24` |
-| `{{guid}}` | `a1b2c3d4-...` (unique per upload) |
-| `{file{name}}` | `document.pdf` (original filename) |
+| `{{guid}}` | `a1b2c3d4-...` (the file's id, a new GUID unless the caller may choose it) |
+| `{file{name}}` | `document.pdf` (the file name, after the engine's checks) |
 
 Result: `2025/Jan/24/a1b2c3d4-.../document.pdf`
 
@@ -117,7 +116,7 @@ Add the upload endpoint to `sql.xml`:
 
   <query>
     <![CDATA[
-    declare @contact_id UNIQUEIDENTIFIER = {{contact_id}};
+    declare @contact_id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{contact_id}});
     declare @files_json nvarchar(max) = {{attachments}};
 
     -- Verify contact exists
@@ -132,7 +131,7 @@ Add the upload endpoint to `sql.xml`:
     select 
       TRY_CAST(JSON_VALUE(value, '$.id') as UNIQUEIDENTIFIER),
       @contact_id,
-      JSON_VALUE(value, '$.file_name'),
+      JSON_VALUE(value, '$.name'),
       JSON_VALUE(value, '$.relative_path'),
       JSON_VALUE(value, '$.mime_type'),
       JSON_VALUE(value, '$.size')
@@ -157,20 +156,47 @@ Add the upload endpoint to `sql.xml`:
 | `<permitted_file_extensions>` | Override global allowed extensions |
 | `<max_file_size_in_bytes>` | Override global max file size |
 | `<max_number_of_files>` | Override global max file count |
-| `<files_json_field_or_form_field_name>` | JSON field name containing file data |
+| `<files_json_field_or_form_field_name>` | JSON field name containing file data (required) |
+
+`<stores>` and `<files_json_field_or_form_field_name>` are both required. Each can go on the route, as here, or once for every route in `file_management.xml`. The route's value wins. If either is missing, the request still succeeds, but nothing is stored:
+
+- **No files field.** File parts are ignored, and the files array reaches your SQL exactly as the caller sent it, including any `is_new_upload` the caller set.
+- **No usable store** (none, or only names that don't exist). No file is written, yet your SQL still gets entries with `is_new_upload` and a `relative_path`. The insert above would then record files that don't exist.
+
+Every setting, with its default, is listed in [the uploads reference](../topics/09-file-uploads.md#settings).
+
+### Rejecting a Request
+
+When something about the submission is wrong, reject it from SQL with a status code instead of returning a success with an error flag. `THROW 50400` becomes HTTP `400`, `THROW 50404` becomes `404`, and so on:
+
+```sql
+if @contact_id is null or not exists (select 1 from contacts where id = @contact_id)
+  throw 50404, 'Contact not found', 1;
+
+if not exists (select 1 from OPENJSON(@files_json) where JSON_VALUE(value, '$.is_new_upload') = 'true')
+  throw 50400, 'Attach at least one file.', 1;
+```
+
+The client gets the status and a JSON body it can show:
+
+```json
+{ "success": false, "message": "Attach at least one file.", "error_number": 400 }
+```
+
+Because the status is 400 or higher, the files this request stored are deleted automatically. Required fields can also go in `<mandatory_parameters>`; a missing one is a `400` (`Missing mandatory parameters: ...`) before anything is stored. All statuses, and the syntax for other databases, are in [Errors, status codes and rollback](../reference/errors.md).
 
 ## Step 3: Upload Files
 
 ### Method 1: JSON with Base64
 
 ```bash
-curl -X POST http://localhost:5000/contacts/abc-123/documents \
+curl -X POST http://localhost:5000/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890/documents \
   -H "Content-Type: application/json" \
   -d '{
     "attachments": [
       {
-        "file_name": "id_document.pdf",
-        "base64_content": "JVBERi0xLjQK..."
+        "name": "id_document.pdf",
+        "content_base64": "JVBERi0xLjQK..."
       }
     ]
   }'
@@ -179,10 +205,12 @@ curl -X POST http://localhost:5000/contacts/abc-123/documents \
 ### Method 2: Multipart Form Data
 
 ```bash
-curl -X POST http://localhost:5000/contacts/abc-123/documents \
-  -F "attachments=[{\"file_name\": \"photo.jpg\"}]" \
+curl -X POST http://localhost:5000/contacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890/documents \
+  -F "attachments=[{\"name\": \"photo.jpg\"}]" \
   -F "file=@/path/to/photo.jpg"
 ```
+
+Each file part is matched to the entry with the same file name, so the entry's `name` must equal the uploaded file's name. A complete browser example (fields and files in one form) is in [the uploads reference](../topics/09-file-uploads.md#browser-request).
 
 ## What the Application Generates
 
@@ -192,7 +220,7 @@ After saving the files, the application creates a JSON array and passes it to yo
 [
   {
     "id": "guid-generated-by-system",
-    "file_name": "id_document.pdf",
+    "name": "id_document.pdf",
     "relative_path": "2025/Jan/24/a1b2c3d4/id_document.pdf",
     "mime_type": "application/pdf",
     "size": 102400,
@@ -204,7 +232,7 @@ After saving the files, the application creates a JSON array and passes it to yo
 
 Your SQL parses this JSON to store the metadata however you see fit.
 
-The file name is the one the caller sent, once checked. The engine sets the other fields above itself and drops any value the caller sends under those names. An entry that brings no file is an existing file (as in a partial update), and reaches your SQL without `relative_path`, `is_new_upload` and the other fields the engine sets. That is why the insert above keeps only entries with `is_new_upload`. The `attachments` field itself must come in the request body: the same name in the query string or a header is refused with `400`.
+The file name is the one the caller sent, once checked. The engine sets the other fields above itself and drops any value the caller sends under those names. The one exception is `id`: when `accept_caller_defined_file_ids` is on and the caller sends a valid GUID as the entry's `id`, the engine keeps it. An entry that brings no file is an existing file (as in a partial update), and reaches your SQL without `relative_path`, `is_new_upload` and the other fields the engine sets. That is why the insert above keeps only entries with `is_new_upload`. The `attachments` field itself must come in the request body: the same name in the query string or a header is refused with `400`.
 
 ## Create the Files Table
 
