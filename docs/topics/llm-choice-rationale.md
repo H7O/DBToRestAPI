@@ -96,7 +96,7 @@ The SQL `THROW` statement maps directly to HTTP responses:
 
 An error numbered `50000 + status` becomes that HTTP status: use `50400` to `50599`.
 This works with SQL Server `THROW`, PostgreSQL `RAISE EXCEPTION` (inside a procedure the query
-`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. In 1.7.6,
+`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. In 1.7.7,
 Oracle and DB2 custom errors are not mapped yet and arrive as a generic 400. See
 [Errors, status codes and rollback](../reference/errors.md).
 

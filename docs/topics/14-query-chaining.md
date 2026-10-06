@@ -59,6 +59,8 @@ Query 2 receives:
 - `{pq{name}}` = "John"
 - `{pq{email}}` = "j@x.com"
 
+A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) gives no column values. Read it as `{pq{json}}`, which holds `[2]`, or alias the column. (Before 1.7.7 such a row came back twice, so `{pq{json}}` held `[2,{"":2}]`, and `[null,{},{"":null}]` for `NULL`.)
+
 ### Multiple Rows → JSON Array
 
 Query 1 returns multiple rows:

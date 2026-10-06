@@ -46,27 +46,6 @@ against the code. Each was read in the code; none has a test yet.
   (`error_message`) doesn't match the runtime body (`success`, `message`, `error_number`).
 - **The shipped `settings.xml` sets `debug_mode_header_value` to 54321.** Anyone sending that header
   gets stack traces. Ship the sample without the element (an empty value is "off" from 1.7.6).
-- **An error raised after the first result set is lost.** Com.H.Data.Common reads only the first
-  result set and never calls `NextResult`, so on SQL Server and SQLite `SELECT ...; THROW 50404 ...`
-  returns a success and keeps the uploads. Fixed in Com.H.Data.Common 10.1.0.10, which moves through
-  the remaining result sets once the caller has read every row. Bumping the reference is not enough
-  on its own (found by review on 2026-10-06):
-  - `array` (without cache), `auto` with two or more rows, and a count_query's main query enumerate
-    while MVC writes the response, after `ApiController.Index` has returned. The error then reaches
-    Step6, which answers 500 "An unexpected error occurred", or the client sees a 200 cut off
-    mid-body if the response has started. Map it in Step6 with `TryGetCustomDbError` when the
-    response hasn't started, and read the first rows inside the controller, as `auto` does.
-  - `single`, file downloads and the count query stop after the first row, so they never reach
-    the drain and still lose the error. Read them to the end before closing the reader.
-  - 10.1.0.10 also returns a single unnamed column as one bare value per row, instead of the value
-    plus an object with an empty key. The engine's chain then takes a one-row intermediate result
-    as a column source: its value is parsed as JSON, so an unaliased `SELECT (... FOR JSON PATH,
-    WITHOUT_ARRAY_WRAPPER)` would feed its keys into the next query's `{{name}}` ahead of request
-    values. Use a single row as a column source only when it is an object, and add an engine test.
-    Response shapes change too: an `auto` response of an unaliased `COUNT(*)` becomes the bare
-    value instead of `[2,{"":2}]`, and `{pq{json}}` of such a query becomes `[v]`. Say so in the
-    release notes.
-  Keep AGENTS.md rule 2 ("raise before rows") until all of this is done, and add engine tests.
 - **Configuration reload, reported by review and not yet reproduced end to end:**
   - The route resolvers and `SettingsEncryptionService` subscribe to the same root reload token. On
     alternate reloads the resolvers may rebuild from the previous merged snapshot.
@@ -101,6 +80,19 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   the callers instead: a 1.7.6 attempt did, and also caught upstream timeouts, so every waiting
   caller re-sent its request to an upstream that was already too slow. Found by review on
   2026-10-06.
+- **An error after part of a streamed result has been written cuts the connection.** `array`,
+  `auto` and count-query data stream their rows, so an error raised after the rows (from 1.7.7
+  it surfaces) can't change a status that MVC has already handed to the server: Step6 aborts the
+  connection. That happens after about 4 KB of short values, or much sooner with long text. To
+  keep the status for small and medium results, buffer a streamed result up to a configurable
+  size before writing it, and stream only beyond that. Found by review on 2026-10-07.
+- **`single`, file and count-query results build an object for every row.** To surface an error
+  raised after the rows, the engine reads these results to the end through Com.H.Data.Common's
+  enumerator, which materializes each row only for it to be dropped. A 3,000,000-row SQLite
+  `single` went from 0.02 s to 2.7 s. A library API that takes the first row and then moves
+  through the remaining result sets with NextResult (skipping rows without reading them) would
+  make this constant again. The docs tell authors to use `TOP 1` / `LIMIT 1`. Found by review on
+  2026-10-07.
 - **Cache invalidators are read from every parameter source** (CacheService.cs), so one named like
   a `<vars>` key or a JWT claim takes that value. Also consider a start-up warning for a cached
   route whose answer looks caller-specific (it uses `{auth{...}}` without naming the caller in
@@ -138,6 +130,21 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   bundled in release archives.
 
 ## Done
+
+- **An error raised after the rows was lost.** Fixed in 1.7.7, with Com.H.Data.Common 10.1.0.10.
+  The library closed the reader once the first result set's rows ran out, and closing discards an
+  error raised after them (SQL Server's THROW after a SELECT, or a later statement that fails), so
+  the request succeeded and its uploads were kept. 10.1.0.10 reads the batch to its end once every
+  row has been read. The engine now reads `single`, file and count-query results to the end; reads
+  the first two rows of `array` and count-query data inside the controller, as `auto` did; maps an
+  error that surfaces while MVC streams a longer result in Step6 (the status the SQL asked for, or
+  the generic 400) when nothing has been sent; and aborts the connection when something has, instead
+  of ending a cut-off 200 (also when MVC has buffered part of the body without sending it, which
+  used to give the error status with invalid JSON). With 10.1.0.10 a one-row chain result whose
+  only column has no name is a bare value; the engine keeps it out of the `{{column}}` sources, so
+  a JSON-object string there can't fill the next query's `{{name}}`. See
+  [LateDbErrorTests.cs](DBToRestAPI.Tests/LateDbErrorTests.cs) and
+  [PipelineTests.cs](DBToRestAPI.Tests/PipelineTests.cs).
 
 - **A write to a cached endpoint was answered from the cache.** Fixed in 1.7.6. The key of a
   cached database endpoint was only its element name plus the `<invalidators>` values. An endpoint

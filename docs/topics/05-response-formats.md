@@ -11,6 +11,10 @@ This document covers controlling the structure of API responses.
 | `array` | Always return array (even for single row) |
 | `file` | Stream file download |
 
+A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) is returned as the bare value: `auto` and `single` answer `2`, and `array` answers `[2]`. Alias the column (`COUNT(*) AS total`) to get an object. When that bare value is `NULL` (an unaliased `MAX(x)` over no rows), `auto` and `single` treat it as no row (`204`, or `{"<root_node>": null}` with `root_node`), and `array` answers `[null]`. Before 1.7.7, `auto` and `array` returned each such row twice (`[2,{"":2}]`, and `[null,{},{"":null}]` for `NULL`); `single` already returned the bare value.
+
+`single` reads the whole first result set before answering, so an error raised after the rows still gets its status (from 1.7.7). So does a file download's query and a count query. Give such a query `TOP 1` or `LIMIT 1` when it can return many rows: every row is read.
+
 ## Auto Response (Default)
 
 ```xml

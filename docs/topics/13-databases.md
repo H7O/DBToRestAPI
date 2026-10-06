@@ -121,7 +121,7 @@ BEGIN
   RAISE_APPLICATION_ERROR(-20404, 'Not found');
 END;
 ```
-**Note:** `RAISE_APPLICATION_ERROR` is PL/SQL, so it runs only inside a `BEGIN ... END;` block or a procedure. The engine expects the -20000 to -20999 range (`-20404` → HTTP 404), but the Oracle driver reports the number as positive, so in 1.7.6 this arrives as the generic 400 (known issue).
+**Note:** `RAISE_APPLICATION_ERROR` is PL/SQL, so it runs only inside a `BEGIN ... END;` block or a procedure. The engine expects the -20000 to -20999 range (`-20404` → HTTP 404), but the Oracle driver reports the number as positive, so in 1.7.7 this arrives as the generic 400 (known issue).
 
 ### SQLite
 ```sql
@@ -142,7 +142,7 @@ BEGIN
   SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
 END
 ```
-**Note:** In 1.7.6 this arrives as the generic 400: the engine reads the first `[nnnnn]` in the message, which is the SQLSTATE (known issue).
+**Note:** In 1.7.7 this arrives as the generic 400: the engine reads the first `[nnnnn]` in the message, which is the SQLSTATE (known issue).
 
 The response body, every other status, and when uploaded files are rolled back: [Errors, status codes and rollback](../reference/errors.md).
 

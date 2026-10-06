@@ -194,23 +194,23 @@ namespace DBToRestAPI.Middlewares
                     timestamp, route, serviceType, hasResponseStarted, currentStatusCode,
                     ex.GetType().Name, ex.Message);
 
-                // Only attempt to write error response if response hasn't started
-                if (!context.Response.HasStarted)
+                // Only attempt to write error response if nothing of the response exists yet. Not
+                // started isn't enough: MVC's JSON writer hands its buffer to the server before the
+                // first flush, so HasStarted can still be false with part of a streamed result in
+                // the response pipe, and an error body written now would follow those rows: the
+                // client would get the error status with invalid JSON. Treat that like a started
+                // response.
+                var bodyWriter = context.Response.BodyWriter;
+                var hasBufferedBody = bodyWriter.CanGetUnflushedBytes && bodyWriter.UnflushedBytes > 0;
+                if (!context.Response.HasStarted && !hasBufferedBody)
                 {
                     try
                     {
                         await context.Response.DeferredWriteAsJsonAsync(
-                            new ObjectResult(
-                                new
-                                {
-                                    success = false,
-                                    message = "An unexpected error occurred processing your request"
-                                }
-                            )
-                            {
-                                StatusCode = 500
-                            }
-                        );
+                            LateErrorResponse(
+                                ex,
+                                _settings.IsDebugMode(context.Request),
+                                _settings.GetDefaultGenericErrorMessage()));
                     }
                     catch (Exception writeEx)
                     {
@@ -222,13 +222,71 @@ namespace DBToRestAPI.Middlewares
                 }
                 else
                 {
+                    // Part of a success response has been sent or buffered, so the status can't
+                    // change any more. Abort the connection: ending the response normally would hand
+                    // the client a 200 whose body is cut off, which reads like a success.
                     _logger.LogWarning(
-                        "{Time}: Cannot write error response in Step6MandatoryFieldsCheck - response already started. " +
-                        "Route: {Route}, OriginalException: {ExceptionType}",
+                        "{Time}: Cannot write error response in Step6MandatoryFieldsCheck - response already started or buffered; "
+                        + "aborting the connection. Route: {Route}, OriginalException: {ExceptionType}",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, ex.GetType().Name);
+                    context.Abort();
                 }
             }
 
+        }
+
+        /// <summary>
+        /// The response for an exception that escaped the controller before anything was sent.
+        /// </summary>
+        /// <remarks>
+        /// A streamed result (`array` or `auto` with two or more rows, a count query's data) is read
+        /// while MVC writes the response, after the controller has returned. A database error raised
+        /// after the rows (SQL Server's THROW after a SELECT, or a later statement that fails) then
+        /// surfaces here, outside the controller's catch, and used to become a 500 "unexpected
+        /// error". It now gets the controller's response: the status the SQL asked for (50000 + n),
+        /// the generic 400 for any other database error, or the details in debug mode. Anything
+        /// that isn't a database error is still the 500.
+        /// </remarks>
+        internal static ObjectResult LateErrorResponse(Exception ex, bool debugMode, string genericErrorMessage)
+        {
+            if (Controllers.ApiController.TryGetCustomDbError(ex, out var errorNumber, out var errorMessage))
+            {
+                var status = errorNumber - 50000;
+                return new ObjectResult(new { success = false, message = errorMessage, error_number = status })
+                {
+                    StatusCode = status
+                };
+            }
+
+            if (ex is System.Data.Common.DbException || ex.InnerException is System.Data.Common.DbException)
+            {
+                if (debugMode)
+                {
+                    return new ObjectResult(new
+                    {
+                        success = false,
+                        message = ex.Message,
+                        stack_trace = ex.StackTrace,
+                        inner_exception = ex.InnerException?.Message
+                    })
+                    {
+                        StatusCode = 500
+                    };
+                }
+                return new ObjectResult(new { success = false, message = genericErrorMessage })
+                {
+                    StatusCode = 400
+                };
+            }
+
+            return new ObjectResult(new
+            {
+                success = false,
+                message = "An unexpected error occurred processing your request"
+            })
+            {
+                StatusCode = 500
+            };
         }
     }
 }

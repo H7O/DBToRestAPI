@@ -808,22 +808,30 @@ namespace DBToRestAPI.Controllers
 
                         if (chamberedResult.WasExhausted(2))
                         {
-                            // Single row (or zero rows): pass as dynamic object for {{column_name}} access
-                            var singleRow = chamberedResult.AsEnumerable().FirstOrDefault();
+                            // Single row (or zero rows). The chambered items are the whole result.
+                            var rows = chamberedResult.AsEnumerable().ToList();
+                            object? singleRow = rows.FirstOrDefault();
 
-                            qParams.Add(new DbQueryParams
+                            // A row with columns is passed on for {{column_name}} access. A bare value
+                            // is not: one column with no name (an unaliased SELECT COUNT(*) on SQL
+                            // Server) comes back as the value itself, and a string value would be
+                            // parsed as JSON, so an object's keys would fill the next query's
+                            // {{name}} ahead of the request's own values.
+                            if (singleRow is IDictionary<string, object>)
                             {
-                                DataModel = singleRow,
-                                QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
-                            });
+                                qParams.Add(new DbQueryParams
+                                {
+                                    DataModel = singleRow,
+                                    QueryParamsRegex = DefaultRegex.DefaultPreviousQueryVariablesPattern
+                                });
+                            }
 
                             // Also add as JSON array so {{json}} works consistently regardless of row count.
                             // This allows query authors to always use {{json}} without checking if result was single/multiple.
                             // The JSON entry is added AFTER the single row entry, so it takes precedence for {{json}}
                             // while individual columns remain accessible via {{column_name}}.
-                            var jsonArray = singleRow != null
-                                ? JsonSerializer.Serialize(new[] { singleRow })
-                                : "[]";
+                            // A NULL bare value is a row too, so it gives [null], not [].
+                            var jsonArray = JsonSerializer.Serialize(rows);
 
                             qParams.Add(new DbQueryParams
                             {
@@ -949,18 +957,24 @@ namespace DBToRestAPI.Controllers
                         }
                         return StatusCode(customSuccessStatusCode, resultWithNoCount.AsEnumerable().ToArray());
                     }
+                    // Read the first two rows here. With zero rows or one, that reads the whole
+                    // result, so an error raised after the rows (THROW after a SELECT) is thrown
+                    // inside this controller's catch and gets its status. With more, the rest is
+                    // streamed while the response is written, and such an error can only reach
+                    // Step6, which maps it if nothing has been sent yet.
+                    var chamberedArray = await resultWithNoCount.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
                     if (!string.IsNullOrWhiteSpace(rootNodeName))
                     {
                         var wrappedResult = new ExpandoObject();
-                        wrappedResult.TryAdd(rootNodeName, resultWithNoCount);
+                        wrappedResult.TryAdd(rootNodeName, chamberedArray);
                         return StatusCode(customSuccessStatusCode, wrappedResult);
                     }
-                    return StatusCode(customSuccessStatusCode, resultWithNoCount);
+                    return StatusCode(customSuccessStatusCode, chamberedArray);
                 }
 
                 if (responseStructure == "single")
                 {
-                    var singleResult = resultWithNoCount.AsEnumerable().FirstOrDefault();
+                    var singleResult = await FirstRowReadingToEndAsync(resultWithNoCount, HttpContext.RequestAborted);
                     await resultWithNoCount.CloseReaderAsync();
                     if (!string.IsNullOrWhiteSpace(rootNodeName))
                     {
@@ -1027,7 +1041,7 @@ namespace DBToRestAPI.Controllers
                 HttpContext.Response.RegisterForDisposeAsync(resultCount);
             }
 
-            var rowCount = resultCount.AsEnumerable().FirstOrDefault();
+            var rowCount = await FirstRowReadingToEndAsync(resultCount, HttpContext.RequestAborted);
             HttpContext.RequestAborted.ThrowIfCancellationRequested();
 
             if (rowCount == null)
@@ -1069,16 +1083,51 @@ namespace DBToRestAPI.Controllers
                     new { success = true, count = rowCount, data = result.AsEnumerable().ToArray() });
             }
 
+            // The first two rows are read here, as for `array`, so a result of zero rows or one
+            // is read to its end inside this controller's catch.
+            var chamberedData = await result.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
+
             if (!string.IsNullOrWhiteSpace(rootNodeName))
             {
                 var wrappedResult = new ExpandoObject();
                 wrappedResult.TryAdd(rootNodeName,
-                    new { success = true, count = rowCount, data = await result.ToChamberedEnumerableAsync() });
+                    new { success = true, count = rowCount, data = chamberedData });
                 return StatusCode(customSuccessStatusCode, wrappedResult);
             }
 
             return StatusCode(customSuccessStatusCode,
-                new { success = true, count = rowCount, data = await result.ToChamberedEnumerableAsync() });
+                new { success = true, count = rowCount, data = chamberedData });
+        }
+
+        /// <summary>
+        /// The first row of a result, read to the result's end.
+        /// </summary>
+        /// <remarks>
+        /// Taking the first row and closing the reader left the rest of the batch unread, and
+        /// closing discards an error raised there: SQL Server's THROW after a SELECT, or a later
+        /// statement that fails. Reading to the end lets Com.H.Data.Common (10.1.0.10 and later)
+        /// move through the remaining result sets and throw that error here, inside the
+        /// controller's catch, so it gets its status and uploads are rolled back. Any further
+        /// rows are read through the library's enumerator, which builds each one only for it to
+        /// be dropped, so a result of many rows costs time: closing the reader skipped them (SQL
+        /// Server drains them without building objects, SQLite doesn't read them at all). The docs
+        /// ask for TOP 1 / LIMIT 1, and TODO.md tracks a library API that would skip them.
+        /// </remarks>
+        internal static async Task<dynamic?> FirstRowReadingToEndAsync(DbAsyncQueryResult<dynamic>? result, CancellationToken cancellationToken)
+        {
+            if (result == null)
+                return null;
+
+            dynamic? first = null;
+            var seen = false;
+            await foreach (var row in result.AsAsyncEnumerable().WithCancellation(cancellationToken))
+            {
+                if (seen)
+                    continue;
+                first = row;
+                seen = true;
+            }
+            return first;
         }
 
         private async Task<IActionResult> ReturnFile(
@@ -1087,7 +1136,7 @@ namespace DBToRestAPI.Controllers
             #region getting the file details from the result set
             // if response structure is file, then return the first record and get the file details from it
 
-            var singleResult = resultWithNoCount?.AsEnumerable().FirstOrDefault();
+            var singleResult = await FirstRowReadingToEndAsync(resultWithNoCount, HttpContext.RequestAborted);
 
             // close the reader
             if (resultWithNoCount != null)

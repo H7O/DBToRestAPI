@@ -126,7 +126,7 @@ DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
 | PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` in a procedure you `CALL` with the values (a `DO` block can't see parameters) | 404 |
 | SQLite | `RAISE(ABORT, '[50404] Not found')`, inside a trigger only | 404 |
 
-An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: an error after it is lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.6. Every status and body: [errors.md](docs/reference/errors.md).
+An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: from 1.7.7 an error after them still gets its status unless part of a longer `array`, `auto` or count-query data result has already been handed to the server (about 4 KB of short values, less with long text; then the connection is cut); before 1.7.7 it was lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.7. Every status and body: [errors.md](docs/reference/errors.md).
 
 ### Key XML Tags
 | Tag | Purpose |

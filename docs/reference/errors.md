@@ -2,7 +2,7 @@
 title: Errors, status codes and rollback
 summary: How a query rejects a request with a real HTTP status, the exact response body for the statuses the engine sends, and when uploaded files are rolled back.
 keywords: [THROW 50404, THROW 50400, RAISE EXCEPTION, SIGNAL SQLSTATE, RAISE_APPLICATION_ERROR, RAISERROR, error_number, generic_error_message, debug_mode_header_value, debug-mode, success_status_code, mandatory_parameters, rollback, root_node, 400, 401, 403, 404, 409, 413, 429, 500, 204]
-applies_to: 1.7.6
+applies_to: 1.7.7
 ---
 
 # Errors, status codes and rollback
@@ -14,10 +14,10 @@ Use this page whenever an endpoint must reject a request, or a client must tell 
 ## The rules
 
 1. **Reject with a status, never with `200` and a flag.** Raise an error numbered `50000 + status` from SQL (for example `THROW 50400, 'Category is invalid', 1;`) and the caller gets that HTTP status. Don't return `200` with a `status` or `error` column.
-2. **Raise before the first statement that returns rows.** The engine reads only the first result set. On SQL Server and SQLite, an error raised after it (for example `SELECT ...; IF @@ROWCOUNT = 0 THROW ...`) is lost: the caller gets a success, and uploads are kept. Check first, then `SELECT`.
+2. **Raise before the first statement that returns rows.** Only the first result set is returned, but from 1.7.7 the engine reads the batch to its end, so an error raised after the rows is still reported with its status, and uploads are rolled back. That is certain for `single`, file downloads, a count query's count, and any result of zero rows or one. A result of two or more rows in `array`, `auto` or a count query's data is written while it is read. Once part of it has been handed to the server (about 4 KB of short values, less when a row holds long text: one value of about 1,000 characters is enough), the status can't change, so the engine cuts the connection. Reading the body then fails; on SQL Server a long result may already have sent a `200` status line before the cut. A route with `<cache>` reads its result whole, so it always gets the status. Before 1.7.7, on SQL Server and SQLite, such an error was lost: the caller got a success, and uploads were kept. Check first, then `SELECT`.
 3. **Uploaded files clean themselves up.** When the final status is `400` or higher, the engine deletes every file the request stored. Write no cleanup code, and don't catch the error in SQL to return a success instead.
 4. **Rows don't clean themselves up.** The engine doesn't wrap your query in a transaction. Validate before any write, and put multi-statement writes in a transaction, so an error leaves no rows behind.
-5. **Use `50400` to `50599`.** A number from `50000` to `50399` gives a status below 400. That is not treated as an error and doesn't roll back uploads, and `50000`-`50099` produce an invalid status line.
+5. **Use `50400` to `50599`.** A number from `50000` to `50399` gives a status below 400. That is not treated as an error and doesn't roll back uploads (unless it was raised while a streamed result was being written: that surfaces as an exception, and uploads are rolled back), and `50000`-`50099` produce an invalid status line.
 6. **`mandatory_parameters` only checks that a name is present.** The name can come from any source: body, form, query string, route, a header, a JWT claim or `<vars>`. The comparison is case-sensitive, and an empty or `null` value passes. Validate values in SQL, with `NULL` in mind (`NULL NOT IN (...)` is not true).
 7. **Clients read `message`.** Every error body the engine writes is JSON with `"success": false` and a `message` string. Proxy routes, IIS limits and a cut-off stream can return other bodies, so parse defensively.
 
@@ -111,15 +111,15 @@ All bodies are JSON. "Rolled back" means files this request stored are deleted.
 | `409` | Upload target already exists in a non-optional store, and `overwrite_existing_files` is false. In an optional store, the engine stops writing to that store at the first existing file (so that file and the request's later files are missing from it), and the request goes on. | `{"success":false,"message":"One or more files already exist in the target file store(s). Please rename the file(s) and try again."}` | Rolled back |
 | `413` | Request body larger than `max_payload_size_in_bytes` | `{"success":false,"message":"The request body could not be read."}` | None were stored |
 | `429` | Rate limit hit | `{"success":false,"message":"...","retry_after_seconds":30}`, plus a `Retry-After` header | None were stored |
-| `500` | Writing to a non-optional store failed, or a database error while an `array` or `auto` route's rows were being sent, before any byte went out | `{"success":false,"message":"An unexpected error occurred processing your request"}` | Rolled back |
+| `500` | Writing to a non-optional store failed, or another failure that isn't a database error while rows were being written | `{"success":false,"message":"An unexpected error occurred processing your request"}` | Rolled back |
 | `500` | Reading the request failed unexpectedly | ``An unexpected error occurred processing your request (Contact your service provider support and provide them with error code `...`)`` | None were stored |
 | `500` | Engine configuration error (route, auth provider) | `Improper service setup. (...)`, `Authorization configuration error. (...)` and similar | None were stored |
-| `500` | The request sent the `debug-mode` header matching `debug_mode_header_value`, and a database error was not mapped | `{"success":false,"message":"Query 1 of 1 failed: ...","stack_trace":"...","inner_exception":"..."}` | Rolled back |
+| `500` | The request sent the `debug-mode` header matching `debug_mode_header_value`, and a database error was not mapped | `{"success":false,"message":"Query 1 of 1 failed: ...","stack_trace":"...","inner_exception":"..."}`. For an error raised while a streamed result was written, `message` is the driver's text without the `Query 1 of 1 failed:` prefix, and `inner_exception` is usually `null`. | Rolled back |
 
 A few behaviours to design for:
 
 - **A `400` can be the caller's mistake or a server-side database failure.** Show `message`, but treat a `400` whose message equals `generic_error_message` as a server problem.
-- **An `array` route streams its rows.** A database error while rows are read gives the `500` above if nothing was sent yet. Once bytes have gone out the status can't change, so the client gets a `200` with a cut-off body. Stored files are rolled back either way.
+- **`array`, `auto` and count-query data stream their rows.** From 1.7.7, a database error while rows are read gets the same status and body as one raised before them, as long as no part of the result has been handed to the server yet: about 4 KB of short values, less when a row holds long text (one value of about 1,000 characters is enough). After that the status can't change, so the engine cuts the connection: the client gets a network error, not a `200` with a cut-off body. Stored files are rolled back either way.
 - **Read `message` for display.** Use the status, not the text, for logic.
 
 ## When uploads are rolled back
@@ -128,7 +128,7 @@ The engine stores uploaded files before the query runs, then decides after the r
 
 - **Final status `400` or higher:** every file this request stored is deleted from every store, optional stores included. Folders are left in place.
 - **An exception after storing began** (a store failing, an error while the response is written): the same.
-- **Final status below `400`:** files stay. That includes a mapped error from `50000` to `50399`.
+- **Final status below `400`:** files stay. That includes a mapped error from `50000` to `50399`, except one raised while a streamed result was written, which counts as the exception above.
 - **Refused before storing** (auth, rate limit, `mandatory_parameters`, upload validation, `413`): nothing was stored, so there is nothing to delete.
 
 Rollback has limits. Know them before relying on it:
@@ -174,8 +174,9 @@ IF @category IS NULL OR @category NOT IN ('billing', 'technical', 'other')
 ```
 
 ```sql
--- Don't: SELECT first and raise afterwards. The engine has already taken the first result set,
--- so the THROW is lost and the caller gets a success.
+-- Avoid: SELECT first and raise afterwards. Before 1.7.7 the THROW was lost and the caller got a
+-- success. From 1.7.7 this one works, because it raises only when there are no rows, but an error
+-- raised after a long streamed result cuts the connection instead of returning its status.
 SELECT id, name FROM records WHERE id = @id;
 IF @@ROWCOUNT = 0 THROW 50404, 'Not found', 1;
 
@@ -216,7 +217,7 @@ END CATCH
 
 Proxy routes ([API gateway](../topics/08-api-gateway.md)) don't run a query. The upstream service's status and body pass through unchanged. A proxy failure is the generic `400`, and in debug mode a `500` whose body is a JSON string rather than an object.
 
-## Known issues in 1.7.6
+## Known issues in 1.7.7
 
 These are tracked in [TODO.md](../../TODO.md):
 
@@ -224,7 +225,7 @@ These are tracked in [TODO.md](../../TODO.md):
 - PostgreSQL messages keep the `P0001:` prefix.
 - Oracle and DB2 custom errors are not mapped. ODBC and OleDb have no mapping.
 - SQLite can raise a custom status only from a trigger.
-- An error raised after the first result set is lost on SQL Server and SQLite.
+- An error raised after part of a streamed result (`array`, `auto`, a count query's data) has been handed to the server cuts the connection instead of returning its status.
 - An `application/json` body that isn't valid JSON is read as having no parameters, so they are all `NULL`. With `mandatory_parameters`, that becomes a `400` "Missing mandatory parameters".
 - The OpenAPI error schema (`error_message`) doesn't match the runtime body (`message`).
 - Under IIS in-process hosting, `max_payload_size_in_bytes` has no effect (see [settings](#settings)).
