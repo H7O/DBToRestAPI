@@ -126,7 +126,7 @@ DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
 | PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` in a procedure you `CALL` with the values (a `DO` block can't see parameters) | 404 |
 | SQLite | `RAISE(ABORT, '[50404] Not found')`, inside a trigger only | 404 |
 
-An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: an error after it is lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.5. Every status and body: [errors.md](docs/reference/errors.md).
+An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: an error after it is lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.6. Every status and body: [errors.md](docs/reference/errors.md).
 
 ### Key XML Tags
 | Tag | Purpose |
@@ -190,7 +190,7 @@ Client sends: `x-api-key: secret-key-123`
 <!-- Multiple providers on one endpoint ("Log in with X"); or use * for any configured provider -->
 <authorize><provider>google,azure_b2c,auth0</provider></authorize>
 ```
-Access claims: `{auth{user_id}}` (the user's id, from the token's subject), `{auth{email}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`. Don't use `{auth{sub}}`: it is not reliably filled in 1.7.5.
+Access claims: `{auth{user_id}}` (the user's id, from the token's subject), `{auth{email}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`. Prefer `{auth{user_id}}` to `{auth{sub}}`, which is empty before 1.7.6. From 1.7.6 every claim is also available under the name the token used, such as `{auth{sub}}`, `{auth{scp}}`, `{auth{tid}}` and `{auth{given_name}}`.
 For multi-provider endpoints the provider is selected by the `X-Auth-Provider` hint header
 (overridable), else by the token's `iss`. Selection only *routes* — the token is still fully
 validated (signature, issuer, audience, lifetime) against the chosen provider.
@@ -217,7 +217,7 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- Webhook pattern: use no_wait + multi-query chaining for accept→process→notify workflows (see below)
 -- Built-in retry: "retry": {"max_attempts": 3, "delay_ms": 2000, "exponential_backoff": true, "retry_status_codes": [500,502,503,504]}
 -- Caller-supplied values in a URL: "query": {"id": "{{id}}"} (percent-encoded) — never inside the "url" string
--- Values landing inside JSON strings are escaped automatically; "body": {{doc}} (outside a string) injects raw JSON by design — only for values you built yourself
+-- Values landing inside JSON strings are escaped automatically; "body": {{doc}} (outside a string) injects one JSON value, anything else becomes a JSON string — only for values you built yourself
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 

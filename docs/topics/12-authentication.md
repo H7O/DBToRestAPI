@@ -188,15 +188,16 @@ DECLARE @roles NVARCHAR(500) = {auth{roles}};
 
 | Claim | Syntax | Description |
 |-------|--------|-------------|
-| `user_id` | `{auth{user_id}}` | The user's id, the token's subject (`sub`) |
+| `user_id` | `{auth{user_id}}` | The user's id: the token's subject (`sub`), or `oid` when it has none |
+| `sub` | `{auth{sub}}` | The token's subject. Prefer `user_id`, which falls back to `oid` |
 | `email` | `{auth{email}}` | Email |
 | `name` | `{auth{name}}` | Full name |
 | `roles` | `{auth{roles}}` | Roles (pipe-delimited) |
-| `scope` | `{auth{scope}}` | Scopes, from a claim named `scope` |
+| `scp`, `scope` | `{auth{scp}}`, `{auth{scope}}` | Scopes, space-separated, from whichever claim the provider sends (`scp` for Entra ID and Okta) |
 | `auth_time` | `{auth{auth_time}}` | Login instant as Unix time (seconds): the `auth_time` claim when present, otherwise `iat` |
 | `auth_provider` | `{auth{auth_provider}}` | Resolved provider name (e.g. `google`, `azure_b2c`) |
 
-.NET renames many token claims on the way in: `sub`, `oid`, `given_name`, `family_name`, `tid`, `scp` and others. The engine always adds short names for `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`. Any other claim must be written with its full claim type. A claim .NET doesn't rename keeps its name from the token, such as `scope`. A renamed claim is available only under its long type (see [Special Characters](#special-characters)). So in 1.7.5 `{auth{sub}}`, `{auth{given_name}}` and `{auth{family_name}}` are never filled from the token, and `{auth{tid}}` and `{auth{scp}}` are never filled at all: don't use them. While `given_name` or `family_name` is listed in `userinfo_fallback_claims` (the default, and the shipped `auth_providers.xml`), the engine also calls the provider's UserInfo endpoint for each new token and adds the fields it returns (`sub`, `given_name`, `family_name` and so on) under their short names, as JSON values the database driver can't bind, so a query that uses one fails with the generic 400. Read the given and family names as `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname}}` and `{auth{http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname}}`.
+.NET renames many token claims on the way in: `sub` becomes `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier`, and `oid`, `given_name`, `family_name`, `tid`, `scp`, `email` and `roles` get long names too. From 1.7.6 every claim is available under the name the token used and under its long type (see [Special Characters](#special-characters)), so `{auth{sub}}`, `{auth{oid}}`, `{auth{tid}}`, `{auth{scp}}`, `{auth{given_name}}` and `{auth{family_name}}` all work. Where several claims share a name (two `role` claims, say), the placeholder holds the first one. `{auth{roles}}` holds every role, and `{auth{scp}}` and `{auth{scope}}` hold every scope, space-separated. The engine also adds `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`, which work the same for every provider. When the token lacks a claim listed in `userinfo_fallback_claims`, the engine calls the provider's UserInfo endpoint and adds, as text, the fields the token doesn't have. A claim the token carries keeps the token's value, and `required_scopes` and `required_roles` read the token only. In 1.7.5 and earlier a renamed claim was available only under its long type, and a UserInfo field used in a query failed with the generic 400.
 
 A provider that sends the same subject for every user gives every user the same `user_id`. For example, an Azure AD B2C user flow with the subject claim turned off sends `Not supported` as the subject. Configure the provider to send a unique subject (in B2C, the object ID).
 
@@ -219,7 +220,7 @@ IF EXISTS (SELECT 1 FROM users WHERE email = {auth{email}} AND sessions_invalida
 Write a claim exactly as its claim type, including dots and slashes. Don't replace them with underscores:
 - `user.email` → `{auth{user.email}}`
 - `http://schemas.example.com/role` → `{auth{http://schemas.example.com/role}}`
-- `tid`, renamed by .NET → `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}`
+- `tid` under the long type .NET gives it → `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}` (`{auth{tid}}` also works from 1.7.6)
 
 ## Authorization Patterns
 
@@ -282,7 +283,7 @@ The user must have **all** listed roles (AND logic). In the example above, the u
 </authorize>
 ```
 
-The user must have **all** listed scopes (AND logic). In the example above, the token must contain both `api.read` and `api.write` scopes.
+The user must have **all** listed scopes (AND logic). In the example above, the token must contain both `api.read` and `api.write` scopes. Scopes are read from the token's `scp` claim (Entra ID, Okta) or `scope` claim, each a space-separated list. A token without them gets `403` with `{"success":false,"message":"Insufficient permissions"}`. Before 1.7.6, a token whose scopes were in `scp` always got that `403`.
 
 ## Provider Configuration Options
 

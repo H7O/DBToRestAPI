@@ -11,6 +11,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace DBToRestAPI.Middlewares
 {
@@ -469,167 +470,38 @@ namespace DBToRestAPI.Middlewares
             #endregion
 
 
-            #region Extract basic claims from access token
-            //Dictionary<string, object> claimsDict = validatedToken is JwtSecurityToken jwtToken
-            //    ? jwtToken.Payload.ToDictionary()
-            //    : principal.Claims.ToDictionary(c => c.Type, c => (object)c.Value);
-
-            Dictionary<string, object> claimsDict = new Dictionary<string, object>();
-
-            var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                         ?? principal.FindFirst("sub")?.Value
-                         ?? principal.FindFirst("oid")?.Value;
-            //if (!string.IsNullOrWhiteSpace(userId))
-            //    claimsDict["user_id"] = userId;
-
-            var userEmail = principal.FindFirst(ClaimTypes.Email)?.Value
-                            ?? principal.FindFirst("email")?.Value
-                            ?? principal.FindFirst("emails")?.Value;
-            //if (!string.IsNullOrWhiteSpace(userEmail))
-            //    claimsDict["email"] = userEmail;
-
-            var userName = principal.FindFirst(ClaimTypes.Name)?.Value
-                           ?? principal.FindFirst("name")?.Value;
-            //if (!string.IsNullOrWhiteSpace(userName))
-            //    claimsDict["name"] = userName;
-
-            var userRoles = principal.FindAll(ClaimTypes.Role)
-                .Concat(principal.FindAll("roles"))
-                .Select(c => c.Value)
-                .Distinct()
-                .ToList() ?? [];
-            //if (userRoles?.Any() == true)
-            //    claimsDict["roles"] = string.Join("|", userRoles);
-            #endregion
-
-
-
-            #region UserInfo endpoint fallback for missing claims
-            var fallbackClaimsList = userInfoFallbackClaims
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
-
-            var missingClaims = new List<string>();
-
-            if (fallbackClaimsList.Contains("email") && string.IsNullOrWhiteSpace(userEmail))
-                missingClaims.Add("email");
-
-            if (fallbackClaimsList.Contains("name") && string.IsNullOrWhiteSpace(userName))
-                missingClaims.Add("name");
-
-            if (fallbackClaimsList.Contains("given_name") && !principal.HasClaim(c => c.Type == "given_name"))
-                missingClaims.Add("given_name");
-
-            if (fallbackClaimsList.Contains("family_name") && !principal.HasClaim(c => c.Type == "family_name"))
-                missingClaims.Add("family_name");
-
-            if (missingClaims.Any())
-            {
-                _logger.LogDebug("Missing claims in access token: {claims}. Calling UserInfo endpoint...",
-                    string.Join(", ", missingClaims));
-
-                // var discoveryDoc = await GetDiscoveryDocumentAsync(authority, context.RequestAborted);
-                var userInfoClaims = await GetUserInfoAsync(
-                    accessToken,
-                    discoveryDocument,
-                    userInfoCacheDuration,
-                    userInfoTimeoutSeconds,
-                    validatedToken.ValidTo,  // Pass token expiration
-                    context.RequestAborted);
-
-                if (userInfoClaims != null && userInfoClaims.Any())
+            #region Claims: read the token, fill gaps from UserInfo, build {auth{...}}
+            var (claimsDict, token) = await ResolveClaimsAsync(
+                principal,
+                userInfoFallbackClaims,
+                providerName,
+                async missingClaims =>
                 {
-                    // Add UserInfo claims to principal
-                    var identity = principal.Identity as ClaimsIdentity;
-                    foreach (var claim in userInfoClaims)
-                    {
-                        // Only add if not already present
-                        if (!principal.HasClaim(c => c.Type == claim.Key))
-                        {
-                            identity?.AddClaim(new Claim(claim.Key, claim.Value?.ToString() ?? string.Empty));
-                            if (!string.IsNullOrWhiteSpace(claim.Value?.ToString()))
-                                claimsDict[claim.Key] = claim.Value;
-                        }
-                    }
+                    _logger.LogDebug("Missing claims in access token: {claims}. Calling UserInfo endpoint...",
+                        string.Join(", ", missingClaims));
 
-                    // Re-extract claims after UserInfo merge
-                    userEmail ??= userInfoClaims.TryGetValue("email", out var emailObj)
-                        ? emailObj?.ToString()
-                        : null;
-                    if (!string.IsNullOrWhiteSpace(userEmail))
-                        claimsDict["email"] = userEmail;
+                    var userInfoClaims = await GetUserInfoAsync(
+                        accessToken,
+                        discoveryDocument,
+                        userInfoCacheDuration,
+                        userInfoTimeoutSeconds,
+                        validatedToken.ValidTo,  // Pass token expiration
+                        context.RequestAborted);
 
-                    userName ??= userInfoClaims.TryGetValue("name", out var nameObj)
-                        ? nameObj?.ToString()
-                        : null;
-                    if (!string.IsNullOrWhiteSpace(userName))
-                        claimsDict["name"] = userName;
+                    if (userInfoClaims != null && userInfoClaims.Any())
+                        _logger.LogDebug("UserInfo claims added successfully");
+                    else
+                        _logger.LogWarning("Failed to retrieve UserInfo claims");
 
-                    _logger.LogDebug("UserInfo claims added successfully");
-                }
-                else
-                {
-                    _logger.LogWarning("Failed to retrieve UserInfo claims");
-                }
-            }
-            #endregion
+                    return userInfoClaims;
+                });
 
-
-            #region Store claims in context for downstream use
-            // context.Items["user_claims"] = principal;
             context.User = principal;
-
-            if (!string.IsNullOrWhiteSpace(userId))
-                claimsDict["user_id"] = userId;
-
-            if (!string.IsNullOrWhiteSpace(userEmail))
-                claimsDict["email"] = userEmail;
-
-            if (!string.IsNullOrWhiteSpace(userName))
-                claimsDict["name"] = userName;
-
-            // Condition was inverted: it wrote "roles" ONLY when there were none (an empty
-            // string), and skipped it whenever roles actually existed. That mattered because
-            // .NET rewrites inbound claim names - "roles" and "role" both become
-            // http://schemas.microsoft.com/ws/2008/06/identity/claims/role - so the generic
-            // claim-copy loop below never produces a key called "roles". The unification here
-            // IS the only thing that gives SQL authors {auth{roles}}, exactly as the "email"
-            // line above is what gives them {auth{email}} despite the same rewriting.
-            if (userRoles.Count > 0)
-                claimsDict["roles"] = string.Join("|", userRoles);
-
-            // Unified login instant, same intent as "email" and "roles" above: one name a SQL
-            // author can rely on across providers. Both source claims keep their own names
-            // (neither is rewritten), but their AVAILABILITY differs - iat is required in an
-            // OIDC ID token, auth_time only when max_age was requested. Prefer auth_time: it
-            // marks when the human authenticated and survives a silent token refresh, whereas
-            // iat changes on every refresh. Lets a SQL author compare the login instant against
-            // a server-side "sessions invalidated at" timestamp, so a token issued before a
-            // logout is rejected even though it has not yet expired.
-            var authInstant = principal.FindFirst("auth_time")?.Value
-                              ?? principal.FindFirst("iat")?.Value;
-            if (!string.IsNullOrWhiteSpace(authInstant))
-                claimsDict["auth_time"] = authInstant;
-
-
-
-            // Store all OIDC claims for SQL access
-            foreach (var claim in principal.Claims)
-            {
-                if (!claimsDict.ContainsKey(claim.Type))
-                    claimsDict[claim.Type] = claim.Value;
-            }
-
-            // Expose the resolved provider (the auth_providers.xml key, e.g. "google", "azure_b2c")
-            // to SQL via {auth{auth_provider}}. Set AFTER copying token claims so the engine-resolved
-            // value is authoritative even if a token happens to carry an "auth_provider" claim.
-            if (!string.IsNullOrWhiteSpace(providerName))
-                claimsDict["auth_provider"] = providerName;
-
             context.Items["user_claims"] = claimsDict;
 
             _logger.LogDebug("User context set successfully. UserId: {userId}, Email: {email}",
-                userId ?? "unknown", userEmail ?? "unknown");
+                claimsDict.TryGetValue("user_id", out var loggedUserId) ? loggedUserId : "unknown",
+                claimsDict.TryGetValue("email", out var loggedEmail) ? loggedEmail : "unknown");
             #endregion
 
 
@@ -639,11 +511,7 @@ namespace DBToRestAPI.Middlewares
 
             if (!string.IsNullOrWhiteSpace(requiredScopes))
             {
-                var scopes = principal.FindAll("scp")
-                    .Concat(principal.FindAll("scope"))
-                    .SelectMany(c => c.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                    .Distinct()
-                    .ToHashSet();
+                var scopes = token.Scopes;
 
                 var required = requiredScopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
@@ -677,10 +545,10 @@ namespace DBToRestAPI.Middlewares
             {
                 var required = requiredRoles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-                if (!required.All(r => userRoles.Contains(r, StringComparer.OrdinalIgnoreCase)))
+                if (!required.All(r => token.Roles.Contains(r, StringComparer.OrdinalIgnoreCase)))
                 {
                     _logger.LogWarning("Missing required roles. Required: {required}, Found: {roles}",
-                        string.Join(", ", required), string.Join(", ", userRoles));
+                        string.Join(", ", required), string.Join(", ", token.Roles));
 
                     await context.Response.DeferredWriteAsJsonAsync(
                         new ObjectResult(
@@ -704,6 +572,269 @@ namespace DBToRestAPI.Middlewares
 
 
         }
+
+        #region Claim names
+
+        // JwtSecurityTokenHandler renames well-known claims on the way in: sub becomes
+        // ClaimTypes.NameIdentifier, scp becomes http://schemas.microsoft.com/identity/claims/scope,
+        // oid becomes .../identity/claims/objectidentifier, given_name becomes ClaimTypes.GivenName,
+        // and so on. It records the name the token used in the claim's ShortClaimTypeProperty.
+        // Code that looks a claim up by the token's name alone never finds a renamed one, which
+        // is how {auth{sub}} was usually missing and why required_scopes rejected every Entra
+        // and Okta token (their scopes arrive in scp). These helpers match either name.
+
+        /// <summary>
+        /// The name the token itself used for this claim, before .NET renamed it.
+        /// </summary>
+        internal static string TokenClaimName(Claim claim)
+            => claim.Properties.TryGetValue(JwtSecurityTokenHandler.ShortClaimTypeProperty, out var shortName)
+               && !string.IsNullOrEmpty(shortName)
+                ? shortName
+                : claim.Type;
+
+        /// <summary>
+        /// The claims whose .NET type or original token name is <paramref name="name"/>.
+        /// </summary>
+        internal static IEnumerable<Claim> FindClaims(ClaimsPrincipal principal, string name)
+            => principal.Claims.Where(c => c.Type == name || TokenClaimName(c) == name);
+
+        /// <summary>
+        /// The first non-empty value among the claims named in <paramref name="names"/>, tried in order.
+        /// </summary>
+        internal static string? FirstClaimValue(ClaimsPrincipal principal, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var value = FindClaims(principal, name)
+                    .Select(c => c.Value)
+                    .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+                if (value != null)
+                    return value;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The token's roles, from "roles" and "role" (both renamed to ClaimTypes.Role).
+        /// </summary>
+        internal static List<string> GetRoles(ClaimsPrincipal principal)
+            => principal.FindAll(ClaimTypes.Role)
+                .Concat(FindClaims(principal, "roles"))
+                .Select(c => c.Value)
+                .Distinct()
+                .ToList();
+
+        /// <summary>
+        /// The token's scopes, from "scp" and "scope". Each claim may hold several, space-separated.
+        /// </summary>
+        internal static HashSet<string> GetScopes(ClaimsPrincipal principal)
+            => FindClaims(principal, "scp")
+                .Concat(FindClaims(principal, "scope"))
+                .SelectMany(c => c.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                .ToHashSet();
+
+        /// <summary>
+        /// Text for a claim value from the UserInfo response. That response is deserialised into
+        /// <c>Dictionary&lt;string, object&gt;</c>, so every value is a JsonElement, which no SQL
+        /// driver can bind: a query using such a claim failed with the generic 400.
+        /// </summary>
+        internal static string? ClaimValueToString(object? value) => value switch
+        {
+            null => null,
+            string s => s,
+            JsonElement { ValueKind: JsonValueKind.String } e => e.GetString(),
+            JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } => null,
+            JsonElement e => e.GetRawText(),
+            _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+        };
+
+        /// <summary>
+        /// Adds the UserInfo response's claims that the token doesn't already carry, under either
+        /// name. The token's own value always wins: it is signed, and for some providers (Entra
+        /// access tokens, for one) its sub differs from the UserInfo sub.
+        /// </summary>
+        internal static void AddUserInfoClaims(ClaimsPrincipal principal, IDictionary<string, object> userInfoClaims)
+        {
+            if (principal.Identity is not ClaimsIdentity identity)
+                return;
+
+            foreach (var (name, rawValue) in userInfoClaims)
+            {
+                var value = ClaimValueToString(rawValue);
+                if (string.IsNullOrWhiteSpace(value) || FindClaims(principal, name).Any())
+                    continue;
+                identity.AddClaim(new Claim(name, value));
+            }
+        }
+
+        /// <summary>
+        /// What the signed token itself says, read before any UserInfo claim is added.
+        /// </summary>
+        /// <remarks>
+        /// required_scopes and required_roles are checked against these, so a UserInfo response
+        /// can never grant them, and user_id, email and name prefer the token's value. The old
+        /// code checked scopes after the merge, so a UserInfo `scope` counted.
+        /// </remarks>
+        internal sealed record TokenIdentity(
+            string? UserId,
+            string? Email,
+            string? Name,
+            IReadOnlyList<string> Roles,
+            IReadOnlySet<string> Scopes);
+
+        internal static TokenIdentity ReadTokenIdentity(ClaimsPrincipal principal) => new(
+            // NameIdentifier is where .NET puts sub. oid (Entra's object id) is the fallback for
+            // a token without a subject; .NET renames it too, so it is matched by either name.
+            UserId: FirstClaimValue(principal, ClaimTypes.NameIdentifier, "sub", "oid"),
+            // "emails" is Azure AD B2C's claim, a list; the first value is used.
+            Email: FirstClaimValue(principal, ClaimTypes.Email, "email", "emails"),
+            Name: FirstClaimValue(principal, ClaimTypes.Name, "name"),
+            Roles: GetRoles(principal),
+            Scopes: GetScopes(principal));
+
+        /// <summary>
+        /// The claims listed in userinfo_fallback_claims that the token doesn't carry. UserInfo is
+        /// called only when this isn't empty.
+        /// </summary>
+        /// <remarks>
+        /// given_name and family_name used to be looked up only by the token's names. .NET renames
+        /// both, so they always looked missing and UserInfo was called for every new token.
+        /// </remarks>
+        internal static List<string> MissingFallbackClaims(ClaimsPrincipal principal, string? fallbackClaimsCsv)
+        {
+            var listed = (fallbackClaimsCsv ?? string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var missing = new List<string>();
+            foreach (var name in listed)
+            {
+                string? value = name switch
+                {
+                    "email" => FirstClaimValue(principal, ClaimTypes.Email, "email", "emails"),
+                    "name" => FirstClaimValue(principal, ClaimTypes.Name, "name"),
+                    "given_name" => FirstClaimValue(principal, ClaimTypes.GivenName, "given_name"),
+                    "family_name" => FirstClaimValue(principal, ClaimTypes.Surname, "family_name"),
+                    // Other names (picture, first_name...) never triggered the call, and still don't.
+                    _ => "not checked",
+                };
+                if (string.IsNullOrWhiteSpace(value))
+                    missing.Add(name);
+            }
+            return missing;
+        }
+
+        /// <summary>
+        /// Reads the token, calls UserInfo when a listed claim is missing, adds what UserInfo
+        /// knows that the token doesn't, and builds the claims a query reads through
+        /// <c>{auth{...}}</c>. Returns those claims and the token's own identity, which the role
+        /// and scope checks use.
+        /// </summary>
+        /// <param name="fetchUserInfo">Called with the missing claim names, at most once.</param>
+        internal static async Task<(Dictionary<string, object> Claims, TokenIdentity Token)> ResolveClaimsAsync(
+            ClaimsPrincipal principal,
+            string? userInfoFallbackClaims,
+            string? providerName,
+            Func<IReadOnlyList<string>, Task<Dictionary<string, object>?>> fetchUserInfo)
+        {
+            var token = ReadTokenIdentity(principal);
+
+            var missing = MissingFallbackClaims(principal, userInfoFallbackClaims);
+            if (missing.Count > 0)
+            {
+                var userInfoClaims = await fetchUserInfo(missing);
+                if (userInfoClaims is { Count: > 0 })
+                    AddUserInfoClaims(principal, userInfoClaims);
+            }
+
+            return (BuildClaimsDictionary(principal, token, providerName), token);
+        }
+
+        /// <summary>
+        /// The claims a query reads through <c>{auth{...}}</c>.
+        /// </summary>
+        /// <remarks>
+        /// Each claim is exposed under its .NET type and under the name the token used, so
+        /// <c>{auth{sub}}</c>, <c>{auth{given_name}}</c>, <c>{auth{family_name}}</c>, <c>{auth{oid}}</c>,
+        /// <c>{auth{tid}}</c> and <c>{auth{scp}}</c> all work. Where several claims share a name,
+        /// the first one's value is used, except scp and scope, which hold every scope,
+        /// space-separated. On top of those, the engine adds unified names that work across
+        /// providers: user_id, email, name, roles (joined with |), auth_time and auth_provider.
+        /// </remarks>
+        internal static Dictionary<string, object> BuildClaimsDictionary(
+            ClaimsPrincipal principal,
+            TokenIdentity token,
+            string? providerName)
+        {
+            var claimsDict = new Dictionary<string, object>();
+
+            if (!string.IsNullOrWhiteSpace(token.UserId))
+                claimsDict["user_id"] = token.UserId;
+
+            // The token's value first; a UserInfo value only when the token has none. Looked up
+            // after the merge alone, a UserInfo "email" would beat a token's "emails".
+            var userEmail = token.Email ?? FirstClaimValue(principal, ClaimTypes.Email, "email", "emails");
+            if (!string.IsNullOrWhiteSpace(userEmail))
+                claimsDict["email"] = userEmail;
+
+            var userName = token.Name ?? FirstClaimValue(principal, ClaimTypes.Name, "name");
+            if (!string.IsNullOrWhiteSpace(userName))
+                claimsDict["name"] = userName;
+
+            // .NET rewrites inbound "roles" and "role" to
+            // http://schemas.microsoft.com/ws/2008/06/identity/claims/role, so this unified,
+            // |-joined value is what gives SQL authors every role through {auth{roles}}.
+            if (token.Roles.Count > 0)
+                claimsDict["roles"] = string.Join("|", token.Roles);
+
+            // Unified login instant, same intent as "email" and "roles" above: one name a SQL
+            // author can rely on across providers. Both source claims keep their own names
+            // (neither is rewritten), but their AVAILABILITY differs - iat is required in an
+            // OIDC ID token, auth_time only when max_age was requested. Prefer auth_time: it
+            // marks when the human authenticated and survives a silent token refresh, whereas
+            // iat changes on every refresh. Lets a SQL author compare the login instant against
+            // a server-side "sessions invalidated at" timestamp, so a token issued before a
+            // logout is rejected even though it has not yet expired.
+            var authInstant = principal.FindFirst("auth_time")?.Value
+                              ?? principal.FindFirst("iat")?.Value;
+            if (!string.IsNullOrWhiteSpace(authInstant))
+                claimsDict["auth_time"] = authInstant;
+
+            // Scopes as one space-separated list, the form Entra ID sends in a single claim. Okta
+            // sends scp as a JSON array, which becomes one claim per scope, so the first-value
+            // rule below would keep only the first scope.
+            foreach (var scopeName in new[] { "scp", "scope" })
+            {
+                var scopeClaims = FindClaims(principal, scopeName).ToList();
+                if (scopeClaims.Count == 0)
+                    continue;
+                var joined = string.Join(" ", scopeClaims.Select(c => c.Value));
+                claimsDict[scopeName] = joined;
+                foreach (var type in scopeClaims.Select(c => c.Type).Distinct())
+                    claimsDict[type] = joined;
+            }
+
+            // Store all OIDC claims for SQL access, under both names. The token's claims come
+            // before any added from UserInfo, so the signed value wins a shared name.
+            foreach (var claim in principal.Claims)
+            {
+                if (!claimsDict.ContainsKey(claim.Type))
+                    claimsDict[claim.Type] = claim.Value;
+
+                var tokenName = TokenClaimName(claim);
+                if (!claimsDict.ContainsKey(tokenName))
+                    claimsDict[tokenName] = claim.Value;
+            }
+
+            // Expose the resolved provider (the auth_providers.xml key, e.g. "google", "azure_b2c")
+            // to SQL via {auth{auth_provider}}. Set AFTER copying token claims so the engine-resolved
+            // value is authoritative even if a token happens to carry an "auth_provider" claim.
+            if (!string.IsNullOrWhiteSpace(providerName))
+                claimsDict["auth_provider"] = providerName;
+
+            return claimsDict;
+        }
+
+        #endregion
 
         /// <summary>
         /// Gets the OIDC discovery document with caching.

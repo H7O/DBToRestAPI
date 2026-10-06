@@ -3,6 +3,8 @@
 ## Overview
 This document describes the caching implementation for API Gateway routes in DBToRestAPI.
 
+> **Update, 1.7.6:** only GET and HEAD requests are cached now. The request body was never part of the key, so a cached POST answered every later POST, whatever its body, without forwarding it. The resolved route is now hashed in the key, and the key starts with the route's full configuration path. The method-distinction test below now shows a POST that is always forwarded. See [07-caching.md](docs/topics/07-caching.md).
+
 ## Changes Made
 
 ### 1. **CachableHttpResponseContainer.cs** - Enhanced

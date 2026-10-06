@@ -2,7 +2,7 @@
 title: Errors, status codes and rollback
 summary: How a query rejects a request with a real HTTP status, the exact response body for the statuses the engine sends, and when uploaded files are rolled back.
 keywords: [THROW 50404, THROW 50400, RAISE EXCEPTION, SIGNAL SQLSTATE, RAISE_APPLICATION_ERROR, RAISERROR, error_number, generic_error_message, debug_mode_header_value, debug-mode, success_status_code, mandatory_parameters, rollback, root_node, 400, 401, 403, 404, 409, 413, 429, 500, 204]
-applies_to: 1.7.5
+applies_to: 1.7.6
 ---
 
 # Errors, status codes and rollback
@@ -209,14 +209,14 @@ END CATCH
 |---|---|---|---|
 | `success_status_code` | route, then `settings.xml` | `200` | Status of a successful response. Doesn't apply to file downloads. Don't set it to 400 or higher: every request would roll back its uploads. |
 | `generic_error_message` | `settings.xml` | `An error occurred while processing your request.` | Message for unmapped database errors. |
-| `debug_mode_header_value` | `settings.xml` | none; the shipped sample sets `54321` | A request whose `debug-mode` header equals it gets exception messages and stack traces. **To turn debug mode off, delete the element.** Don't leave it empty: an empty value is matched by an empty `debug-mode` header. If you keep it, use a long random secret. |
+| `debug_mode_header_value` | `settings.xml` | none; the shipped sample sets `54321` | A request whose `debug-mode` header equals it gets exception messages and stack traces. **To turn debug mode off, delete the element.** An empty value also turns it off (from 1.7.6; before that, an empty value was matched by an empty `debug-mode` header). If you keep it, use a long random secret. |
 | `max_payload_size_in_bytes` | `settings.xml` root | `314572800` (300 MiB); the shipped sample sets `367001600` (350 MiB) | Body size limit (413). Read at start-up: restart after changing it. It applies only when the engine runs on Kestrel (on its own, in a container, or behind a reverse proxy). Under IIS's default in-process hosting it has no effect: IIS's `maxAllowedContentLength` and ASP.NET Core's `IISServerOptions.MaxRequestBodySize` (both about 30 MB) apply, and the engine can't raise the second. For larger uploads behind IIS, host out-of-process (`hostingModel="outofprocess"` in `web.config`) and raise `maxAllowedContentLength`. |
 
 ## API gateway routes
 
 Proxy routes ([API gateway](../topics/08-api-gateway.md)) don't run a query. The upstream service's status and body pass through unchanged. A proxy failure is the generic `400`, and in debug mode a `500` whose body is a JSON string rather than an object.
 
-## Known issues in 1.7.5
+## Known issues in 1.7.6
 
 These are tracked in [TODO.md](../../TODO.md):
 
@@ -225,7 +225,6 @@ These are tracked in [TODO.md](../../TODO.md):
 - Oracle and DB2 custom errors are not mapped. ODBC and OleDb have no mapping.
 - SQLite can raise a custom status only from a trigger.
 - An error raised after the first result set is lost on SQL Server and SQLite.
-- An empty `debug_mode_header_value` is matched by an empty header.
 - An `application/json` body that isn't valid JSON is read as having no parameters, so they are all `NULL`. With `mandatory_parameters`, that becomes a `400` "Missing mandatory parameters".
 - The OpenAPI error schema (`error_message`) doesn't match the runtime body (`message`).
 - Under IIS in-process hosting, `max_payload_size_in_bytes` has no effect (see [settings](#settings)).

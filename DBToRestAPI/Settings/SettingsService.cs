@@ -48,9 +48,32 @@ namespace DBToRestAPI.Settings
 
         public bool IsDebugMode(HttpRequest request)
         {
-            return request.Headers.TryGetValue("debug-mode", out var debugModeHeaderValue)
-                                                   && debugModeHeaderValue == this._configuration.GetSection("debug_mode_header_value")?.Value
-                                                   && debugModeHeaderValue != Microsoft.Extensions.Primitives.StringValues.Empty;
+            return IsDebugMode(
+                this._configuration.GetSection("debug_mode_header_value")?.Value,
+                request.Headers);
+        }
+
+        /// <summary>
+        /// True when the request's `debug-mode` header carries exactly the configured secret.
+        /// </summary>
+        /// <remarks>
+        /// A missing, empty or whitespace setting means debug mode is OFF. Before, an empty
+        /// setting matched a `debug-mode` header sent with an empty value, so anyone could get
+        /// stack traces from a deployment whose author had blanked the value to disable it.
+        /// The comparison takes the same time wherever the first difference is, so response
+        /// times don't reveal how much of a guess was right.
+        /// </remarks>
+        internal static bool IsDebugMode(string? configuredValue, IHeaderDictionary headers)
+        {
+            if (string.IsNullOrWhiteSpace(configuredValue))
+                return false;
+
+            if (!headers.TryGetValue("debug-mode", out var sent) || sent.Count != 1)
+                return false;
+
+            return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.UTF8.GetBytes(sent[0] ?? string.Empty),
+                System.Text.Encoding.UTF8.GetBytes(configuredValue));
         }
 
 

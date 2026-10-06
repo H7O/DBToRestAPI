@@ -2,7 +2,7 @@
 title: File downloads
 summary: Serve a file from a local or SFTP store, from base64 in the database, or proxied from a URL; the query returns one row naming the file and decides who may get it.
 keywords: [response_structure, file, file_management, store, relative_path, file_name, mime_type, base64_content, http, Content-Disposition, attachment, filename*, local_file_store, sftp_file_store, base_path, FileStorePath, 404, "{fs{store}}", "{fs{base_path}}"]
-applies_to: 1.7.5
+applies_to: 1.7.6
 ---
 
 # File downloads
@@ -17,7 +17,7 @@ A download endpoint runs a query that returns one row describing a file, and the
 2. **Return exact column names:** `relative_path`, `file_name`, `mime_type`, `base64_content`, `http`. Names are case-sensitive. A `content_type` column is ignored. On Oracle and DB2, quote the aliases (`AS "relative_path"`): unquoted aliases come back in upper case and don't match.
 3. **Take `relative_path` from your table, never from the request.** Look the file up by its id, scoped to the caller.
 4. **Enforce ownership in the query.** Join to the owner and use `{auth{user_id}}` (or an API key collection). For a file that doesn't exist or isn't the caller's, return no row: that is a `404` on every database. Raising `50404` works too on SQL Server, MySQL and PostgreSQL, but not on Oracle, DB2, ODBC or SQLite outside a trigger ([errors.md](../reference/errors.md#raising-an-error-from-sql)).
-5. **Don't add `<cache>` to a download route.** In 1.7.5 a cached file route never delivers the file.
+5. **Don't add `<cache>` to a download route.** In 1.7.6 a cached file route never delivers the file.
 
 ## Complete example: owner-only download
 
@@ -154,7 +154,7 @@ WHERE f.id = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}}) AND r.owner_id = {auth{user_i
 - Don't name the type column `content_type`. It is `mime_type`.
 - Don't add a `count_query` to a download route: the route then returns JSON instead of the file.
 
-## Known issues in 1.7.5
+## Known issues in 1.7.6
 
 Tracked in [TODO.md](../../TODO.md):
 

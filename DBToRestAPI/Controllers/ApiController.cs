@@ -296,6 +296,7 @@ namespace DBToRestAPI.Controllers
                 var response = await _settings.CacheService
                     .GetQueryResultAsActionAsync(
                     section,
+                    HttpContext,
                     qParams,
                     disableDiffered => GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDiffered),
                     HttpContext.RequestAborted
@@ -439,30 +440,30 @@ namespace DBToRestAPI.Controllers
                 // caller-supplied value in a url could inject a second "url" key and, because
                 // System.Text.Json keeps the LAST duplicate, redirect the call to any host -
                 // taking this block's own credential headers with it.
-                // Markers used OUTSIDE a string are left raw on purpose: "body": {{obj}} is a
+                // Markers used only OUTSIDE a string are not escaped: "body": {{obj}} is a
                 // supported way to inject a whole JSON document, and escaping it would break it.
-                var jsonStringMarkers = EmbeddedHttpTemplate.MarkersInsideJsonStrings(
-                    httpRequestDetails, out var mixedContextMarkers);
+                // But their value must be exactly one JSON value, or it is inserted as a JSON
+                // string, so it cannot add keys of its own (see EmbeddedHttpTemplate.ToStructuralJson).
+                // The markers are found with the patterns the block is filled with, which a route
+                // or the global settings can override (||name|| and the like).
+                var markerContexts = EmbeddedHttpTemplate.ClassifyMarkers(
+                    httpRequestDetails, qParams.Select(x => x.QueryParamsRegex));
+                var mixedContextMarkers = markerContexts.Mixed;
 
                 if (mixedContextMarkers.Count > 0)
                 {
                     _logger.LogWarning(
                         "{Time}: [EmbeddedHTTP] Route: {Route} — marker(s) {Markers} are used both inside "
-                        + "and outside a JSON string in the same block. They are being escaped, which will "
-                        + "break the structural use. Split them into separate markers.",
+                        + "and outside a JSON string in the same block. They are escaped for a string, so "
+                        + "the use outside a string works only for a plain number, true, false or null. "
+                        + "Split them into separate markers.",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route,
                         string.Join(", ", mixedContextMarkers));
                 }
 
                 httpRequestDetails = httpRequestDetails.Fill(
                     qParams,
-                    valueConverter: (name, value) =>
-                    {
-                        var text = value?.ToString() ?? string.Empty;
-                        return jsonStringMarkers.Contains(name)
-                            ? EmbeddedHttpTemplate.JsonEscape(text)
-                            : text;
-                    });
+                    valueConverter: (name, value) => EmbeddedHttpTemplate.ConvertValue(markerContexts, name, value));
                 _logger.LogDebug(
                     "{Time}: [EmbeddedHTTP] Route: {Route} — Prepared call #{Index}: {Details}",
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, index,

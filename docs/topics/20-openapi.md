@@ -165,7 +165,7 @@ Every operation gets a `default` error response whose schema has one string prop
 }
 ```
 
-This schema doesn't match the body the engine sends yet. It is a known issue in 1.7.5. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
+This schema doesn't match the body the engine sends yet. It is a known issue in 1.7.6. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
 
 ```json
 {

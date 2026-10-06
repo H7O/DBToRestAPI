@@ -160,7 +160,7 @@ Each contact ID gets its own 2-minute cache entry.
 
 ## Global Caching
 
-You can define a default cache in `settings.xml` that applies to **all** endpoints:
+You can set a default cache duration in `settings.xml`:
 
 ```xml
 <!-- settings.xml -->
@@ -173,7 +173,7 @@ You can define a default cache in `settings.xml` that applies to **all** endpoin
 </settings>
 ```
 
-Endpoint-level `<cache>` overrides the global setting. To disable caching for a specific endpoint when global caching is on, don't include a `<cache>` block on that endpoint.
+This is only a default duration. It doesn't turn caching on: an endpoint is cached only when it has its own `<cache><memory>` block, and the global value applies to such a block that sets no `<duration_in_milliseconds>` of its own. An endpoint without a `<cache>` block is never cached.
 
 ## When to Cache (and When Not To)
 
@@ -183,8 +183,9 @@ Endpoint-level `<cache>` overrides the global setting. To disable caching for a 
 - Aggregated/computed data (dashboards, reports)
 - External API call results (via API Gateway)
 
+Only GET and HEAD requests use the cache. A POST, PUT or DELETE to a cached endpoint always runs its SQL and leaves the cached entry alone (from 1.7.6; before, an endpoint with no `<verb>` answered them with the cached GET response). The route values are part of the key too.
+
 **Don't cache:**
-- Write operations (POST, PUT, DELETE)
 - Data that must be real-time (financial transactions, live status)
 - User-specific sensitive data (unless using invalidators with user ID)
 

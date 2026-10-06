@@ -138,7 +138,9 @@ Cache external API responses:
 
 ### Default Caching Behavior
 
-By default, **all responses are cached** including errors. This protects external APIs during:
+Only GET and HEAD requests are cached. Other verbs are always forwarded, because the request body is not part of the key (from 1.7.6; before, a cached POST answered every later POST without forwarding it).
+
+By default, **all responses are cached** including errors. A response with an excluded status is passed to its caller and not stored, so the next request is forwarded again (from 1.7.6; before, later requests got an empty `200` until the entry expired). Caching errors protects external APIs during:
 - High traffic
 - Temporary outages
 - Rate limiting by the external API

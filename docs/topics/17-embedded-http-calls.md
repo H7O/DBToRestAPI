@@ -112,7 +112,7 @@ The JSON inside `{http{...}http}` supports the full HTTP executor configuration:
 | `method` | string | No | HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS (default: GET) |
 | `headers` | object | No | Custom headers to include. A header whose name or value contains a line break is dropped, never sent |
 | `query` | object | No | Query-string parameters, percent-encoded and appended to `url` (with `&` when `url` already has a `?`). The right place for caller-supplied values |
-| `body` | object/array | No | JSON body, serialized automatically (for POST/PUT/PATCH). A marker used outside a string (`"body": {{doc}}`) injects a whole JSON document, raw |
+| `body` | object/array | No | JSON body, serialized automatically (for POST/PUT/PATCH). A marker used outside a string (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string |
 | `body_raw` | string | No | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document |
 | `content_type` | string | No | Content-Type header (default: `application/json`) |
 | `timeout_seconds` | number | No | Request timeout in seconds (default: 30). `timeout` is accepted as an alias |
@@ -184,9 +184,9 @@ values in `query` instead; each value is percent-encoded there and appended to `
 inside a JSON string literal and escapes those values (`"`, `\`, control characters). A value such as
 `a","url":"https://attacker.example` therefore stays inside the string it was substituted into; it
 cannot close that string, append a second `url` key, or otherwise change the request. Markers that
-sit *outside* a string — `"body": {{doc}}` — are inserted raw on purpose, because that is how a whole
-JSON document is injected. Reserve that form for values you built yourself (a settings variable, a
-column from a previous chained query); to forward a caller-supplied document, use
+sit *outside* a string — `"body": {{doc}}` — are not escaped, because that is how a whole
+JSON document is injected. From 1.7.6 the value must be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`), read as leniently as the block itself (comments and trailing commas are allowed) and inserted as compact JSON; anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it cannot add keys. Markers are found with the patterns the route uses, including overridden ones such as `||name||`. A marker used both inside and outside a string, or inside a comment, is escaped so it can't change the structure anywhere: outside a string it then works only for a plain number, `true`, `false` or `null`. A boolean or number from the request body becomes JSON `true`, `false` or a number. Even so, reserve that form for values you built yourself
+(a settings variable, a column from a previous chained query); to forward a caller-supplied document, use
 `"body_raw": "{{payload}}"`, which escapes it into a string and sends it verbatim. A marker used both
 inside and outside a string in the same block is escaped everywhere and a warning is logged, because
 that block needs splitting into two markers.

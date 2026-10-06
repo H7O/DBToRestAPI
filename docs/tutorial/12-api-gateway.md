@@ -179,7 +179,7 @@ By default, all responses are cached — including errors. To avoid caching erro
 </cache>
 ```
 
-This way, if the external API returns a 429 (rate limited) or 500 (server error), that error response isn't cached, and the next request will try the external API again.
+This way, if the external API returns a 429 (rate limited) or 500 (server error), that error response isn't cached, and the next request will try the external API again. (Before 1.7.6, the next requests got an empty `200` until the entry expired.)
 
 ## Ignoring Certificate Errors
 

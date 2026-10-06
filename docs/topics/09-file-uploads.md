@@ -2,7 +2,7 @@
 title: File uploads
 summary: Accept files with ordinary form fields in one request, store them in local or SFTP stores, and record them in SQL; failed requests delete their files automatically.
 keywords: [file_management, files_json_field_or_form_field_name, stores, local_file_store, sftp_file_store, base_path, filename_field_in_payload, base64_content_field_in_payload, relative_file_path_structure, permitted_file_extensions, max_file_size_in_bytes, max_number_of_files, overwrite_existing_files, accept_caller_defined_file_ids, pass_files_content_to_query, max_payload_size_in_bytes, is_new_upload, relative_path, multipart/form-data, base64, OPENJSON, rollback, 409, 413]
-applies_to: 1.7.5
+applies_to: 1.7.6
 ---
 
 # File uploads
@@ -342,7 +342,7 @@ The query removes rows that weren't sent back, scoped to the record, and inserts
 
 The ownership check uses `support_requests.owner_id`, which the create endpoint fills from `{auth{user_id}}` when it requires login (add `<authorize>` to it). `<response_structure>array</response_structure>` keeps the reply a list however many files remain.
 
-- `{auth{user_id}}` is the authenticated user's id, from the token's subject. Use it rather than `{auth{sub}}`, which is not filled ([authentication](12-authentication.md)).
+- `{auth{user_id}}` is the authenticated user's id, from the token's subject. Use it rather than `{auth{sub}}`: it works the same for every provider, and `{auth{sub}}` is empty before 1.7.6 ([authentication](12-authentication.md)).
 - `max_number_of_files` counts kept entries too.
 - **Removed files stay in the store.** The engine never deletes a stored file because its row was deleted. Return the removed paths and clean them up separately if you need to.
 - **To let the client edit a kept file's own fields**, update its row by `id`, scoped to the record, inside the transaction before `COMMIT`. Never insert it. This assumes a `description NVARCHAR(500) NULL` column on `support_request_files`:
@@ -471,7 +471,7 @@ IF NOT EXISTS (
 - Don't spread `relative_file_path_structure` over several lines.
 - Don't echo `backend_temp_file_path` to clients: it is a server path.
 
-## Known issues in 1.7.5
+## Known issues in 1.7.6
 
 Tracked in [TODO.md](../../TODO.md):
 
