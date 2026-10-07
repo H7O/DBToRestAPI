@@ -269,7 +269,7 @@ Call it. What does the response look like?
 
 Does it return an array or a single object?
 
-> **Spoiler**: By default (`auto` response structure), multiple rows return as an array, and a single row returns as a plain object. We'll explore response structures in a later topic.
+> **Spoiler**: By default, multiple rows return as an array, and a single row returns as a plain object. We'll explore response structures in a later topic.
 
 ---
 

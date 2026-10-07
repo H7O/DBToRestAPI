@@ -54,6 +54,7 @@ Add the `<api_keys_collections>` tag to any endpoint in `sql.xml`:
 <protected_contacts>
   <route>api/contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <api_keys_collections>external_vendors,internal_solutions</api_keys_collections>
   <query>
     <![CDATA[
@@ -121,6 +122,7 @@ A common pattern is offering different access levels:
 <public_search>
   <route>public/contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query><![CDATA[
     select name, phone from contacts where active = 1;
   ]]></query>
@@ -131,6 +133,7 @@ A common pattern is offering different access levels:
   <api_keys_collections>external_vendors</api_keys_collections>
   <route>partner/contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query><![CDATA[
     select id, name, phone, active from contacts;
   ]]></query>
@@ -141,6 +144,7 @@ A common pattern is offering different access levels:
   <api_keys_collections>internal_solutions</api_keys_collections>
   <route>internal/contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query><![CDATA[
     select * from contacts;
   ]]></query>

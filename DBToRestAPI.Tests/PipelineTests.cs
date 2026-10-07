@@ -15,6 +15,11 @@ namespace DBToRestAPI.Tests;
 ///   Step6 while MVC streams a result), and is never answered with a 200 or a broken body;
 /// - a one-row chain result whose only column has no name is not a {{column}} source;
 /// - such a column is returned as the bare value.
+///
+/// And what 1.7.8 changed: `single` is read as the default (one row answers an object, several
+/// an array), and file and count-query routes take their first row by reading two, so a query
+/// that returns many rows by mistake isn't read to its end. Names keep the caller's spaces, dashes
+/// and dots, in every source and in mandatory_parameters.
 /// </summary>
 public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<PipelineTests.PipelineEngine>
 {
@@ -25,6 +30,10 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
 
     // About 5,000 characters, longer than one 4 KB buffer segment.
     private const string LongValue = "printf('%.5000c', 'x')";
+
+    // A million rows in r(i), for a query that should return one row but doesn't.
+    private const string MillionRows =
+        "WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 1000000)";
 
     private static Dictionary<string, string?> Routes() => new()
     {
@@ -58,6 +67,43 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         ["queries:pl_single:verb"] = "GET",
         ["queries:pl_single:response_structure"] = "single",
         ["queries:pl_single:query"] = $"{ThreeRows}; {Raise}",
+
+        ["queries:pl_single1:route"] = "pl/single1",
+        ["queries:pl_single1:verb"] = "GET",
+        ["queries:pl_single1:response_structure"] = "single",
+        ["queries:pl_single1:query"] = $"SELECT 1 AS a, {LongValue} AS pad; {Raise}",
+
+        ["queries:pl_single_rows:route"] = "pl/single_rows",
+        ["queries:pl_single_rows:verb"] = "GET",
+        ["queries:pl_single_rows:response_structure"] = "single",
+        ["queries:pl_single_rows:query"] = $"{ThreeRows};",
+
+        ["queries:pl_single_one:route"] = "pl/single_one",
+        ["queries:pl_single_one:verb"] = "GET",
+        ["queries:pl_single_one:response_structure"] = "single",
+        ["queries:pl_single_one:query"] = "SELECT 1 AS a;",
+
+        ["queries:pl_auto_one:route"] = "pl/auto_one",
+        ["queries:pl_auto_one:verb"] = "GET",
+        ["queries:pl_auto_one:response_structure"] = "auto",
+        ["queries:pl_auto_one:query"] = "SELECT 1 AS a;",
+
+        // base64_content needs no file store.
+        ["queries:pl_file1:route"] = "pl/file1",
+        ["queries:pl_file1:verb"] = "GET",
+        ["queries:pl_file1:response_structure"] = "file",
+        ["queries:pl_file1:query"] = $"SELECT 'a.txt' AS file_name, 'aGk=' AS base64_content; {Raise}",
+
+        ["queries:pl_file_many:route"] = "pl/file_many",
+        ["queries:pl_file_many:verb"] = "GET",
+        ["queries:pl_file_many:response_structure"] = "file",
+        ["queries:pl_file_many:query"] =
+            $"{MillionRows} SELECT i || '.txt' AS file_name, 'aGk=' AS base64_content FROM r; {Raise}",
+
+        ["queries:pl_count_many:route"] = "pl/count_many",
+        ["queries:pl_count_many:verb"] = "GET",
+        ["queries:pl_count_many:count_query"] = $"{MillionRows} SELECT i AS n FROM r; {Raise}",
+        ["queries:pl_count_many:query"] = "SELECT 1 AS a;",
 
         ["queries:pl_count:route"] = "pl/count",
         ["queries:pl_count:verb"] = "GET",
@@ -93,18 +139,49 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         ["queries:pl_null:route"] = "pl/null",
         ["queries:pl_null:verb"] = "GET",
         ["queries:pl_null:query"] = "SELECT NULL AS \"\";",
+
+        // Names exactly as the caller sends them. {{email}} matches nothing (the key is e-mail) and is NULL.
+        ["queries:pl_names:route"] = "pl/names",
+        ["queries:pl_names:verb"] = "POST",
+        ["queries:pl_names:mandatory_parameters"] = "first name, e-mail",
+        ["queries:pl_names:query"] =
+            "SELECT {{first name}} AS first_name, {{e-mail}} AS email, {{unit price ($)}} AS price, "
+            + "{{a.b}} AS dotted, {{email}} AS renamed;",
+
+        // Matched without regard to case. Each name is spelled one way in a query: {{first name}}
+        // and {{FIRST NAME}} together would clash on SQL Server.
+        ["queries:pl_names_case:route"] = "pl/names_case",
+        ["queries:pl_names_case:verb"] = "POST",
+        ["queries:pl_names_case:query"] = "SELECT {{FIRST NAME}} AS any_case;",
+
+        // With a `|` in the list, commas are part of the names.
+        ["queries:pl_names_pipe:route"] = "pl/names_pipe",
+        ["queries:pl_names_pipe:verb"] = "POST",
+        ["queries:pl_names_pipe:mandatory_parameters"] = "last, first|e-mail",
+        ["queries:pl_names_pipe:query"] = "SELECT {{last, first}} AS full_name;",
+
+        ["queries:pl_names_get:route"] = "pl/names_get",
+        ["queries:pl_names_get:verb"] = "GET",
+        ["queries:pl_names_get:query"] =
+            "SELECT {{first name}} AS first_name, {qs{sort-by}} AS sort_by, {h{X-Tenant-Id}} AS tenant;",
     };
 
     /// <summary>
     /// The engine and its database, shared by the tests of this class and disposed after them.
     /// </summary>
-    public sealed class PipelineEngine : IDisposable
+    public class PipelineEngine : IDisposable
     {
         private readonly string _directory;
         private readonly WebApplicationFactory<Program> _factory;
         public HttpClient Client { get; }
 
-        public PipelineEngine()
+        public PipelineEngine() : this(null) { }
+
+        /// <param name="globalSettings">
+        /// Settings outside any route, such as a global response_structure, built from the engine's
+        /// temporary folder (for a file store, say).
+        /// </param>
+        protected PipelineEngine(Func<string, Dictionary<string, string?>>? globalSettings)
         {
             _directory = Path.Combine(Path.GetTempPath(), "dbtorest-pipeline-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_directory);
@@ -130,6 +207,8 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
                 settings[key[..^":route".Length] + ":connection_string_name"] = "pipeline";
             settings["ConnectionStrings:pipeline"] = $"Data Source={database}";
             settings["ConnectionStrings:pipeline:provider"] = "Microsoft.Data.Sqlite";
+            foreach (var (key, value) in globalSettings?.Invoke(_directory) ?? [])
+                settings[key] = value;
 
             _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
                 builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings)));
@@ -164,7 +243,9 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
     [InlineData("pl/array")]        // three short rows, streamed by MVC: mapped in Step6
     [InlineData("pl/array1")]       // one long row: read to the end inside the controller
     [InlineData("pl/auto")]
-    [InlineData("pl/single")]       // read to the end before answering
+    [InlineData("pl/single")]       // read as auto from 1.7.8: three short rows, mapped in Step6
+    [InlineData("pl/single1")]      // one long row: read to the end inside the controller
+    [InlineData("pl/file1")]        // one row: read to the end before the file is sent
     [InlineData("pl/count")]
     [InlineData("pl/count1")]       // one long data row: read to the end inside the controller
     [InlineData("pl/count_raise")]  // the count query itself raises after its row
@@ -224,6 +305,127 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         }
     }
 
+    [Theory]
+    [InlineData("pl/single_rows", """[{"a":1},{"a":2},{"a":3}]""")] // before 1.7.8: {"a":1}
+    [InlineData("pl/single_one", """{"a":1}""")]
+    public async Task Single_IsReadAsTheDefault(string path, string expected)
+    {
+        var (status, body) = await GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal(expected, body);
+    }
+
+    [Fact]
+    public async Task FileRoute_ManyRows_TakesTheFirstWithoutReadingTheRest()
+    {
+        // Reading the million rows would reach the error raised after them.
+        using var response = await Client.GetAsync("pl/file_many");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("hi", await response.Content.ReadAsStringAsync());
+        Assert.Contains("1.txt", response.Content.Headers.ContentDisposition?.ToString());
+    }
+
+    [Fact]
+    public async Task CountQuery_ManyRows_TakesTheFirstWithoutReadingTheRest()
+    {
+        var (status, body) = await GetAsync("pl/count_many");
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal("""{"success":true,"count":1,"data":[{"a":1}]}""", body);
+    }
+
+    [Fact]
+    public async Task Names_KeepSpacesDashesAndDots_InTheBody()
+    {
+        using var response = await Client.PostAsync("pl/names", new StringContent(
+            """{"first name": "Ann", "e-mail": "ann@example.com", "unit price ($)": 5, "a.b": 7}""",
+            System.Text.Encoding.UTF8, "application/json"));
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            """{"first_name":"Ann","email":"ann@example.com","price":5,"dotted":7,"renamed":null}""",
+            body);
+    }
+
+    [Fact]
+    public async Task Names_KeepSpacesAndDashes_InAForm()
+    {
+        using var response = await Client.PostAsync("pl/names", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["first name"] = "Ann",
+            ["e-mail"] = "ann@example.com",
+        }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var row = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("Ann", row.GetProperty("first_name").GetString());
+        Assert.Equal("ann@example.com", row.GetProperty("email").GetString());
+    }
+
+    [Fact]
+    public async Task Names_AreMatchedWithoutRegardToCase()
+    {
+        using var response = await Client.PostAsync("pl/names_case", new StringContent(
+            """{"first name": "Ann"}""", System.Text.Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"any_case":"Ann"}""", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task MandatoryParameters_APipeList_KeepsCommasInNames()
+    {
+        using var ok = await Client.PostAsync("pl/names_pipe", new StringContent(
+            """{"last, first": "Doe, Ann", "e-mail": "ann@example.com"}""", System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Equal("""{"full_name":"Doe, Ann"}""", await ok.Content.ReadAsStringAsync());
+
+        // The message joins the missing names with the list's own separator.
+        using var missing = await Client.PostAsync("pl/names_pipe", new StringContent(
+            "{}", System.Text.Encoding.UTF8, "application/json"));
+        var body = JsonDocument.Parse(await missing.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+        Assert.Equal("Missing mandatory parameters: last, first|e-mail", body.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task Names_KeepTheirCharacters_InTheQueryStringAndHeaders()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "pl/names_get?first%20name=Ann&sort-by=name");
+        request.Headers.Add("X-Tenant-Id", "t1");
+        using var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"first_name":"Ann","sort_by":"name","tenant":"t1"}""",
+            await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task MandatoryParameters_ANameWithASpace_IsOneName()
+    {
+        // Before 1.7.8 the list was also split on spaces, so this asked for `first` and `name`.
+        using var response = await Client.PostAsync("pl/names", new StringContent(
+            """{"e-mail": "ann@example.com"}""", System.Text.Encoding.UTF8, "application/json"));
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("Missing mandatory parameters: first name", body.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task MandatoryParameters_ACommaList_NamesTheMissingOnesWithCommas()
+    {
+        using var response = await Client.PostAsync("pl/names", new StringContent(
+            "{}", System.Text.Encoding.UTF8, "application/json"));
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("Missing mandatory parameters: first name,e-mail", body.GetProperty("message").GetString());
+    }
+
     [Fact]
     public async Task Chain_BareValueRow_IsNotAColumnSource()
     {
@@ -255,5 +457,27 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
 
         Assert.Equal(HttpStatusCode.NoContent, status);
         Assert.Equal(string.Empty, body);
+    }
+}
+
+/// <summary>
+/// A global response_structure under settings is not read from 1.7.8: earlier versions applied it to
+/// every route without its own tag. Under a global array, every route still follows its row count.
+/// </summary>
+public class GlobalResponseStructureTests(GlobalResponseStructureTests.GlobalArrayEngine engine)
+    : IClassFixture<GlobalResponseStructureTests.GlobalArrayEngine>
+{
+    public sealed class GlobalArrayEngine() : PipelineTests.PipelineEngine(_ => new() { ["response_structure"] = "array" });
+
+    [Theory]
+    [InlineData("pl/scalar", "2")]                 // no tag: the row-count shape, not the global array
+    [InlineData("pl/auto_one", """{"a":1}""")]
+    [InlineData("pl/single_one", """{"a":1}""")]
+    public async Task GlobalValue_IsNotRead(string path, string expected)
+    {
+        using var response = await engine.Client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(expected, await response.Content.ReadAsStringAsync());
     }
 }

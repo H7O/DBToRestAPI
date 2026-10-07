@@ -72,6 +72,7 @@ SELECT * FROM OPENJSON(@response, '$.data');
 <get_weather_enriched_locations>
   <route>locations/weather</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query><![CDATA[
     -- Fetch current weather from external API
     DECLARE @weather NVARCHAR(MAX) = {http{

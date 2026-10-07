@@ -34,7 +34,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 - **Background processing / webhooks** — Accept requests instantly and process in the background using `no_wait`, with built-in retry and progress callbacks — no message queue needed.
 - **Settings variables** — Reference encrypted configuration values in queries with `{s{name}}`.
 - **Caching** — In-memory response caching with parameter-aware invalidation.
-- **Pagination** — Automatic `{count, data}` wrapping with `count_query`.
+- **Pagination** — Automatic `{success, count, data}` wrapping with `count_query`.
 - **Nested JSON** — Embeds `FOR JSON` results as real JSON, not escaped strings.
 - **CORS** — Regex-based origin matching, per-endpoint or global, with automatic preflight handling.
 - **Host-based routing** — Serve different endpoints per hostname with exact (`www.example.com`) or wildcard (`*.example.com`) matching and specificity-based priority.
@@ -158,7 +158,6 @@ Here's a complete CRUD endpoint — POST that creates a contact and returns the 
   <verb>POST</verb>
   <mandatory_parameters>name,phone</mandatory_parameters>
   <success_status_code>201</success_status_code>
-  <response_structure>single</response_structure>
   <query><![CDATA[
     INSERT INTO contacts (name, phone)
     VALUES ({{name}}, {{phone}})
@@ -213,6 +212,7 @@ Different endpoints can target different databases via `<connection_string_name>
 <get_analytics>
   <route>analytics</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <connection_string_name>postgres</connection_string_name>
   <query><![CDATA[ SELECT * FROM analytics_data; ]]></query>
 </get_analytics>

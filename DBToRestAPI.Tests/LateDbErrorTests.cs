@@ -15,9 +15,9 @@ namespace DBToRestAPI.Tests;
 /// Com.H.Data.Common 10.1.0.9 closed the reader once the first result set's rows ran out, and
 /// closing discards such an error, so the request succeeded and its uploads were kept. 10.1.0.10
 /// moves through the rest of the batch once every row has been read, and throws the error. The
-/// engine then has to read to the end (single, file and count paths took one row and closed) and
-/// map the error wherever it surfaces: in the controller, or in Step6 when MVC was already
-/// writing a streamed result.
+/// engine maps it wherever it surfaces: in the controller, or in Step6 when MVC was already
+/// writing a streamed result. File and count paths take the first row by reading two (1.7.8):
+/// a result of one row is read to its end, and a result of many isn't read past the second.
 /// </summary>
 public class LateDbErrorTests : IDisposable
 {
@@ -41,50 +41,41 @@ public class LateDbErrorTests : IDisposable
 
     public void Dispose() => _connection.Dispose();
 
-    private const string ThreeRowsThenRaise =
-        "SELECT 1 AS a UNION ALL SELECT 2 UNION ALL SELECT 3; INSERT INTO raise_after VALUES (1);";
-
-    [Fact]
-    public async Task FirstRowReadingToEnd_ThrowsAnErrorRaisedAfterTheRows()
+    [Theory]
+    [InlineData("SELECT 1 AS a; INSERT INTO raise_after VALUES (1);")]
+    [InlineData("SELECT 1 AS a WHERE 1 = 0; INSERT INTO raise_after VALUES (1);")]
+    public async Task FirstRow_OneRowOrNone_ThrowsAnErrorRaisedAfterIt(string sql)
     {
-        await using var result = await _connection.ExecuteQueryAsync(ThreeRowsThenRaise);
+        await using var result = await _connection.ExecuteQueryAsync(sql);
 
         var ex = await Assert.ThrowsAsync<SqliteException>(
-            () => ApiController.FirstRowReadingToEndAsync(result, CancellationToken.None));
+            () => ApiController.FirstRowAsync(result, CancellationToken.None));
 
         Assert.True(ApiController.TryGetCustomDbError(ex, out var number, out _));
         Assert.Equal(50404, number);
     }
 
     [Fact]
-    public async Task FirstRow_TakenAndClosed_LosesTheError()
+    public async Task FirstRow_ManyRows_StopsWithoutReadingTheRest()
     {
-        // What the single, file and count paths did: the error never reaches the caller.
-        await using var result = await _connection.ExecuteQueryAsync(ThreeRowsThenRaise);
-
-        var first = result.AsEnumerable().FirstOrDefault();
-
-        Assert.NotNull(first);
-    }
-
-    [Fact]
-    public async Task FirstRowReadingToEnd_ReturnsTheFirstRow()
-    {
+        // A query that should return one row returns a million. Reading them all would reach the
+        // error raised after them; taking the first row by reading two never gets there.
         await using var result = await _connection.ExecuteQueryAsync(
-            "SELECT 1 AS a UNION ALL SELECT 2 UNION ALL SELECT 3;");
+            "WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 1000000) "
+            + "SELECT i AS a FROM r; INSERT INTO raise_after VALUES (1);");
 
-        var first = await ApiController.FirstRowReadingToEndAsync(result, CancellationToken.None);
+        var first = await ApiController.FirstRowAsync(result, CancellationToken.None);
 
         Assert.Equal(1L, (long)first!.a);
     }
 
     [Fact]
-    public async Task FirstRowReadingToEnd_NoRows_ReturnsNull()
+    public async Task FirstRow_NoRows_ReturnsNull()
     {
         await using var result = await _connection.ExecuteQueryAsync("SELECT 1 AS a WHERE 1 = 0;");
 
-        Assert.Null(await ApiController.FirstRowReadingToEndAsync(result, CancellationToken.None));
-        Assert.Null(await ApiController.FirstRowReadingToEndAsync(null, CancellationToken.None));
+        Assert.Null(await ApiController.FirstRowAsync(result, CancellationToken.None));
+        Assert.Null(await ApiController.FirstRowAsync(null, CancellationToken.None));
     }
 
     [Fact]

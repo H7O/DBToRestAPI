@@ -28,6 +28,7 @@ Define multiple `<query>` nodes:
 ```xml
 <chained_workflow>
   <route>workflow</route>
+  <response_structure>array</response_structure>
   
   <!-- Query 1 -->
   <query><![CDATA[

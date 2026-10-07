@@ -212,7 +212,6 @@ Update your `create_contact` endpoint with comprehensive validation:
   <verb>POST</verb>
   <mandatory_parameters>name,phone</mandatory_parameters>
   <success_status_code>201</success_status_code>
-  <response_structure>single</response_structure>
   <query>
     <![CDATA[
     declare @name nvarchar(500) = {{name}};

@@ -113,6 +113,7 @@ scenario walkthrough, code comparison, and day-100 comparison table.
 ### Parameter Injection
 ```sql
 DECLARE @name NVARCHAR(500) = {{name}};  -- From body, query string, or route
+DECLARE @first NVARCHAR(200) = {{first name}};  -- Names exactly as sent: spaces, dashes, dots kept, never renamed
 DECLARE @id UNIQUEIDENTIFIER = {{id}};    -- Route: /users/{{id}}
 DECLARE @email NVARCHAR(500) = {auth{email}};  -- From JWT claims
 DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
@@ -126,7 +127,7 @@ DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
 | PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` in a procedure you `CALL` with the values (a `DO` block can't see parameters) | 404 |
 | SQLite | `RAISE(ABORT, '[50404] Not found')`, inside a trigger only | 404 |
 
-An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: from 1.7.7 an error after them still gets its status unless part of a longer `array`, `auto` or count-query data result has already been handed to the server (about 4 KB of short values, less with long text; then the connection is cut); before 1.7.7 it was lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.7. Every status and body: [errors.md](docs/reference/errors.md).
+An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: from 1.7.7 an error after them still gets its status unless part of a longer result has already been handed to the server (about 4 KB of short values, less with long text; then the connection is cut), or a file download's query or a count query returned several rows (only two are read, from 1.7.8); before 1.7.7 it was lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.8. Every status and body: [errors.md](docs/reference/errors.md).
 
 ### Key XML Tags
 | Tag | Purpose |
@@ -144,7 +145,7 @@ An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`,
 | `<cache>` | Response caching |
 | `<cors>` | Cross-origin settings |
 | `<file_management>` | File upload/download config |
-| `<response_structure>` | `single`, `array`, `auto`, or `file` |
+| `<response_structure>` | Leave it out for one record: one row answers an object, several an array. `array` for lists, so one matching row still answers `[...]`. `file` for downloads. Don't write `single` or `auto` (read as the tag left out, from 1.7.8) |
 | `<openapi>` | Per-endpoint OpenAPI enrichment: `<enabled>`, `<summary>`, `<description>`, `<tags>`, `<response_schema>` |
 | `<rate_limit>` | Per-endpoint request limit: `<max_requests>`, `<window_seconds>`, `<per>`, `<enabled>`, `<message>`; global default under `<settings>` |
 
@@ -174,7 +175,7 @@ without modifying config files.
 <query>SELECT * FROM items OFFSET {{skip}} ROWS FETCH NEXT {{take}} ROWS ONLY;</query>
 <count_query>SELECT COUNT(*) FROM items;</count_query>
 ```
-Response: `{"count": 150, "data": [...]}`
+Response: `{"success": true, "count": 150, "data": [...]}`
 
 ### Protected Endpoint
 ```xml

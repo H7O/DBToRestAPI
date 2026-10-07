@@ -6,6 +6,7 @@ Cache API responses to improve performance and reduce database load.
 
 ```xml
 <cached_endpoint>
+  <response_structure>array</response_structure>
   <cache>
     <memory>
       <duration_in_milliseconds>60000</duration_in_milliseconds>
@@ -42,7 +43,7 @@ Invalidate cache when specific parameters change:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `duration_in_milliseconds` | Required | Cache lifetime |
-| `invalidators` | None | Comma-separated params for cache key |
+| `invalidators` | None | Names of the inputs that change the answer, separated by commas, or by `\|` when a name contains a comma. From 1.7.8 a name that contains a space, a comma or `;` stays whole only when one of the route's queries (or its `count_query`) uses it in a marker, such as `{{sort by}}` (or a marker with the route's own delimiters). Otherwise it is split on them, as before 1.7.8, so no input drops out of the key. An API gateway route runs no query, so its names are always split that way. |
 
 > Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. The former `max_per_value_cache_size` setting is no longer needed and is ignored if present.
 
@@ -51,6 +52,7 @@ Invalidate cache when specific parameters change:
 ```xml
 <get_user_data>
   <route>users/{{id}}/data</route>
+  <response_structure>array</response_structure>
   
   <cache>
     <memory>
@@ -72,6 +74,7 @@ Each user ID gets its own cached response.
 
 ```xml
 <search_products>
+  <response_structure>array</response_structure>
   <cache>
     <memory>
       <duration_in_milliseconds>120000</duration_in_milliseconds>

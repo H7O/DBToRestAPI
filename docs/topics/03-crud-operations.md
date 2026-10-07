@@ -98,6 +98,7 @@ Complete patterns for Create, Read, Update, and Delete operations.
 **Response:**
 ```json
 {
+  "success": true,
   "count": 150,
   "data": [
     {"id": "...", "name": "Alice", "phone": "..."},
@@ -268,9 +269,9 @@ Complete patterns for Create, Read, Update, and Delete operations.
 | SQL Server | `THROW 50404, 'Not found', 1;` |
 | MySQL | `SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';` |
 | PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` inside a procedure that the query calls with the request values, such as `CALL check_category({{category}});` ([example](../reference/errors.md#raising-an-error-from-sql)). Plain SQL has no `RAISE`, and a `DO` block can't see request parameters. |
-| Oracle | `BEGIN RAISE_APPLICATION_ERROR(-20404, 'Not found'); END;` (not mapped in 1.7.7: arrives as the generic 400) |
+| Oracle | `BEGIN RAISE_APPLICATION_ERROR(-20404, 'Not found'); END;` (not mapped in 1.7.8: arrives as the generic 400) |
 | SQLite | `SELECT RAISE(ABORT, '[50404] Not found');` inside a trigger only. Outside one, it is the generic 400. |
-| IBM DB2 | `SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';` inside a compound statement (`BEGIN ... END`) or a procedure (not mapped in 1.7.7: arrives as the generic 400) |
+| IBM DB2 | `SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';` inside a compound statement (`BEGIN ... END`) or a procedure (not mapped in 1.7.8: arrives as the generic 400) |
 
 The response body, every other status, and when uploaded files are rolled back: [Errors, status codes and rollback](../reference/errors.md).
 

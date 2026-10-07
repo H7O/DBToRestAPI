@@ -32,6 +32,23 @@ A route segment cannot be overridden from the query string. JWT claims and setti
 
 **SQL injection protected** — parameters are bound using ADO.NET parameterization.
 
+## Names With Spaces and Other Characters
+
+Write a name exactly as the caller sends it, with its spaces and ASCII punctuation (dashes, dots, slashes, brackets, `$` and the rest, except `@`). The engine never renames an input, so `{{first_name}}` doesn't read a JSON key named `first name`: it matches nothing and is `NULL`.
+
+```sql
+-- Body: {"first name": "Ann", "e-mail": "ann@example.com", "unit price ($)": 5}
+DECLARE @first_name NVARCHAR(200) = {{first name}};
+DECLARE @email NVARCHAR(320) = {{e-mail}};
+DECLARE @unit_price DECIMAL(10, 2) = {{unit price ($)}};
+```
+
+The same holds for a query-string key (`?sort-by=name` gives `{{sort-by}}`), a form field, a header (`{{X-Tenant-Id}}`) and a claim ([below](#special-characters-in-claims)). A name is matched without regard to case, so `{{First Name}}` reads `first name` too, except in `mandatory_parameters`. Each marker is sent to the database as a parameter whose generated name replaces those characters, so they never reach the SQL text. A name with `@`, or with a character outside ASCII (an accented letter, `€`, `°`, a typographic quote or dash, an emoji), keeps that character in the generated name, and some databases reject it: SQLite rejects `@`, SQL Server the symbols (a known issue in 1.7.8).
+
+A dot is part of the name, not a path: `{{address.city}}` reads a key named `address.city`. A nested object or array arrives as its JSON text, so read it in SQL (`JSON_VALUE({{address}}, '$.city')` on SQL Server).
+
+Spell each name one way throughout a query. In 1.7.8 these get clashing generated parameter names, and the database refuses the query (a known issue): two names that differ only in the replaced characters (`{{first name}}` and `{{first-name}}`), two spellings that differ only in letter case (`{{Email}}` and `{{email}}`, on SQL Server), and one name in two marker forms (`{{email}}` and `{j{email}}`).
+
 ## Route Parameters
 
 Define parameters in the route path:
@@ -73,7 +90,7 @@ Enforce required parameters (returns HTTP 400 if missing):
 
 Missing `name` or `email` → HTTP 400 Bad Request
 
-The check is presence-only. A name passes when it arrives from any source, including headers and JWT claims. An empty or null value still passes, so validate values in SQL, testing `IS NULL` first (see [Parameter Validation](#parameter-validation)). Names are matched case-sensitively.
+The check is presence-only. A name passes when it arrives from any source, including headers and JWT claims. An empty or null value still passes, so validate values in SQL, testing `IS NULL` first (see [Parameter Validation](#parameter-validation)). Names are matched case-sensitively. Separate them with commas or line breaks. A name may contain spaces from 1.7.8 (`<mandatory_parameters>first name, e-mail</mandatory_parameters>`); before, a space also separated names, so `first name` required `first` and `name`. When a name contains a comma, separate the names with `|` instead (`<mandatory_parameters>last, first|e-mail</mandatory_parameters>`): a list that contains a `|` is split only on `|` and line breaks.
 
 ## Default Values
 

@@ -48,6 +48,7 @@ Protect endpoints using centralized API key collections.
 <protected_endpoint>
   <api_keys_collections>vendors,internal</api_keys_collections>
   <route>api/data</route>
+  <response_structure>array</response_structure>
   
   <query><![CDATA[SELECT * FROM data;]]></query>
 </protected_endpoint>
@@ -65,6 +66,7 @@ Only `<api_keys_collections>`, holding a comma-separated list of collection name
 <internal_only>
   <api_keys_collections>internal</api_keys_collections>
   <route>internal/data</route>
+  <response_structure>array</response_structure>
   <query><![CDATA[SELECT * FROM internal_data;]]></query>
 </internal_only>
 ```
@@ -75,6 +77,7 @@ Only `<api_keys_collections>`, holding a comma-separated list of collection name
 <shared_endpoint>
   <api_keys_collections>vendors,internal,mobile</api_keys_collections>
   <route>api/shared</route>
+  <response_structure>array</response_structure>
   <query><![CDATA[SELECT * FROM shared_data;]]></query>
 </shared_endpoint>
 ```
@@ -85,6 +88,7 @@ Only `<api_keys_collections>`, holding a comma-separated list of collection name
 <!-- Public - no protection -->
 <public_data>
   <route>api/public</route>
+  <response_structure>array</response_structure>
   <query><![CDATA[SELECT * FROM public_data;]]></query>
 </public_data>
 
@@ -92,6 +96,7 @@ Only `<api_keys_collections>`, holding a comma-separated list of collection name
 <partner_data>
   <api_keys_collections>vendors</api_keys_collections>
   <route>api/partner</route>
+  <response_structure>array</response_structure>
   <query><![CDATA[SELECT * FROM partner_data;]]></query>
 </partner_data>
 
@@ -99,6 +104,7 @@ Only `<api_keys_collections>`, holding a comma-separated list of collection name
 <admin_data>
   <api_keys_collections>admin</api_keys_collections>
   <route>api/admin</route>
+  <response_structure>array</response_structure>
   <query><![CDATA[SELECT * FROM admin_data;]]></query>
 </admin_data>
 ```
@@ -211,6 +217,7 @@ Use both API keys and JWT authentication:
 
 ```xml
 <highly_secure>
+  <response_structure>array</response_structure>
   <api_keys_collections>admin</api_keys_collections>
   <authorize>
     <provider>azure_b2c</provider>

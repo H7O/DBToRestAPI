@@ -63,6 +63,7 @@ Enterprise-grade authentication with Azure B2C, Google, Auth0, Okta, and any OID
 
 ```xml
 <protected_endpoint>
+  <response_structure>array</response_structure>
   <authorize>
     <provider>azure_b2c</provider>
   </authorize>
@@ -85,6 +86,7 @@ providers comma-separated in `<provider>`, or use `*` to accept any provider def
 
 ```xml
 <get_my_orders>
+  <response_structure>array</response_structure>
   <authorize>
     <!-- Accept tokens from any of these providers -->
     <provider>google,azure_b2c,auth0</provider>

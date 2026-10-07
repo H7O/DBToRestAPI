@@ -80,19 +80,29 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   the callers instead: a 1.7.6 attempt did, and also caught upstream timeouts, so every waiting
   caller re-sent its request to an upstream that was already too slow. Found by review on
   2026-10-06.
-- **An error after part of a streamed result has been written cuts the connection.** `array`,
-  `auto` and count-query data stream their rows, so an error raised after the rows (from 1.7.7
+- **An error after part of a streamed result has been written cuts the connection.** Results
+  of two or more rows (other than a file download's or a count query's count) stream their rows, so an error raised after the rows (from 1.7.7
   it surfaces) can't change a status that MVC has already handed to the server: Step6 aborts the
   connection. That happens after about 4 KB of short values, or much sooner with long text. To
   keep the status for small and medium results, buffer a streamed result up to a configurable
   size before writing it, and stream only beyond that. Found by review on 2026-10-07.
-- **`single`, file and count-query results build an object for every row.** To surface an error
-  raised after the rows, the engine reads these results to the end through Com.H.Data.Common's
-  enumerator, which materializes each row only for it to be dropped. A 3,000,000-row SQLite
-  `single` went from 0.02 s to 2.7 s. A library API that takes the first row and then moves
-  through the remaining result sets with NextResult (skipping rows without reading them) would
-  make this constant again. The docs tell authors to use `TOP 1` / `LIMIT 1`. Found by review on
-  2026-10-07.
+- **OpenAPI doesn't show a `root_node` wrapper,** and documents a file route that also has a
+  `count_query` as a download, though it answers the count wrapper. Found by review on 2026-10-07.
+- **Generated SQL parameter names can clash or hold unsafe characters** (Com.H.Data.Common).
+  The library builds `@vxv_N_<name>` by replacing a fixed list of punctuation. So `{{first name}}`
+  and `{{first-name}}` both become `@vxv_N_first_name`; `{{Email}}` and `{{email}}` differ only in
+  case, which SQL Server rejects; and `{{email}}` with `{j{email}}` adds the same name twice. The
+  database refuses the query. Characters outside the list (`@`, non-ASCII letters and symbols)
+  stay in the name: SQLite rejects `@`, SQL Server `€`, `°` and typographic quotes. Fix in the
+  library: replace every character that isn't an ASCII letter, digit or `_`, de-duplicate markers
+  ignoring case, and make each generated name unique (a suffix on a clash only). Found by review
+  on 2026-10-07.
+- **A file or count query that returns several rows loses an error raised after them.** From
+  1.7.8 the engine takes their first row by reading two, and closing the reader then discards the
+  rest of the batch, the error included. A Com.H.Data.Common API that moves through the remaining
+  result sets without building rows (NextResult skips them, and SQLite doesn't even step them)
+  would surface it cheaply on SQLite; on SQL Server the skipped rows still cross the network.
+  Found by review on 2026-10-07.
 - **Cache invalidators are read from every parameter source** (CacheService.cs), so one named like
   a `<vars>` key or a JWT claim takes that value. Also consider a start-up warning for a cached
   route whose answer looks caller-specific (it uses `{auth{...}}` without naming the caller in
@@ -131,6 +141,27 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **A name with a space couldn't be listed in `mandatory_parameters`.** The list was split on
+  spaces too, so `first name` required `first` and `name`. Fixed in 1.7.8: commas and line breaks
+  separate names, or `|` and line breaks when the list contains a `|` (for names with commas). The
+  OpenAPI builder now splits the list the same way, and the missing-parameters message joins names
+  with the list's separator. Cache `<invalidators>` use the same split, except that a name with a
+  comma, a space or `;` stays whole only when one of the route's queries uses it in a marker;
+  otherwise it is split on them as before, so an old list keeps every input in the key. Gateway
+  routes run no query, so their names are always split that way.
+- **The OpenAPI schema of a route without `response_structure` said it was always an array.** From
+  1.7.8 it is one object or an array of them (`anyOf`); a `single` route, which showed the object
+  alone, gets the same.
+- **`single`, file and count-query results were read to their end.** 1.7.7 read every row of them
+  to surface an error raised after the rows, building an object for each, so a 3,000,000-row
+  SQLite `single` went from 0.02 s to 2.7 s. Fixed in 1.7.8: `single` is read as the default
+  shape (it was mostly set on queries that return one row anyway, and logs a warning), and file
+  and count queries take their first row by reading two.
+- **A global `<response_structure>` under `<settings>` was half-supported.** The controller
+  applied it to every route without its own tag, but it was undocumented and the file download
+  middleware ignored it, so a store download that relied on a global `file` answered 404. Removed
+  in 1.7.8: it is not read, the start-up log reports one that is still set, and `auto` (the only
+  reason to write a tag for the default shape) is read as the tag left out, like `single`.
 - **An error raised after the rows was lost.** Fixed in 1.7.7, with Com.H.Data.Common 10.1.0.10.
   The library closed the reader once the first result set's rows ran out, and closing discards an
   error raised after them (SQL Server's THROW after a SELECT, or a later statement that fails), so

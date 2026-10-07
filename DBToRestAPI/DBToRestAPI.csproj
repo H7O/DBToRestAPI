@@ -4,10 +4,10 @@
   <TargetFramework>net10.0</TargetFramework>
   <Nullable>enable</Nullable>
   <ImplicitUsings>enable</ImplicitUsings>
-  <Version>1.7.7</Version>
-  <AssemblyVersion>1.7.7.0</AssemblyVersion>
-  <FileVersion>1.7.7.0</FileVersion>
-  <InformationalVersion>1.7.7</InformationalVersion>
+  <Version>1.7.8</Version>
+  <AssemblyVersion>1.7.8.0</AssemblyVersion>
+  <FileVersion>1.7.8.0</FileVersion>
+  <InformationalVersion>1.7.8</InformationalVersion>
 </PropertyGroup>
 
 <!--
@@ -51,7 +51,7 @@
          the transitive resolution; applies to both full and lite builds. -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.10.0" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.3.0" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.12" />
     <!-- JWT validation and OpenID Connect discovery, called directly by Step4JwtAuthorization -->
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.23.0" />

@@ -96,7 +96,7 @@ The SQL `THROW` statement maps directly to HTTP responses:
 
 An error numbered `50000 + status` becomes that HTTP status: use `50400` to `50599`.
 This works with SQL Server `THROW`, PostgreSQL `RAISE EXCEPTION` (inside a procedure the query
-`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. In 1.7.7,
+`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. In 1.7.8,
 Oracle and DB2 custom errors are not mapped yet and arrive as a generic 400. See
 [Errors, status codes and rollback](../reference/errors.md).
 
@@ -228,7 +228,7 @@ libraries, no architecture required:
 | OpenAPI / Swagger | `<openapi>` tag (global + per-endpoint) | Auto-generated spec at `/openapi.json`, built-in Swagger UI at `/swagger`, secure by default, per-endpoint opt-in |
 | Settings encryption | `<settings_encryption>` tag | DPAPI / Data Protection for secrets at rest |
 | SQL → HTTP error mapping | `THROW 50404, '...', 1` | Direct mapping, no middleware needed |
-| Pagination with count | `<count_query>` tag | Automatic `{count, data}` wrapping |
+| Pagination with count | `<count_query>` tag | Automatic `{success, count, data}` wrapping |
 | Nested JSON | `{type{json{field}}}` decorator | Embeds FOR JSON results as real objects |
 | Environment variable overrides | `.AddEnvironmentVariables()` | Any setting overridable via env vars — cloud-native deployment on Azure App Service, Docker, AWS, K8s |
 

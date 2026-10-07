@@ -40,7 +40,6 @@
       <verb>POST</verb>
       <mandatory_parameters>name,phone</mandatory_parameters>
       <success_status_code>201</success_status_code>
-      <response_structure>single</response_structure>
       <query><![CDATA[
         INSERT INTO contacts (name, phone)
         VALUES ({{name}}, {{phone}})
@@ -54,7 +53,6 @@
       <route>contacts/{{id}}</route>
       <verb>GET</verb>
       <mandatory_parameters>id</mandatory_parameters>
-      <response_structure>single</response_structure>
       <query><![CDATA[
         SELECT id, name, phone, active
         FROM contacts
@@ -90,7 +88,6 @@
       <route>contacts/{{id}}</route>
       <verb>PUT</verb>
       <mandatory_parameters>id,name,phone</mandatory_parameters>
-      <response_structure>single</response_structure>
       <query><![CDATA[
         UPDATE contacts
         SET name = {{name}}, phone = {{phone}}
@@ -105,7 +102,6 @@
       <route>contacts/{{id}}</route>
       <verb>DELETE</verb>
       <mandatory_parameters>id</mandatory_parameters>
-      <response_structure>single</response_structure>
       <query><![CDATA[
         DELETE FROM contacts
         WHERE id = {{id}}
@@ -119,7 +115,6 @@
       <route>contacts/{{id}}/{{status_action}}</route>
       <verb>PUT</verb>
       <mandatory_parameters>id,status_action</mandatory_parameters>
-      <response_structure>single</response_structure>
       <query><![CDATA[
         UPDATE contacts
         SET active = CASE WHEN {{status_action}} = 'activate' THEN 1 ELSE 0 END

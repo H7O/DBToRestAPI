@@ -93,7 +93,7 @@ Let's walk through what's new.
 When you add a `<count_query>`, two things happen:
 
 1. **Both queries run**: The `<query>` returns the paginated data; the `<count_query>` returns the total count (without pagination).
-2. **The response shape changes**: Instead of returning a plain array, the response wraps everything in an object with `count` and `data` fields.
+2. **The response shape changes**: Instead of returning a plain array, the response wraps everything in an object with `success`, `count` and `data` fields.
 
 ### Response With `<count_query>`
 
@@ -103,6 +103,7 @@ curl "http://localhost:5000/contacts?take=2&skip=0"
 
 ```json
 {
+  "success": true,
   "count": 3,
   "data": [
     {
@@ -147,7 +148,7 @@ If you remove the `<count_query>` tag, the same request returns just the array:
 
 No `count` field, so the client can't know how many total records exist.
 
-> **Important**: When `<count_query>` is present, the `<response_structure>` tag is ignored. The application always returns the `{ count, data }` wrapper.
+> **Important**: When `<count_query>` is present, the `<response_structure>` tag is ignored. The application always returns the `{ success, count, data }` wrapper.
 
 ## Keep the Count Query in Sync
 
@@ -215,14 +216,11 @@ Here's a quick reference for how these two tags interact:
 
 | `response_structure` | `count_query` present? | Response Shape |
 |----------------------|------------------------|----------------|
-| `auto`               | No                     | Single row → object; Multiple → array |
-| `auto`               | Yes                    | `{ count, data: [...] }` |
-| `array`              | No                     | Always array, even for 1 row |
-| `array`              | Yes                    | `{ count, data: [...] }` |
-| `single`             | No                     | Always first row object |
-| `single`             | Yes                    | `{ count, data: [...] }` (first row only in data) |
+| Not set              | No                     | One row → object; several → array; none → empty body (`204` with the default success code) |
+| `array`              | No                     | Always an array, even for 1 row |
+| Any                  | Yes                    | `{ success, count, data: [...] }` |
 
-**Takeaway**: `count_query` always wins. When present, the response is always `{ count, data }`.
+**Takeaway**: `count_query` always wins. When present, the response is always `{ success, count, data }`.
 
 ## Practical Pattern: Endpoint Without Count
 
@@ -250,7 +248,7 @@ This always returns an array — even if there's only one contact — making it 
 ### What You Learned
 
 - How `<count_query>` adds total counts to paginated responses
-- The `{ count, data }` response wrapper that count_query produces
+- The `{ success, count, data }` response wrapper that count_query produces
 - Why the count query must apply the same filters as the main query
 - How to implement dynamic sorting with whitelisted column names
 - The relationship between `response_structure` and `count_query`

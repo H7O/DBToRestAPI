@@ -14,7 +14,6 @@ Add this endpoint definition to your `sql.xml`, inside the `<queries>` block:
   <verb>POST</verb>
   <mandatory_parameters>name,phone</mandatory_parameters>
   <success_status_code>201</success_status_code>
-  <response_structure>single</response_structure>
   <query>
     <![CDATA[
     declare @name nvarchar(500) = {{name}};
@@ -81,7 +80,7 @@ The error response looks like:
 
 This saves a round-trip to the database for obviously invalid requests.
 
-> **Note**: Parameters are comma-separated with no spaces. `name,phone` — not `name, phone`.
+> **Note**: Separate the names with commas (`name,phone` or `name, phone`). A name may itself contain spaces (`first name`), from 1.7.8. The names are matched case-sensitively here. See [Names With Spaces and Other Characters](../topics/04-parameters.md#names-with-spaces-and-other-characters).
 
 ### Custom Status Codes with `<success_status_code>`
 
@@ -91,21 +90,17 @@ This saves a round-trip to the database for obviously invalid requests.
 
 By default, successful responses return HTTP 200 OK. For resource creation, REST convention says to return **201 Created**. This tag overrides the default.
 
-### Response Structure with `<response_structure>`
+### Response Shape
 
-```xml
-<response_structure>single</response_structure>
-```
+This endpoint has no `<response_structure>` tag, and doesn't need one. Without it, the shape of the JSON follows the number of rows the query returns:
 
-This controls the shape of the JSON response:
+| Rows returned | Response |
+|---------------|----------|
+| One           | A plain object |
+| Several       | An array of objects |
+| None          | An empty body (`204 No Content` when the success code is the default 200) |
 
-| Value      | Behavior |
-|------------|----------|
-| `auto`     | Default. Single row → object. Multiple rows → array. |
-| `single`   | Always return only the first row as a plain object. |
-| `array`    | Always return an array, even for a single row. |
-
-Although in this example we expect only one row to be returned (the newly created contact), hence ommitting this optional tag would still work fine (and is recommended for ease of use). But we explicitly set it to `single` just to demonstrate how it works in cases where you want to enforce a specific response shape regardless of the number of rows returned.
+Creating a contact returns one row, the new contact, so the response is an object. On endpoints that return lists, set `<response_structure>array</response_structure>`, so a list with one row is still an array (topic 4 shows it). The value `file` serves downloads (topic 15).
 
 ### The SQL Query Itself
 
@@ -250,7 +245,7 @@ Response:
 }
 ```
 
-> Notice: when only one row is returned, the default `auto` response structure returns a plain object instead of an array. We'll explore how to control this in a later topic.
+> Notice: when only one row matches, the response is a plain object instead of an array. Topic 4 shows how to always get an array.
 
 **Search by phone:**
 ```bash
@@ -328,7 +323,7 @@ This is powerful — your SQL controls not just the data but also the HTTP error
 | `<verb>`                   | No        | Any verb           | Restricts endpoint to a specific HTTP verb |
 | `<mandatory_parameters>`   | No        | None               | Comma-separated list of required params    |
 | `<success_status_code>`    | No        | 200                | HTTP status code for successful responses  |
-| `<response_structure>`     | No        | `auto`             | Controls JSON shape: `auto`, `single`, `array` |
+| `<response_structure>`     | No        | Follows row count  | `array` for lists, `file` for downloads    |
 
 ---
 

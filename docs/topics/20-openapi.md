@@ -40,6 +40,7 @@ Leave the global setting off (default). Add `<openapi><enabled>true</enabled></o
 <get_users>
   <route>users</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query><![CDATA[ SELECT * FROM users; ]]></query>
   <openapi>
     <enabled>true</enabled>
@@ -71,15 +72,17 @@ The following are inferred automatically from your existing endpoint tags — no
 | `<verb>GET,POST</verb>` | Separate operations per verb |
 | `<mandatory_parameters>name,email</mandatory_parameters>` | Required parameters — path params auto-detected, rest as query (GET) or request body (POST/PUT/PATCH) |
 | `<success_status_code>201</success_status_code>` | Response status code (default: `200`) |
+| No `<response_structure>` | Response schema: one object or an array of them (`anyOf`) |
 | `<response_structure>array</response_structure>` | Response schema: array of objects |
-| `<response_structure>single</response_structure>` | Response schema: single object |
 | `<response_structure>file</response_structure>` | Binary download (`application/octet-stream`) |
 | `<api_keys_collections>vendors</api_keys_collections>` | API key security scheme (`x-api-key` header) |
 | `<authorize>` | Bearer JWT security scheme |
 | `<host>` | Noted in operation description |
 | `<cache>` | "Response is cached" in description |
 | `<rate_limit>` | `429` response with the `Retry-After` header and the `{ success, message, retry_after_seconds }` body; the effective limit noted in the description (see [Rate Limiting](18-rate-limiting.md)) |
-| `<count_query>` | Response wrapped in `{ count, data }` pagination envelope |
+| `<count_query>` | Response wrapped in `{ success, count, data }` pagination envelope |
+
+Set `<response_structure>array</response_structure>` on list routes. Without it, the schema says one object or an array of them, which a generated client sees as a union type. Before 1.7.8 a route without the tag was described as an array, and a `single` route as the object alone: regenerated clients change accordingly.
 
 ## Per-Endpoint Enrichment
 
@@ -124,7 +127,7 @@ For richer specs, add an `<openapi>` child node to any endpoint:
 | `<summary>` | Short operation label | XML node name (e.g., `create_order` → `create order`) |
 | `<description>` | Longer explanation | Auto-generated from route hints |
 | `<tags>` | Comma-separated grouping tags | First route segment (e.g., `orders`) |
-| `<response_schema>` | JSON Schema for success response | Generic object/array based on `<response_structure>` |
+| `<response_schema>` | JSON Schema of one row. It is wrapped as the route answers: an array of it with `array`, one of it or an array of it (`anyOf`) without the tag, and the `data` items with a `count_query`. A `root_node` wrapper isn't shown (known issue) | Generic object, wrapped the same way |
 
 ## Global Settings
 
@@ -165,7 +168,7 @@ Every operation gets a `default` error response whose schema has one string prop
 }
 ```
 
-This schema doesn't match the body the engine sends yet. It is a known issue in 1.7.7. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
+This schema doesn't match the body the engine sends yet. It is a known issue in 1.7.8. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
 
 ```json
 {

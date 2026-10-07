@@ -130,6 +130,7 @@ Parameters use SQL Server's parameterization — **SQL injection protected by de
 <list_contacts>
   <route>contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   
   <query><![CDATA[
     SELECT id, name, phone, active FROM [contacts] ORDER BY name;

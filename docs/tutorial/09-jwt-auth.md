@@ -220,6 +220,7 @@ If your provider includes roles in the token:
 ```xml
 <admin_only>
   <route>admin/dashboard</route>
+  <response_structure>array</response_structure>
   <authorize>
     <provider>azure_b2c</provider>
     <required_roles>admin,superuser</required_roles>

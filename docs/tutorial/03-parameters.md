@@ -17,7 +17,7 @@ If the same parameter appears in multiple sources, the higher-priority source wi
 
 JWT claims and settings variables don't take part in this order. They use their own placeholders, `{auth{...}}` and `{s{...}}`, so they never fill a `{{name}}`.
 
-> **All parameter names are case-insensitive.** `{{name}}`, `{{Name}}`, and `{{NAME}}` all resolve to the same value.
+> **Parameter names are case-insensitive in queries.** `{{name}}`, `{{Name}}`, and `{{NAME}}` all resolve to the same value. Use one spelling per query, though: two in one query clash on SQL Server in 1.7.8. `<mandatory_parameters>` is the exception: its names must match the caller's exactly, case included.
 
 ## Route Parameters
 
@@ -66,6 +66,7 @@ Route and query string parameters work simultaneously. Given:
 <get_user_posts>
   <route>users/{{user_id}}/posts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query>
     <![CDATA[
     declare @user_id UNIQUEIDENTIFIER = {{user_id}};
@@ -155,6 +156,7 @@ A practical use case — logging the caller's IP or user agent:
 <log_and_list>
   <route>contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query>
     <![CDATA[
     -- Log the request (header parameters)
@@ -259,7 +261,6 @@ Let's put this together. Add a new endpoint to your `sql.xml` that fetches a sin
   <route>contacts/{{id}}</route>
   <verb>GET</verb>
   <mandatory_parameters>id</mandatory_parameters>
-  <response_structure>single</response_structure>
   <query>
     <![CDATA[
     declare @id UNIQUEIDENTIFIER = {{id}};

@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Com.H.Data.Common;
 using DBToRestAPI.Cache;
+using DBToRestAPI.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DBToRestAPI.Tests;
 
@@ -39,6 +41,17 @@ public class CacheVerbAndRouteTests
                 ["routes:gateway_tags:cache:memory:invalidators"] = "tag,category",
                 ["queries:tenant_scoped:cache:memory:duration_in_milliseconds"] = "60000",
                 ["queries:tenant_scoped:cache:memory:invalidators"] = "tenant",
+                // From 1.7.8 a name may contain a space, when the route's query uses it.
+                ["queries:sorted:cache:memory:duration_in_milliseconds"] = "60000",
+                ["queries:sorted:cache:memory:invalidators"] = "sort by",
+                ["queries:sorted:query"] = "SELECT * FROM items ORDER BY CASE WHEN {{sort by}} = 'name' THEN name END",
+                // Before 1.7.8 a space separated names; the query uses the parts, so it still does.
+                ["queries:legacy:cache:memory:duration_in_milliseconds"] = "60000",
+                ["queries:legacy:cache:memory:invalidators"] = "tenant_id user_id",
+                ["queries:legacy:query"] = "SELECT * FROM items WHERE tenant_id = {{tenant_id}} AND owner = {{user_id}}",
+                // A gateway runs no query: spaces and `;` separate its names, as before 1.7.8.
+                ["routes:gateway_split:cache:memory:duration_in_milliseconds"] = "60000",
+                ["routes:gateway_split:cache:memory:invalidators"] = "tag category;region",
                 // Two sibling groups whose endpoints share the element name "0": the old key used
                 // only that last segment.
                 ["queries:group_a:0:cache:memory:duration_in_milliseconds"] = "60000",
@@ -196,6 +209,249 @@ public class CacheVerbAndRouteTests
         Assert.Equal(1, await endpoint.CallAsync(cache, section, Request("GET", "items/1", "1")));
         Assert.Equal(2, await endpoint.CallAsync(cache, section, Request("HEAD", "items/1", "1")));
         Assert.Equal(2, await endpoint.CallAsync(cache, section, Request("HEAD", "items/1", "1")));
+    }
+
+    [Fact]
+    public async Task Invalidator_NameWithASpace_SeparatesEntries()
+    {
+        var (cache, config) = Create();
+        var section = config.GetSection("queries:sorted");
+        var endpoint = new Endpoint();
+
+        Assert.Equal(1, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), new Dictionary<string, object> { ["sort by"] = "price" }));
+        Assert.Equal(2, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), new Dictionary<string, object> { ["sort by"] = "name" }));
+        Assert.Equal(1, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), new Dictionary<string, object> { ["sort by"] = "price" }));
+    }
+
+    [Fact]
+    public async Task Invalidators_AreReadAgainWhenTheConfigurationReloads()
+    {
+        // The engine keeps each route's invalidator names until the configuration reloads.
+        var (cache, config) = Create();
+        var section = config.GetSection("queries:sorted");
+        var endpoint = new Endpoint();
+        Dictionary<string, object> Sort(string value) => new() { ["sort by"] = value };
+
+        Assert.Equal(1, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("a")));
+        Assert.Equal(2, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("b")));
+
+        // The query no longer uses {{sort by}}, so the name is split into `sort` and `by`, which
+        // match no input: every value now shares one entry.
+        config["queries:sorted:query"] = "SELECT * FROM items";
+        config.Reload();
+
+        Assert.Equal(3, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("c")));
+        Assert.Equal(3, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("d")));
+    }
+
+    [Fact]
+    public async Task Invalidators_FollowTheConfiguration_WithoutWaitingForAReloadSignal()
+    {
+        // A remembered answer is used only while the query texts it came from are unchanged, so
+        // it can't outlive a change, whatever order reload callbacks run in. Setting a value here
+        // changes the configuration without raising a reload.
+        var (cache, config) = Create();
+        var section = config.GetSection("queries:sorted");
+        var endpoint = new Endpoint();
+        Dictionary<string, object> Sort(string value) => new() { ["sort by"] = value };
+
+        config["queries:sorted:query"] = "SELECT * FROM items";
+        Assert.Equal(1, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("a")));
+        Assert.Equal(1, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("b")));
+
+        config["queries:sorted:query"] = "SELECT * FROM items ORDER BY {{sort by}}";
+        Assert.Equal(2, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("a")));
+        Assert.Equal(3, await endpoint.CallAsync(cache, section, Request("GET", "sorted"), Sort("b")));
+    }
+
+    [Fact]
+    public async Task Invalidators_SeparatedBySpaces_AsBefore178_StillKeyEachInput()
+    {
+        // Read as one name, `tenant_id user_id` would match nothing, and one tenant's cached
+        // answer would be served to the other.
+        var (cache, config) = Create();
+        var section = config.GetSection("queries:legacy");
+        var endpoint = new Endpoint();
+
+        Assert.Equal(1, await endpoint.CallAsync(cache, section, Request("GET", "legacy"), new Dictionary<string, object> { ["tenant_id"] = "a", ["user_id"] = "x" }));
+        Assert.Equal(2, await endpoint.CallAsync(cache, section, Request("GET", "legacy"), new Dictionary<string, object> { ["tenant_id"] = "b", ["user_id"] = "x" }));
+        Assert.Equal(3, await endpoint.CallAsync(cache, section, Request("GET", "legacy"), new Dictionary<string, object> { ["tenant_id"] = "a", ["user_id"] = "y" }));
+    }
+
+    [Theory]
+    [InlineData("a,b", "SELECT 1", new[] { "a", "b" })]
+    [InlineData("sort by", "SELECT {{sort by}}", new[] { "sort by" })]
+    [InlineData("sort by", "SELECT {qs{Sort By}}", new[] { "sort by" })]       // any marker form, any case
+    [InlineData("tenant_id user_id", "SELECT {{tenant_id}}", new[] { "tenant_id", "user_id" })]
+    [InlineData("a;b", "SELECT {{a}}", new[] { "a", "b" })]
+    [InlineData("last, first|e-mail", "SELECT {{last, first}}", new[] { "last, first", "e-mail" })]
+    // A name the queries don't use is split as before 1.7.8, so no input drops out of the key.
+    [InlineData("last, first|e-mail", "SELECT 1", new[] { "last", "first", "e-mail" })]
+    [InlineData("tenant_id,user_id|region", "SELECT {{tenant_id}}", new[] { "tenant_id", "user_id", "region" })]
+    // Only a marker counts: the name in a comment doesn't keep it whole.
+    [InlineData("tenant_id user_id", "-- per tenant_id user_id\nSELECT {{tenant_id}}, {{user_id}}", new[] { "tenant_id", "user_id" })]
+    public void GetInvalidators_SplitsNames(string list, string query, string[] expected)
+    {
+        var section = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["queries:ep:query"] = query })
+            .Build()
+            .GetSection("queries:ep");
+
+        Assert.Equal(expected, CacheService.GetInvalidators(section, list));
+    }
+
+    [Fact]
+    public void GetInvalidators_ReadsEveryQueryOfAChain()
+    {
+        var section = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["queries:ep:query:0"] = "SELECT 1 AS x",
+                ["queries:ep:query:1"] = "SELECT {{sort by}}",
+            })
+            .Build()
+            .GetSection("queries:ep");
+
+        Assert.Equal(new[] { "sort by" }, CacheService.GetInvalidators(section, "sort by"));
+    }
+
+    private const string PipeMarker = @"(?<open_marker>\|\|)(?<param>.*?)?(?<close_marker>\|\|)";
+
+    [Fact]
+    public void GetInvalidators_ReadsTheRoutesOwnMarkerDelimiters()
+    {
+        var section = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["queries:ep:query_string_variables_pattern"] = PipeMarker,
+                ["queries:ep:query"] = "SELECT * FROM items ORDER BY CASE WHEN ||sort by|| = 'name' THEN name END",
+            })
+            .Build()
+            .GetSection("queries:ep");
+
+        Assert.Equal(new[] { "sort by" }, CacheService.GetInvalidators(section, "sort by"));
+    }
+
+    [Fact]
+    public void GetInvalidators_ReadsTheGlobalMarkerDelimiters()
+    {
+        var root = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["regex:json_variables_pattern"] = PipeMarker,
+                ["queries:ep:query"] = "SELECT ||sort by||",
+            })
+            .Build();
+
+        Assert.Equal(new[] { "sort by" }, CacheService.GetInvalidators(root.GetSection("queries:ep"), "sort by", root));
+        Assert.Equal(new[] { "sort", "by" }, CacheService.GetInvalidators(root.GetSection("queries:ep"), "sort by"));
+    }
+
+    [Fact]
+    public void GetInvalidators_ReadsTheCurrentQuery_ThroughTheEnginesConfiguration()
+    {
+        // The engine's configuration wrappers answer an indexer read from the snapshot the section
+        // was built from, and GetSection from the current configuration, which is what a request
+        // runs. A section the route resolver captured before a reload must be judged against the
+        // new SQL. A key folder turns encryption on everywhere, so the service rebuilds on reload.
+        var keys = Path.Combine(Path.GetTempPath(), "dbtorest-keys-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var root = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["settings_encryption:data_protection_key_path"] = keys,
+                    ["queries:ep:query"] = "SELECT 1",
+                })
+                .Build();
+            var engineConfiguration = new SettingsEncryptionService(root, NullLogger<SettingsEncryptionService>.Instance);
+            var section = engineConfiguration.GetSection("queries:ep");
+
+            root["queries:ep:query"] = "SELECT * FROM t WHERE region = {{sales region}}";
+            root.Reload();
+
+            Assert.Equal(new[] { "sales region" }, CacheService.GetInvalidators(section, "sales region", engineConfiguration));
+        }
+        finally
+        {
+            try { Directory.Delete(keys, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void GetInvalidators_ReadsTheCurrentMarkerDelimiters_ThroughTheEnginesConfiguration()
+    {
+        // As above, for a route that switches to its own delimiters in the same save.
+        var keys = Path.Combine(Path.GetTempPath(), "dbtorest-keys-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var root = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["settings_encryption:data_protection_key_path"] = keys,
+                    ["queries:ep:query"] = "SELECT 1",
+                })
+                .Build();
+            var engineConfiguration = new SettingsEncryptionService(root, NullLogger<SettingsEncryptionService>.Instance);
+            var section = engineConfiguration.GetSection("queries:ep");
+
+            root["queries:ep:query_string_variables_pattern"] = PipeMarker;
+            root["queries:ep:query"] = "SELECT * FROM t WHERE region = ||sales region||";
+            root.Reload();
+
+            Assert.Equal(new[] { "sales region" }, CacheService.GetInvalidators(section, "sales region", engineConfiguration));
+        }
+        finally
+        {
+            try { Directory.Delete(keys, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Theory]
+    [InlineData("query:0", "query:2")]     // an empty <query/> in a chain leaves a gap in the numbering
+    [InlineData("query:0", "query:main")]  // a name attribute names the child
+    public void GetInvalidators_ReadsEveryQueryTheParserRuns(string firstKey, string secondKey)
+    {
+        var section = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [$"queries:ep:{firstKey}"] = "SELECT 1 AS x",
+                [$"queries:ep:{secondKey}"] = "SELECT {{x y}}",
+            })
+            .Build()
+            .GetSection("queries:ep");
+
+        Assert.Equal(new[] { "x y" }, CacheService.GetInvalidators(section, "x y"));
+    }
+
+    [Fact]
+    public void GetInvalidators_ReadsTheCountQuery()
+    {
+        var section = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["queries:ep:query"] = "SELECT 1 AS x",
+                ["queries:ep:count_query"] = "SELECT COUNT(*) FROM items WHERE kind = {{sort by}}",
+            })
+            .Build()
+            .GetSection("queries:ep");
+
+        Assert.Equal(new[] { "sort by" }, CacheService.GetInvalidators(section, "sort by"));
+    }
+
+    [Fact]
+    public async Task Gateway_SpacesAndSemicolons_StillSeparateNames()
+    {
+        var (cache, config) = Create();
+        var section = config.GetSection("routes:gateway_split");
+        var forwarded = 0;
+
+        Task<string?> Forward(bool materialise) => Task.FromResult<string?>($"response {++forwarded}");
+
+        Assert.Equal("response 1", await cache.GetForGateway(section, Request("GET", "gw/s", query: "?tag=a"), "gw/s", Forward));
+        Assert.Equal("response 2", await cache.GetForGateway(section, Request("GET", "gw/s", query: "?tag=b"), "gw/s", Forward));
+        Assert.Equal("response 3", await cache.GetForGateway(section, Request("GET", "gw/s", query: "?tag=a&region=x"), "gw/s", Forward));
+        Assert.Equal("response 1", await cache.GetForGateway(section, Request("GET", "gw/s", query: "?tag=a"), "gw/s", Forward));
     }
 
     [Fact]

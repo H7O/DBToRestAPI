@@ -1,11 +1,16 @@
 ﻿using Com.H.Cache;
 using Com.H.Data.Common;
 using Com.H.Threading;
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Hybrid;
 using System.Buffers;
+using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using DBToRestAPI.Services;
+using DBToRestAPI.Settings;
+using DBToRestAPI.Settings.Extensinos;
 using Microsoft.AspNetCore.WebUtilities;
 
 namespace DBToRestAPI.Cache
@@ -235,6 +240,157 @@ namespace DBToRestAPI.Cache
             => HttpMethods.IsGet(method ?? string.Empty) || HttpMethods.IsHead(method ?? string.Empty);
 
         /// <summary>
+        /// The names in a route's <c>invalidators</c>. They are split as mandatory_parameters is
+        /// (<see cref="ParametersExt.SplitNames"/>), so a name may contain spaces (<c>sort by</c>)
+        /// or, in a <c>|</c> list, commas.
+        /// </summary>
+        /// <remarks>
+        /// Before 1.7.8 commas, spaces and <c>;</c> all separated names, so <c>tenant_id user_id</c>
+        /// meant two names. Read as one name that matches no input, such a list would leave both
+        /// inputs out of the key, and one caller's cached answer would be served to the others. So
+        /// a name with a comma, a space or <c>;</c> stays whole only when one of the route's
+        /// queries uses it in a marker (<c>{{sort by}}</c>, or the route's own delimiters);
+        /// otherwise it is split on those characters, as before. A gateway route runs no query, so
+        /// its names are always split so.
+        /// </remarks>
+        /// <param name="root">The whole configuration, for the global marker patterns.</param>
+        internal static string[] GetInvalidators(IConfigurationSection serviceSection, string? list, IConfiguration? root = null)
+            => GetInvalidators(list, QueryTexts(serviceSection), MarkerPatterns(serviceSection, root));
+
+        // The same, from the route's query texts and its configured marker patterns.
+        private static string[] GetInvalidators(string? list, string[] texts, string[] patterns)
+        {
+            var names = ParametersExt.SplitNames(list);
+            if (!names.Any(HasOldSeparator))
+                return names;
+
+            // A name can only be a marker's if the SQL holds it, so most old lists (tenant_id
+            // user_id) are settled by a text search, without the marker patterns.
+            bool InSql(string name) => texts.Any(t => t.Contains(name, StringComparison.OrdinalIgnoreCase));
+            var used = names.Any(name => HasOldSeparator(name) && InSql(name))
+                ? MarkerNames(texts, patterns)
+                : [];
+
+            return names
+                .SelectMany(name => HasOldSeparator(name) && !used.Contains(name)
+                    ? name.Split(_oldInvalidatorSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    : [name])
+                .ToArray();
+        }
+
+        private static readonly char[] _oldInvalidatorSeparators = [',', ' ', ';'];
+
+        private static bool HasOldSeparator(string name) => name.IndexOfAny(_oldInvalidatorSeparators) >= 0;
+
+        // The settings that change the delimiters of a request-input marker, as ParametersBuilder
+        // reads them: on the route, else globally (some under regex:, some at the root).
+        private static readonly (string Route, string Global)[] _markerPatternKeys =
+        [
+            ("json_variables_pattern", "regex:json_variables_pattern"),
+            ("headers_variables_pattern", "regex:headers_variables_pattern"),
+            ("auth_variables_pattern", "regex:auth_variables_pattern"),
+            ("settings_variables_pattern", "regex:settings_variables_pattern"),
+            ("form_data_variables_pattern", "form_data_variables_pattern"),
+            ("query_string_variables_pattern", "query_string_variables_pattern"),
+            ("route_variables_pattern", "route_variables_pattern"),
+        ];
+
+        // The marker patterns configured for the route and globally, one slot per setting (empty
+        // where unset), so two reads of the same configuration give equal arrays.
+        private static string[] MarkerPatterns(IConfigurationSection serviceSection, IConfiguration? root)
+        {
+            var patterns = new string[_markerPatternKeys.Length * 2];
+            for (var i = 0; i < _markerPatternKeys.Length; i++)
+            {
+                // Through GetSection, as ParametersBuilder reads them (see QueryTexts).
+                patterns[2 * i] = serviceSection.GetSection(_markerPatternKeys[i].Route).Value ?? string.Empty;
+                patterns[2 * i + 1] = root?.GetSection(_markerPatternKeys[i].Global).Value ?? string.Empty;
+            }
+            return patterns;
+        }
+
+        // The names the route's queries use in markers, found with the default marker patterns
+        // and any delimiters set on the route or globally, so ||sort by|| counts too. A name that
+        // only appears elsewhere in the SQL, in a comment say, doesn't.
+        private static HashSet<string> MarkerNames(string[] texts, string[] patterns)
+        {
+            var all = new HashSet<string>(_defaultMarkerPatterns, StringComparer.Ordinal);
+            foreach (var pattern in patterns)
+                if (pattern.Length > 0)
+                    all.Add(pattern);
+
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pattern in all)
+            {
+                try
+                {
+                    foreach (var text in texts)
+                        foreach (Match match in Regex.Matches(text, pattern))
+                            if (match.Groups.TryGetValue("param", out var param) && param.Success)
+                                names.Add(param.Value);
+                }
+                catch (ArgumentException)
+                {
+                    // Not a valid pattern: the engine can't use it as a marker either.
+                }
+            }
+            return names;
+        }
+
+        // The answers of GetInvalidators, per route and list, each kept with the inputs it was
+        // worked out from: the route's query texts and marker patterns. A lookup reads those inputs
+        // again, the way the request reads them (through GetSection), and uses the answer only if
+        // they are unchanged. So the answer always matches the SQL the request runs, whatever order
+        // a reload's callbacks run in. A cached GET pays a few reads instead of running the marker
+        // patterns over the SQL.
+        private sealed record InvalidatorsAnswer(string[] Texts, string[] Patterns, string[] Names);
+        private readonly ConcurrentDictionary<(string Path, string List), InvalidatorsAnswer> _invalidators = new();
+
+        private string[] Invalidators(IConfigurationSection serviceSection, string? list)
+        {
+            var names = ParametersExt.SplitNames(list);
+            if (!names.Any(HasOldSeparator))
+                return names;
+
+            var texts = QueryTexts(serviceSection);
+            var patterns = MarkerPatterns(serviceSection, _configuration);
+            var key = (serviceSection.Path, list!);
+            if (_invalidators.TryGetValue(key, out var answer)
+                && answer.Texts.AsSpan().SequenceEqual(texts)
+                && answer.Patterns.AsSpan().SequenceEqual(patterns))
+                return answer.Names;
+
+            answer = new InvalidatorsAnswer(texts, patterns, GetInvalidators(list, texts, patterns));
+            _invalidators[key] = answer;
+            return answer.Names;
+        }
+
+        private static readonly string[] _defaultMarkerPatterns = typeof(DefaultRegex)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(string))
+            .Select(f => (string)f.GetValue(null)!)
+            .Where(p => p.Contains("(?<param>", StringComparison.Ordinal))
+            .ToArray();
+
+        // The text of every query the route runs, read as QueryConfigurationParser reads it: the
+        // query's value, or else the value of each child of <query> (a chain), plus the count_query.
+        // Everything here goes through GetSection, as the rest of the request does: on the engine's
+        // configuration wrappers an indexer reads the snapshot the section was built from, while
+        // GetSection reads the current configuration, which is what the request runs.
+        private static string[] QueryTexts(IConfigurationSection serviceSection)
+        {
+            var texts = new List<string>();
+            var query = serviceSection.GetSection("query");
+            if (!string.IsNullOrEmpty(query.Value))
+                texts.Add(query.Value);
+            else
+                texts.AddRange(query.GetChildren().Select(c => c.Value).OfType<string>());
+            if (serviceSection.GetSection("count_query").Value is { } countQuery)
+                texts.Add(countQuery);
+            return texts.ToArray();
+        }
+
+        /// <summary>
         /// Returns a cache mechanism along with the cache configuration details for a specific service section.
         /// </summary>
         /// <param name="serviceSection">The configuration section for the specific service.</param>
@@ -260,9 +416,7 @@ namespace DBToRestAPI.Cache
                 return null;
 
             // Retrieve cache invalidators
-            var invalidatorsCsv = memorySection.GetValue<string?>("invalidators") ?? string.Empty;
-            var invalidators = invalidatorsCsv.Split([',', ' ', '\n', '\r', ';'],
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var invalidators = Invalidators(serviceSection, memorySection.GetValue<string?>("invalidators"));
 
             // Construct the cache key.
             // Each value is labelled with its source (the hash of that source's marker pattern):
@@ -360,10 +514,9 @@ namespace DBToRestAPI.Cache
             if (duration < 1)
                 return null;
 
-            // Retrieve cache invalidators
-            var invalidatorsCsv = memorySection.GetValue<string?>("invalidators") ?? string.Empty;
-            var invalidators = invalidatorsCsv.Split([',', ' ', '\n', '\r', ';'],
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            // Retrieve cache invalidators. A gateway route runs no query, so a name with a comma, a
+            // space or `;` is split on them, as before 1.7.8; `|` and line breaks separate names too.
+            var invalidators = Invalidators(serviceSection, memorySection.GetValue<string?>("invalidators"));
 
             // Build cache key components: method + route + query params + headers.
             // Each part is labelled with its source, `q:` for the query string and `h:` for a

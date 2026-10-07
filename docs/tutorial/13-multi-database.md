@@ -48,6 +48,7 @@ Use `<connection_string_name>` in your endpoint:
 <get_contacts>
   <route>contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query><![CDATA[SELECT * FROM contacts ORDER BY name;]]></query>
 </get_contacts>
 
@@ -55,6 +56,7 @@ Use `<connection_string_name>` in your endpoint:
 <get_analytics>
   <route>analytics/overview</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <connection_string_name>analytics</connection_string_name>
   <query><![CDATA[
     SELECT date, page_views, unique_users 
@@ -68,6 +70,7 @@ Use `<connection_string_name>` in your endpoint:
 <get_orders>
   <route>legacy/orders</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <connection_string_name>legacy</connection_string_name>
   <query><![CDATA[
     SELECT order_id, customer_name, total 
@@ -119,7 +122,7 @@ SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';
 ### Oracle
 ```sql
 -- Oracle uses the -20000 to -20999 range, from PL/SQL only (a BEGIN ... END; block or a procedure).
--- Not mapped in 1.7.7: the engine expects a negative error number, but the
+-- Not mapped in 1.7.8: the engine expects a negative error number, but the
 -- Oracle driver reports a positive one, so this arrives as the generic 400.
 BEGIN
   RAISE_APPLICATION_ERROR(-20404, 'Not found');
@@ -141,13 +144,13 @@ END;
 ### IBM DB2
 ```sql
 -- Only inside a compound statement (BEGIN ... END) or a procedure.
--- Not mapped in 1.7.7: arrives as the generic 400.
+-- Not mapped in 1.7.8: arrives as the generic 400.
 BEGIN
   SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
 END
 ```
 
-The key pattern: embed the HTTP status code (404, 409, etc.) in the error code or message, and the application extracts it. In version 1.7.7 the Oracle and DB2 forms are not mapped yet and arrive as a generic 400. See [Errors, status codes and rollback](../reference/errors.md) for the details and for what the client receives.
+The key pattern: embed the HTTP status code (404, 409, etc.) in the error code or message, and the application extracts it. In version 1.7.8 the Oracle and DB2 forms are not mapped yet and arrive as a generic 400. See [Errors, status codes and rollback](../reference/errors.md) for the details and for what the client receives.
 
 ## Practical Example: A Cross-Database Endpoint
 

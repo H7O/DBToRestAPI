@@ -99,7 +99,7 @@ endpoint from Tutorial 02:
 ```
 
 Reload `/swagger` — the endpoint now shows a human-friendly summary, a
-description, and a typed response schema instead of generic `object`.
+description, and a typed response schema instead of the generic one.
 
 ### Available Enrichment Tags
 
@@ -108,7 +108,7 @@ description, and a typed response schema instead of generic `object`.
 | `<summary>` | Short label shown in the UI | XML node name (e.g. `create_contact` → `create contact`) |
 | `<description>` | Longer explanation | Auto-generated from route |
 | `<tags>` | Comma-separated grouping | First route segment |
-| `<response_schema>` | JSON Schema for success response | Generic object/array |
+| `<response_schema>` | JSON Schema of one row, wrapped by the response shape (array, `{ success, count, data }`) | Generic object |
 
 ---
 
@@ -147,6 +147,7 @@ Leave the global `<enabled>` off (the default) and opt in per endpoint:
 <get_products>
   <route>products</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query>SELECT * FROM products;</query>
   <openapi>
     <enabled>true</enabled>
@@ -195,11 +196,12 @@ spec builder reads your existing tags automatically:
 | `<verb>GET,POST</verb>` | Separate operations per verb |
 | `<mandatory_parameters>` | Required params (query for GET, body for POST/PUT/PATCH) |
 | `<success_status_code>201</success_status_code>` | Response status code |
+| No `<response_structure>` | One object or an array of them |
 | `<response_structure>array</response_structure>` | Array response schema |
 | `<response_structure>file</response_structure>` | Binary download |
 | `<api_keys_collections>` | API key security scheme |
 | `<authorize>` | Bearer JWT security scheme |
-| `<count_query>` | Pagination envelope (`{ count, data }`) |
+| `<count_query>` | Pagination envelope (`{ success, count, data }`) |
 | `<host>` / `<cache>` | Noted in operation description |
 
 ---

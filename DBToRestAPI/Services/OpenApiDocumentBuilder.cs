@@ -1,5 +1,7 @@
 using Com.H.Threading;
+using DBToRestAPI.Controllers;
 using DBToRestAPI.Settings;
+using DBToRestAPI.Settings.Extensinos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Primitives;
 using System.Text.Json;
@@ -297,21 +299,17 @@ $$"""
             verbs.Add("patch");
         }
 
-        // Parse mandatory parameters
-        var mandatoryStr = section.GetValue<string>("mandatory_parameters");
+        // Mandatory parameters, split exactly as Step6 splits them
         var mandatoryParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(mandatoryStr))
-        {
-            foreach (var p in mandatoryStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                mandatoryParams.Add(p);
-        }
+        foreach (var p in section.GetMandatoryParameters() ?? [])
+            mandatoryParams.Add(p);
 
         // Non-path mandatory params
         var nonPathMandatory = mandatoryParams.Where(p => !pathParams.Contains(p)).ToList();
 
         // Response info
         var successCode = section.GetValue<string>("success_status_code") ?? "200";
-        var responseStructure = section.GetValue<string>("response_structure")?.ToLowerInvariant();
+        var responseStructure = ApiController.ResolveResponseStructure(section.GetValue<string>("response_structure"));
 
         // Security
         var apiKeysCollection = section.GetValue<string>("api_keys_collections");
@@ -640,16 +638,23 @@ $$"""
             };
         }
 
-        if (responseStructure == "single")
-            return itemSchema;
+        var arraySchema = new Dictionary<string, object>
+        {
+            ["type"] = "array",
+            ["items"] = itemSchema
+        };
 
-        // Default to array
-        if (responseStructure is "array" or null or "auto")
+        if (responseStructure == "array")
+            return arraySchema;
+
+        // The default (no tag, `auto`, or `single`, which is read as `auto`): one row answers the
+        // row itself, several rows an array of them. anyOf rather than oneOf, so an open item
+        // schema such as {} that matches both stays valid.
+        if (responseStructure == "auto")
         {
             return new Dictionary<string, object>
             {
-                ["type"] = "array",
-                ["items"] = itemSchema
+                ["anyOf"] = new object[] { itemSchema, arraySchema }
             };
         }
 

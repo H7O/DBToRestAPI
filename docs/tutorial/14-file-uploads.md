@@ -103,6 +103,7 @@ Add the upload endpoint to `sql.xml`:
 <upload_contact_documents>
   <route>contacts/{{contact_id}}/documents</route>
   <verb>POST</verb>
+  <response_structure>array</response_structure>
   <mandatory_parameters>contact_id</mandatory_parameters>
   <success_status_code>201</success_status_code>
 

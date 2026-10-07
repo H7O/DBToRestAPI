@@ -26,6 +26,7 @@ The most common pattern — users only see their own data:
 <my_contacts>
   <route>my/contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <authorize>
     <provider>azure_b2c</provider>
   </authorize>

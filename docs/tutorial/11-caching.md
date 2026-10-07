@@ -10,6 +10,7 @@ Add a `<cache>` block to any endpoint:
 <cached_contacts>
   <route>cached/contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <cache>
     <memory>
       <duration_in_milliseconds>60000</duration_in_milliseconds>
@@ -49,6 +50,7 @@ GET /contacts?name=bob      → returns Alice's results! (wrong)
 <search_contacts_cached>
   <route>contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <cache>
     <memory>
       <duration_in_milliseconds>30000</duration_in_milliseconds>

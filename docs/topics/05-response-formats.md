@@ -1,68 +1,81 @@
+---
+title: Response formats
+summary: The shape of a successful response (one object, an array, a count wrapper or a file), chosen with response_structure, plus nested JSON, status codes and empty results.
+keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, "204", "{type{json{...}}}", FOR JSON]
+applies_to: 1.7.8
+---
+
 # Response Formats
 
-This document covers controlling the structure of API responses.
+> For AI agents: read [AGENTS.md](../../AGENTS.md) first. The documentation index is [llms.txt](../../llms.txt). Error responses: [errors.md](../reference/errors.md).
 
-## Response Structure Types
+This page covers the shape of a successful response: one object or an array, pagination with a count, nested JSON, file downloads and empty results.
 
-| Value | Behavior |
-|-------|----------|
-| `auto` (default) | Single row → object; Multiple rows → array |
-| `single` | Always return first row as object |
-| `array` | Always return array (even for single row) |
-| `file` | Stream file download |
+## Choose the shape
 
-A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) is returned as the bare value: `auto` and `single` answer `2`, and `array` answers `[2]`. Alias the column (`COUNT(*) AS total`) to get an object. When that bare value is `NULL` (an unaliased `MAX(x)` over no rows), `auto` and `single` treat it as no row (`204`, or `{"<root_node>": null}` with `root_node`), and `array` answers `[null]`. Before 1.7.7, `auto` and `array` returned each such row twice (`[2,{"":2}]`, and `[null,{},{"":null}]` for `NULL`); `single` already returned the bare value.
+Leave `<response_structure>` out unless you need `array` or `file`. Without it, the shape follows the row count.
 
-`single` reads the whole first result set before answering, so an error raised after the rows still gets its status (from 1.7.7). So does a file download's query and a count query. Give such a query `TOP 1` or `LIMIT 1` when it can return many rows: every row is read.
+| What the route returns | `<response_structure>` | One row | Several rows | No row |
+|---|---|---|---|---|
+| One record: get by id, create, update, delete | Leave it out | `{"id": 1}` | `[{"id": 1}, {"id": 2}]` | Empty body (`204` with success code 200) |
+| A list: search, filter, a record's children | `array` | `[{"id": 1}]` | `[{"id": 1}, {"id": 2}]` | `[]` |
+| A file to download | `file` | The file | The first row's file | `404` |
 
-## Auto Response (Default)
+Use `array` for every list. Without it, a list that matches exactly one row answers an object instead of a one-element array, and a client that loops over the result breaks. Tests with two or more rows don't show it.
+
+A query that returns one record (`SELECT ... WHERE id = {{id}}`, or an `INSERT` that returns the new row) answers an object without any tag. Don't add one to make that explicit.
+
+A route with a `count_query` always answers `{"success": true, "count": N, "data": [...]}` and ignores the tag ([below](#pagination-with-count-query)).
+
+Don't write `single` or `auto`. From 1.7.8 both are read as the tag left out, and the start-up log names every route that still has one. Before 1.7.8, `single` answered the first row of any result, so a `single` route whose query returns several rows now answers all of them as an array, streamed like any other result (and with `<cache>`, cached whole). Limit such a query to one row (`TOP 1`, `LIMIT 1`), then remove the tag.
+
+Any other value makes every request to the route answer `500`, unless the route has a `count_query`, and is logged at start-up. An empty `<response_structure></response_structure>` counts as no tag (from 1.7.8; before, it answered `500`). A `<response_structure>` placed directly under `<settings>`, which earlier versions applied to every route without its own tag, is not read from 1.7.8, and the start-up log reports it: set the tag on each route that needs `array` or `file`.
+
+### A column with no name
+
+A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) is returned as the bare value: `2`, or `[2]` with `array`. Alias the column (`COUNT(*) AS total`) to get an object. When that bare value is `NULL` (an unaliased `MAX(x)` over no rows), it counts as no row (`204`, or `{"<root_node>": null}` with `root_node`), and `array` answers `[null]`. Before 1.7.7 each such row came back twice (`[2,{"":2}]`, and `[null,{},{"":null}]` for `NULL`), except with `single`.
+
+### An error raised after the rows
+
+Raise errors before the first statement that returns rows ([errors.md](../reference/errors.md)). From 1.7.7, an error raised after them still gets its status when the result has zero rows or one. A file download's query and a count query take their first row by reading two (from 1.7.8). When such a query returns one row, it is read to its end, so an error after the row gets its status. When it returns more, the engine stops at the second row, and an error after the rows is lost. In 1.7.7 these queries were read to their end however many rows they returned.
+
+## One Record: No Tag
 
 ```xml
-<get_items>
-  <!-- No response_structure = auto -->
-  <query><![CDATA[SELECT * FROM items;]]></query>
-</get_items>
+<get_item>
+  <route>items/{{id}}</route>
+  <verb>GET</verb>
+  <!-- No response_structure: one row answers an object -->
+  <query><![CDATA[SELECT id, name FROM items WHERE id = {{id}};]]></query>
+</get_item>
 ```
 
-**Single row result:**
+**One row:**
 ```json
 {"id": 1, "name": "Item"}
 ```
 
-**Multiple row result:**
-```json
-[
-  {"id": 1, "name": "Item 1"},
-  {"id": 2, "name": "Item 2"}
-]
-```
+**No row:** `204 No Content` with an empty body. Several rows would come back as an array.
 
-## Array Response
+## A List: `array`
 
-Force array even for single row:
+Always an array, even for one row or none:
 
 ```xml
 <list_items>
+  <route>items</route>
+  <verb>GET</verb>
   <response_structure>array</response_structure>
-  <query><![CDATA[SELECT * FROM items;]]></query>
+  <query><![CDATA[SELECT id, name FROM items ORDER BY name;]]></query>
 </list_items>
 ```
 
-**Single row result:**
+**One row:**
 ```json
 [{"id": 1, "name": "Item"}]
 ```
 
-## Single Response
-
-Always return first row only:
-
-```xml
-<get_item>
-  <response_structure>single</response_structure>
-  <query><![CDATA[SELECT TOP 1 * FROM items;]]></query>
-</get_item>
-```
+**No row:** `[]`.
 
 ## Pagination with Count Query
 
@@ -196,10 +209,10 @@ Return one of these from your query:
 
 | Scenario | Response |
 |----------|----------|
-| `single` or `auto`, no row, success code 200 | `204 No Content` with an empty body |
-| `single` or `auto`, no row, any other success code | That status with an empty body |
-| `single` or `auto`, no row, with `root_node` | `{"<root_node>": null}` with the success code |
-| `single` or `auto`, no row, `<cache>` on the route | Body `null` with the success code |
+| No tag, no row, success code 200 | `204 No Content` with an empty body |
+| No tag, no row, any other success code | That status with an empty body |
+| No tag, no row, with `root_node` | `{"<root_node>": null}` with the success code |
+| No tag, no row, a GET to a route with `<cache>` | Body `null` with the success code |
 | `array`, no rows | `[]`, or `{"<root_node>": []}` with `root_node` |
 | With `count_query`, no rows | `{"success": true, "count": 0, "data": []}` |
 

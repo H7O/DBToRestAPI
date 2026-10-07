@@ -164,7 +164,7 @@ On first run, unencrypted values become `encrypted:CfDJ8NhY2kB...`
 | `<connection_string_name>` | No | `default` | Which connection string to use |
 | `<query>` | **Yes** | — | SQL in `<![CDATA[...]]>` |
 | `<count_query>` | No | None | Count query for pagination |
-| `<response_structure>` | No | `auto` | `single`, `array`, `auto`, or `file` |
+| `<response_structure>` | No | Shape follows the row count | `array` (always a list) or `file` (a download). Leave it out for one record. See [Response formats](05-response-formats.md) |
 | `<api_keys_collections>` | No | None | Required API key collections |
 | `<authorize>` | No | None | JWT/OIDC configuration. `<provider>` accepts one name, a comma-separated list, or `*` (see [Authentication](12-authentication.md#multiple-providers-per-endpoint)) |
 | `<cors>` | No | Global | Endpoint-specific CORS |

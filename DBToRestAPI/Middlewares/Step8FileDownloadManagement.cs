@@ -1,4 +1,5 @@
 ﻿using Com.H.Data.Common;
+using DBToRestAPI.Controllers;
 using DBToRestAPI.Services;
 using DBToRestAPI.Settings;
 using DBToRestAPI.Settings.Extensinos;
@@ -88,11 +89,14 @@ namespace DBToRestAPI.Middlewares
             #endregion
 
             #region check if `response_structure` is set to `file`
-            var responseStructure = section.GetValue<string>("response_structure");
-            if (string.IsNullOrWhiteSpace(responseStructure))
-                responseStructure = defaultFileStoresSettings.GetValue<string>("file_management:response_type");
+            // Resolved as the controller resolves it. The older file_management response_type
+            // fallback is kept as it was.
+            var routeStructure = section.GetValue<string>("response_structure");
+            if (string.IsNullOrWhiteSpace(routeStructure))
+                routeStructure = defaultFileStoresSettings.GetValue<string>("file_management:response_type");
+            var responseStructure = ApiController.ResolveResponseStructure(routeStructure);
 
-            if (!StringComparer.OrdinalIgnoreCase.Equals(responseStructure, "file"))
+            if (responseStructure != "file")
             {
                 // Not a file download request, proceed to next middleware
                 await this._next(context);

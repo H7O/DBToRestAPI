@@ -142,6 +142,28 @@ public class OpenApiDocumentBuilderTests
         Assert.True(schema.GetProperty("properties").TryGetProperty("email", out _));
     }
 
+    [Theory]
+    [InlineData("first name, e-mail")]
+    [InlineData("first name|e-mail")]
+    public void MandatoryParameters_SplitAsTheEngineSplitsThem(string list)
+    {
+        // A name keeps its spaces, and `|` separates names when the list contains one.
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:people:route"] = "people",
+            ["queries:people:verb"] = "GET",
+            ["queries:people:mandatory_parameters"] = list,
+            ["queries:people:query"] = "SELECT 1"
+        });
+
+        var parameters = ParseDoc(builder).GetProperty("paths").GetProperty("/people")
+            .GetProperty("get").GetProperty("parameters");
+        var names = parameters.EnumerateArray().Select(p => p.GetProperty("name").GetString()).ToList();
+
+        Assert.Equal(new[] { "e-mail", "first name" }, names.Order());
+    }
+
     [Fact]
     public void SuccessStatusCode_Mapped()
     {
@@ -184,15 +206,19 @@ public class OpenApiDocumentBuilderTests
         Assert.Equal("array", schema.GetProperty("type").GetString());
     }
 
-    [Fact]
-    public void ResponseStructure_Single()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("auto")]
+    [InlineData("single")] // read as the default from 1.7.8
+    public void ResponseStructure_Default_IsAnObjectOrAnArray(string? responseStructure)
     {
+        // With no tag, one row answers the row itself and several rows an array of them.
         var builder = CreateBuilder(new Dictionary<string, string?>
         {
             ["openapi:enabled"] = "true",
             ["queries:detail:route"] = "items/{{id}}",
             ["queries:detail:verb"] = "GET",
-            ["queries:detail:response_structure"] = "single",
+            ["queries:detail:response_structure"] = responseStructure,
             ["queries:detail:query"] = "SELECT * FROM items WHERE id={{id}}"
         });
 
@@ -205,7 +231,36 @@ public class OpenApiDocumentBuilderTests
             .GetProperty("content")
             .GetProperty("application/json")
             .GetProperty("schema");
-        Assert.Equal("object", schema.GetProperty("type").GetString());
+        var anyOf = schema.GetProperty("anyOf");
+        Assert.Equal(2, anyOf.GetArrayLength());
+        Assert.Equal("object", anyOf[0].GetProperty("type").GetString());
+        Assert.Equal("array", anyOf[1].GetProperty("type").GetString());
+        Assert.Equal("object", anyOf[1].GetProperty("items").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void ResponseStructure_GlobalValue_IsNotRead()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["response_structure"] = "array",
+            ["queries:list:route"] = "items",
+            ["queries:list:verb"] = "GET",
+            ["queries:list:query"] = "SELECT * FROM items"
+        });
+
+        var doc = ParseDoc(builder);
+        var schema = doc.GetProperty("paths")
+            .GetProperty("/items")
+            .GetProperty("get")
+            .GetProperty("responses")
+            .GetProperty("200")
+            .GetProperty("content")
+            .GetProperty("application/json")
+            .GetProperty("schema");
+        // From 1.7.8 a global response_structure is ignored: the route keeps the row-count shape.
+        Assert.True(schema.TryGetProperty("anyOf", out _));
     }
 
     [Fact]
@@ -307,7 +362,6 @@ public class OpenApiDocumentBuilderTests
             ["openapi:enabled"] = "true",
             ["queries:msg:route"] = "message",
             ["queries:msg:verb"] = "GET",
-            ["queries:msg:response_structure"] = "single",
             ["queries:msg:openapi:response_schema"] = schema,
             ["queries:msg:query"] = "SELECT 'hi' AS message"
         });
@@ -321,8 +375,10 @@ public class OpenApiDocumentBuilderTests
             .GetProperty("content")
             .GetProperty("application/json")
             .GetProperty("schema");
-        Assert.True(respSchema.TryGetProperty("properties", out var props));
-        Assert.True(props.TryGetProperty("message", out _));
+        // With no response_structure, the given schema describes one row, or each row of an array.
+        var anyOf = respSchema.GetProperty("anyOf");
+        Assert.True(anyOf[0].GetProperty("properties").TryGetProperty("message", out _));
+        Assert.True(anyOf[1].GetProperty("items").GetProperty("properties").TryGetProperty("message", out _));
     }
 
     [Fact]

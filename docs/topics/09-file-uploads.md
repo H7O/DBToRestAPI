@@ -2,7 +2,7 @@
 title: File uploads
 summary: Accept files with ordinary form fields in one request, store them in local or SFTP stores, and record them in SQL; failed requests delete their files automatically.
 keywords: [file_management, files_json_field_or_form_field_name, stores, local_file_store, sftp_file_store, base_path, filename_field_in_payload, base64_content_field_in_payload, relative_file_path_structure, permitted_file_extensions, max_file_size_in_bytes, max_number_of_files, overwrite_existing_files, accept_caller_defined_file_ids, pass_files_content_to_query, max_payload_size_in_bytes, is_new_upload, relative_path, multipart/form-data, base64, OPENJSON, rollback, 409, 413]
-applies_to: 1.7.7
+applies_to: 1.7.8
 ---
 
 # File uploads
@@ -86,7 +86,6 @@ CREATE TABLE support_request_files (
   <verb>POST</verb>
   <mandatory_parameters>full_name,email,category,message,attachments</mandatory_parameters>
   <success_status_code>201</success_status_code>
-  <response_structure>single</response_structure>
 
   <file_management>
     <files_json_field_or_form_field_name>attachments</files_json_field_or_form_field_name>
@@ -471,7 +470,7 @@ IF NOT EXISTS (
 - Don't spread `relative_file_path_structure` over several lines.
 - Don't echo `backend_temp_file_path` to clients: it is a server path.
 
-## Known issues in 1.7.7
+## Known issues in 1.7.8
 
 Tracked in [TODO.md](../../TODO.md):
 

@@ -66,10 +66,10 @@ namespace DBToRestAPI.Controllers
         private readonly SettingsService _settings = settingsService;
 
         private static readonly string _errorCode = "API Controller Error";
-        private static readonly HashSet<string> _responseStructures = new HashSet<string>
+        // The values ResolveResponseStructure can return for a valid route. `single` is read as `auto`.
+        internal static readonly HashSet<string> ResponseStructures = new(StringComparer.OrdinalIgnoreCase)
         {
             "array",
-            "single",
             "auto",
             "file"
         };
@@ -909,10 +909,9 @@ namespace DBToRestAPI.Controllers
 
             if (string.IsNullOrWhiteSpace(countQuery))
             {
-                var responseStructure = serviceQuerySection.GetValue<string>("response_structure")?.ToLower() ??
-                    _configuration.GetValue<string>("response_structure")?.ToLower() ?? "auto";
+                var responseStructure = ResolveResponseStructure(serviceQuerySection.GetValue<string>("response_structure"));
 
-                if (!_responseStructures.Contains(responseStructure, StringComparer.OrdinalIgnoreCase))
+                if (!ResponseStructures.Contains(responseStructure))
                 {
                     return StatusCode(500, new
                     {
@@ -972,19 +971,6 @@ namespace DBToRestAPI.Controllers
                     return StatusCode(customSuccessStatusCode, chamberedArray);
                 }
 
-                if (responseStructure == "single")
-                {
-                    var singleResult = await FirstRowReadingToEndAsync(resultWithNoCount, HttpContext.RequestAborted);
-                    await resultWithNoCount.CloseReaderAsync();
-                    if (!string.IsNullOrWhiteSpace(rootNodeName))
-                    {
-                        var wrappedResult = new ExpandoObject();
-                        wrappedResult.TryAdd(rootNodeName, (object?)singleResult);
-                        return StatusCode(customSuccessStatusCode, wrappedResult);
-                    }
-                    return StatusCode(customSuccessStatusCode, singleResult);
-                }
-
                 if (responseStructure == "file")
                 {
                     return await ReturnFile(resultWithNoCount);
@@ -1041,7 +1027,7 @@ namespace DBToRestAPI.Controllers
                 HttpContext.Response.RegisterForDisposeAsync(resultCount);
             }
 
-            var rowCount = await FirstRowReadingToEndAsync(resultCount, HttpContext.RequestAborted);
+            var rowCount = await FirstRowAsync(resultCount, HttpContext.RequestAborted);
             HttpContext.RequestAborted.ThrowIfCancellationRequested();
 
             if (rowCount == null)
@@ -1100,34 +1086,49 @@ namespace DBToRestAPI.Controllers
         }
 
         /// <summary>
-        /// The first row of a result, read to the result's end.
+        /// The response structure a route uses: its own <c>response_structure</c> in lower case, or
+        /// <c>auto</c> (the row-count shape) when it has none. A blank value counts as none.
         /// </summary>
         /// <remarks>
-        /// Taking the first row and closing the reader left the rest of the batch unread, and
-        /// closing discards an error raised there: SQL Server's THROW after a SELECT, or a later
-        /// statement that fails. Reading to the end lets Com.H.Data.Common (10.1.0.10 and later)
-        /// move through the remaining result sets and throw that error here, inside the
-        /// controller's catch, so it gets its status and uploads are rolled back. Any further
-        /// rows are read through the library's enumerator, which builds each one only for it to
-        /// be dropped, so a result of many rows costs time: closing the reader skipped them (SQL
-        /// Server drains them without building objects, SQLite doesn't read them at all). The docs
-        /// ask for TOP 1 / LIMIT 1, and TODO.md tracks a library API that would skip them.
+        /// The documented values are <c>array</c> and <c>file</c>, and leaving the tag out gives the
+        /// row-count shape. From 1.7.8 <c>single</c> and <c>auto</c> are read as that shape, and
+        /// ResponseStructureWarning asks the author to drop them. <c>single</c> returned the first
+        /// row of any result, and it was mostly set on queries that return one row anyway. Reading
+        /// only the first row loses an error raised after the rows, and reading to the end to find
+        /// it cost every <c>single</c> route its whole result, so the engine follows the row count
+        /// instead; a <c>single</c> query that does return many rows now answers (and, with
+        /// <c>cache</c>, caches) all of them. A global <c>response_structure</c> under
+        /// <c>settings</c>, which earlier versions applied to every route without its own tag, is
+        /// not read from 1.7.8 (the warning reports one that is still set).
         /// </remarks>
-        internal static async Task<dynamic?> FirstRowReadingToEndAsync(DbAsyncQueryResult<dynamic>? result, CancellationToken cancellationToken)
+        internal static string ResolveResponseStructure(string? routeValue)
+        {
+            var value = string.IsNullOrWhiteSpace(routeValue) ? "auto" : routeValue.ToLowerInvariant();
+            return value == "single" ? "auto" : value;
+        }
+
+        /// <summary>
+        /// The first row of a result, reading at most two rows.
+        /// </summary>
+        /// <remarks>
+        /// A result of zero rows or one is read to its end: asking for a second row makes
+        /// Com.H.Data.Common (10.1.0.10 and later) move through the rest of the batch, so an error
+        /// raised after the row (SQL Server's THROW after a SELECT, or a later statement that
+        /// fails) is thrown here, inside the controller's catch, where it gets its status and
+        /// uploads are rolled back. A result of more rows comes from a query that should return
+        /// one: the caller closes the reader, which skips the other rows and loses an error after
+        /// them. Reading them all to find that error would cost a query that returns millions of
+        /// rows by mistake its whole result.
+        /// </remarks>
+        internal static async Task<dynamic?> FirstRowAsync(DbAsyncQueryResult<dynamic>? result, CancellationToken cancellationToken)
         {
             if (result == null)
                 return null;
 
-            dynamic? first = null;
-            var seen = false;
-            await foreach (var row in result.AsAsyncEnumerable().WithCancellation(cancellationToken))
-            {
-                if (seen)
-                    continue;
-                first = row;
-                seen = true;
-            }
-            return first;
+            var chambered = await result.ToChamberedEnumerableAsync(2, cancellationToken);
+            await foreach (var row in chambered)
+                return row;
+            return null;
         }
 
         private async Task<IActionResult> ReturnFile(
@@ -1136,7 +1137,7 @@ namespace DBToRestAPI.Controllers
             #region getting the file details from the result set
             // if response structure is file, then return the first record and get the file details from it
 
-            var singleResult = await FirstRowReadingToEndAsync(resultWithNoCount, HttpContext.RequestAborted);
+            var singleResult = await FirstRowAsync(resultWithNoCount, HttpContext.RequestAborted);
 
             // close the reader
             if (resultWithNoCount != null)

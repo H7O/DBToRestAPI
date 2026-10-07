@@ -73,7 +73,6 @@ Here's every tag you can use inside an endpoint definition:
       <count_query><![CDATA[ SELECT COUNT(*) FROM table; ]]></count_query>
 
       <!-- Response -->
-      <response_structure>auto</response_structure>
       <success_status_code>200</success_status_code>
 
       <!-- Security -->
@@ -113,8 +112,8 @@ Here's every tag you can use inside an endpoint definition:
 | `<mandatory_parameters>` | No | None | Comma-separated params. Missing → HTTP 400. |
 | `<connection_string_name>` | No | `default` | Which connection string from settings.xml. |
 | `<query>` | **Yes** | — | SQL wrapped in `<![CDATA[...]]>`. |
-| `<count_query>` | No | None | Pagination count query. Wraps response in `{ count, data }`. |
-| `<response_structure>` | No | `auto` | `auto`, `single`, `array`, or `file`. |
+| `<count_query>` | No | None | Pagination count query. Wraps response in `{ success, count, data }`. |
+| `<response_structure>` | No | Follows the row count | `array` (always a list) or `file` (a download). Leave it out for one record. |
 | `<success_status_code>` | No | `200` | HTTP status for successful responses. |
 | `<api_keys_collections>` | No | None | Comma-separated API key collection names from api_keys.xml. |
 | `<authorize>` | No | None | JWT/OIDC auth configuration. |
@@ -150,6 +149,7 @@ Use the `<connection_string_name>` tag in your endpoint to select a specific con
 
 ```xml
 <analytics_report>
+  <response_structure>array</response_structure>
   <connection_string_name>analytics</connection_string_name>
   <query><![CDATA[ SELECT * FROM daily_report; ]]></query>
 </analytics_report>
