@@ -2,7 +2,6 @@
 title: File downloads
 summary: Serve a file from a local or SFTP store, from base64 in the database, or proxied from a URL; the query returns one row naming the file and decides who may get it.
 keywords: [response_structure, file, file_management, store, relative_path, file_name, mime_type, base64_content, http, Content-Disposition, attachment, filename*, local_file_store, sftp_file_store, base_path, FileStorePath, 404, "{fs{store}}", "{fs{base_path}}"]
-applies_to: 1.7.8
 ---
 
 # File downloads
@@ -17,8 +16,8 @@ A download endpoint runs a query that returns one row describing a file, and the
 2. **Return exact column names:** `relative_path`, `file_name`, `mime_type`, `base64_content`, `http`. Names are case-sensitive. A `content_type` column is ignored. On Oracle and DB2, quote the aliases (`AS "relative_path"`): unquoted aliases come back in upper case and don't match.
 3. **Take `relative_path` from your table, never from the request.** Look the file up by its id, scoped to the caller.
 4. **Enforce ownership in the query.** Join to the owner and use `{auth{user_id}}` (or an API key collection). For a file that doesn't exist or isn't the caller's, return no row: that is a `404` on every database. Raising `50404` works too on SQL Server, MySQL and PostgreSQL, but not on Oracle, DB2, ODBC or SQLite outside a trigger ([errors.md](../reference/errors.md#raising-an-error-from-sql)).
-5. **Don't add `<cache>` to a download route.** In 1.7.8 a cached file route never delivers the file.
-6. **Return one row.** The engine uses the first row. When the query returns only that row, the result is read to its end, so an error raised after the row still gets its status (from 1.7.7). When it returns more, the engine stops at the second row (from 1.7.8; 1.7.7 read every row), and an error raised after the rows is lost. Use `TOP 1` or `LIMIT 1` when the query could match several.
+5. **Don't add `<cache>` to a download route.** A cached file route never delivers the file (a known issue).
+6. **Return one row.** The engine uses the first row. When the query returns only that row, the result is read to its end, so an error raised after the row still gets its status. When it returns more, the engine stops at the second row, and an error raised after the rows is lost. Use `TOP 1` or `LIMIT 1` when the query could match several.
 
 ## Complete example: owner-only download
 
@@ -112,7 +111,8 @@ No store is needed. The engine fetches the URL and streams it to the caller.
 SELECT 'report.pdf' AS file_name, url AS http FROM reports WHERE id = {{id}};
 ```
 
-- The remote status is passed through: a remote `404` is a `404`, and its JSON message includes the full URL. So never put credentials or signed tokens in the URL.
+- The remote status is passed through: a remote `404` is a `404`. The caller's message never includes the URL. The log shows it without its query string or user info, so a token in the query string stays private, but a token in the path is logged. A value that isn't an http or https URL is logged as `(not a network URL)`.
+- Each fetch sends no cookies, not even to the next hop of a redirect it follows. So a remote that sets a cookie on a redirect and needs it on the next hop answers that hop with an error, usually `401` or `403`: return the final URL instead.
 - The remote Content-Type is used, or `application/octet-stream` when the remote sends none. `mime_type` is ignored. Return `file_name`, or the download is named `downloaded_file`.
 - An empty or malformed URL is a `404`. A non-http scheme, or a host that can't be reached, is the generic `400`.
 - Never build the URL from caller input. There is no host allow-list, so a caller-chosen URL makes the server fetch anything it can reach.
@@ -133,8 +133,8 @@ SELECT 'report.pdf' AS file_name, url AS http FROM reports WHERE id = {{id}};
 | `404` | `relative_path` outside the store, file missing or not readable by the app's account, local store without `base_path` | ``File not found at relative path `...` for route `...` `` |
 | `404` | No `<store>` on the route, an unknown store name, or no source column | ``No valid file content source found to download for route `...` `` |
 | `404` | SFTP store without `host` or `username` | `SFTP host not defined ...` / `SFTP username not defined ...` |
-| `404` | `http` is empty or not a well-formed absolute URL | ``Invalid HTTP URL `...` `` |
-| remote status | The `http` source returned an error | ``Failed to download file from `...` `` |
+| `404` | `http` is empty or not a well-formed absolute URL | ``Invalid HTTP URL for route `...` `` |
+| remote status | The `http` source returned an error | ``Failed to download file for route `...` `` |
 | `400`-`599` | The query raised `50400`-`50599` (for example `THROW 50404`) | Your message, plus `error_number` (the HTTP status) |
 | `400` | Any other failure: a database error, an SFTP connection or login failure, a file locked by another process, an unreachable `http` host, invalid `base64_content`, an invalid `mime_type` | The generic message (a `500` with details when the request sends the matching `debug-mode` header) |
 
@@ -155,14 +155,13 @@ WHERE f.id = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}}) AND r.owner_id = {auth{user_i
 - Don't name the type column `content_type`. It is `mime_type`.
 - Don't add a `count_query` to a download route: the route then returns JSON instead of the file.
 
-## Known issues in 1.7.8
+## Known issues
 
 Tracked in [TODO.md](../../TODO.md):
 
 - `<cache>` on a file route breaks the download.
 - A missing or unknown `<store>` is a `404` at request time, not a start-up warning.
-- The `http` source has no host allow-list, and its error messages echo the URL.
-- An error raised after the rows of a query that returns several rows is lost: only two rows are read.
+- The `http` source has no host allow-list.
 
 ## Related
 

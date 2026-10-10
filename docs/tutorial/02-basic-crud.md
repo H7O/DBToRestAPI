@@ -80,7 +80,7 @@ The error response looks like:
 
 This saves a round-trip to the database for obviously invalid requests.
 
-> **Note**: Separate the names with commas (`name,phone` or `name, phone`). A name may itself contain spaces (`first name`), from 1.7.8. The names are matched case-sensitively here. See [Names With Spaces and Other Characters](../topics/04-parameters.md#names-with-spaces-and-other-characters).
+> **Note**: Separate the names with commas (`name,phone` or `name, phone`). A name may itself contain spaces (`first name`). The names are matched case-sensitively here. See [Names With Spaces and Other Characters](../topics/04-parameters.md#names-with-spaces-and-other-characters).
 
 ### Custom Status Codes with `<success_status_code>`
 

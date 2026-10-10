@@ -60,7 +60,9 @@ Query 2 receives:
 - `{pq{name}}` = "John"
 - `{pq{email}}` = "j@x.com"
 
-A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) gives no column values. Read it as `{pq{json}}`, which holds `[2]`, or alias the column. (Before 1.7.7 such a row came back twice, so `{pq{json}}` held `[2,{"":2}]`, and `[null,{},{"":null}]` for `NULL`.)
+Only a query that returns exactly one row passes its columns. A query that returns zero rows or several passes only its JSON variable (`{pq{json}}`, or the name the next query sets in `json_var`; `[]` for zero rows), and the columns of earlier queries stay as they were.
+
+A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) gives no column values. Read it as `{pq{json}}`, which holds `[2]`, or alias the column.
 
 ### Multiple Rows → JSON Array
 
@@ -284,7 +286,7 @@ Caching applies to entire chain result:
 1. **Single row results** are easier to work with — columns become `{pq{column}}` values
 2. **Use custom `json_var`** on the receiving query when chaining many queries
 3. **Validate early** — check permissions in first query
-4. **Handle empty results** — `{pq{name}}` is `NULL` when the earlier query returned no row, so test `IS NULL` first
+4. **Handle empty results** — a query that returns no row passes no columns, so `{pq{name}}` holds the `name` of an older query that returned one, or `NULL` when none did. Test `IS NULL` first, and test the JSON variable (`{pq{json}}`, or the name in this query's `json_var`) against `[]` to know whether the query just before found a row
 5. **Keep chains short** — complex workflows may need restructuring
 
 ## Related Topics

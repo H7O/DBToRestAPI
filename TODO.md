@@ -65,9 +65,27 @@ against the code. Each was read in the code; none has a test yet.
 - **Only the config files listed in `DBToRestAPI.csproj` are copied to the build output.** A new
   `config/*.xml` file named in `<additional_configurations>` makes `dotnet run` fail at start-up
   until it gets its own csproj entry. Consider a `config\*.xml` glob.
-- **Download `http` source:** no host allow-list, and its error messages echo the full URL.
+- **Download `http` source:** no host allow-list.
+- **A cookie set on a redirect is dropped.** The engine's clients are pooled and keep no cookies, so
+  that callers never share them, and they follow redirects themselves. So a cookie the remote sets on
+  a `3xx` never reaches the next hop: an `http` download that needs it fails (until 1.7.8 each
+  download had a client of its own, whose cookies lived for that download only), and a gateway cookie
+  login that answers `302` with the session cookie can't work. `{http{}}` calls can turn off `follow_redirects` and make the
+  second call. Fixes: follow redirects in the engine with a cookie jar per request; for the gateway,
+  pass the `3xx` through, which needs its `Location` rewritten to the gateway route, or the caller
+  would follow it straight to the target.
 - **CORS:** the engine sends no `Access-Control-Expose-Headers`, so cross-origin pages can't read
   `Content-Disposition` on downloads.
+- **A URL-shaped `Origin` the server can't send back is a 500 on every request.** When the CORS
+  pattern matches the host of an `Origin` such as `http://localhost/café`, the engine echoes the
+  header as sent in `Access-Control-Allow-Origin`, and Kestrel refuses the non-ASCII value: an
+  unhandled exception, an Error entry, a 500. Echo only the serialized origin (scheme, host, port).
+- **An upload's file name can reach the log with U+2028 or U+2029.** The upload rejection line
+  (Debug) and Step7's path lines replace control characters only. Use `LogText.Escape`.
+- **Database error messages are logged as the driver wrote them.** The controller's catch-all and
+  Step6 log the exception at Error, and some drivers repeat a caller's value in the message (SQLite's
+  bad JSON path, a SQL Server conversion error), so a caller can put control characters into the log.
+  Escape the message, or log the exception type and number only.
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
 - **A caller waiting on another caller's cache fill gets a 400 when that caller disconnects.**
@@ -88,21 +106,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   size before writing it, and stream only beyond that. Found by review on 2026-10-07.
 - **OpenAPI doesn't show a `root_node` wrapper,** and documents a file route that also has a
   `count_query` as a download, though it answers the count wrapper. Found by review on 2026-10-07.
-- **Generated SQL parameter names can clash or hold unsafe characters** (Com.H.Data.Common).
-  The library builds `@vxv_N_<name>` by replacing a fixed list of punctuation. So `{{first name}}`
-  and `{{first-name}}` both become `@vxv_N_first_name`; `{{Email}}` and `{{email}}` differ only in
-  case, which SQL Server rejects; and `{{email}}` with `{j{email}}` adds the same name twice. The
-  database refuses the query. Characters outside the list (`@`, non-ASCII letters and symbols)
-  stay in the name: SQLite rejects `@`, SQL Server `€`, `°` and typographic quotes. Fix in the
-  library: replace every character that isn't an ASCII letter, digit or `_`, de-duplicate markers
-  ignoring case, and make each generated name unique (a suffix on a clash only). Found by review
-  on 2026-10-07.
-- **A file or count query that returns several rows loses an error raised after them.** From
-  1.7.8 the engine takes their first row by reading two, and closing the reader then discards the
-  rest of the batch, the error included. A Com.H.Data.Common API that moves through the remaining
-  result sets without building rows (NextResult skips them, and SQLite doesn't even step them)
-  would surface it cheaply on SQLite; on SQL Server the skipped rows still cross the network.
-  Found by review on 2026-10-07.
 - **Cache invalidators are read from every parameter source** (CacheService.cs), so one named like
   a `<vars>` key or a JWT claim takes that value. Also consider a start-up warning for a cached
   route whose answer looks caller-specific (it uses `{auth{...}}` without naming the caller in
@@ -118,7 +121,9 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   - unknown tags (for example `<cache_duration_seconds>`) are ignored.
 - **Regex override keys are read inconsistently.** The shipped `regex.xml` sets
   `regex:query_string_variables_pattern`, `regex:route_variables_pattern` and
-  `regex:form_variables_pattern`, which the code never reads.
+  `regex:form_variables_pattern`, which the code never reads. Its comments and tutorials 06 and 07
+  also say a `<query>` attribute (`variables_pattern` and the like) overrides a pattern; the code reads
+  only the endpoint's own elements, then the `regex:` keys.
 - **`PATCH` is accepted by routing, CORS and OpenAPI, but `ApiController` has no `[HttpPatch]`**,
   so a PATCH probably ends in 405. Not run-tested.
 - **A body with another content type** (`text/plain`, `application/*+json`) gives `NULL` for every
@@ -133,6 +138,17 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   - tutorials 02, 05, 07, 08 and 09, which show error bodies as `{"error": ...}`;
   - 03-crud's `204` example with `OUTPUT`, which can't write a body;
   - tutorial 23's broken links;
+  - `MULTI_QUERY_CHAINING.md` (a root design note that README and tutorial 23 link as a deep dive),
+    which reads earlier queries' columns with `{{column}}` instead of `{pq{column}}`;
+  - tutorial 19, which puts a caller's value inside an `{http{}}` `"url"` string (AGENTS rule 11) and
+    says a `{s{}}` value in a block is "injected as a parameterized SQL variable";
+  - tutorial 17's contact-permissions example, whose `FOR JSON` column needs
+    `AS {type{json{permissions}}}` to come back as the nested array the page shows;
+  - topic 08 and tutorial 12: an empty route `<excluded_headers>` counts as not set, so the global
+    list applies;
+  - topic 17's and tutorial 19's form-encoded bodies built from raw caller values (`&` and `=` in a
+    value are structural there, as in a url): use `body_raw` with a content type, and encode or check
+    the values in an earlier chained query;
   - 11-cors, whose defaults change when an `<authorize>` section exists;
   - the webhook pages' status-polling endpoints, which are public and use sequential ids;
   - `RateLimitCallerIdentity.cs`'s comment about an `oid` fallback that never matches.
@@ -141,6 +157,117 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **The sample `settings.xml` set a global `db_command_timeout` of 30 seconds.** Changed in 1.7.9.
+  Because it was always set, every query got a command timeout of 30 seconds, which overrode any
+  timeout in a connection string (`Command Timeout=120` for SQL Server). It is now a commented-out
+  example, so a query without its own timeout uses its connection string's, or the provider's default.
+- **A name used both in a block's JSON comment and outside a string was not escaped in the comment.**
+  Fixed in 1.7.9. Markers in a comment, and markers that start inside another marker, were skipped
+  when the engine worked out where each name sits, so a name also used outside strings counted as
+  outside-only and got its JSON value unescaped everywhere. A caller's `*/ } //` then closed the
+  comment and the block, and the block's keys after the comment (a `skip`, say) were dropped. Such a
+  name now counts as inside a string, as topic 17 says: it is escaped everywhere and a warning is logged.
+- **A comment or a trailing comma in an `{http{}}` block made the engine ignore its `skip` and
+  `no_wait`.** Fixed in 1.7.9. The call itself was read leniently, but those two properties were read
+  strictly, so a parse failure counted as false: a call the author meant to skip went out, and a
+  `no_wait` call was waited for. Both are read like the call now.
+- **Caller text was logged as sent in four more places.** Fixed in 1.7.9. An unvalidated token's
+  issuer that matched none of a route's providers (Debug), a provider hint header that names no allowed
+  provider (Warning), a header name the gateway can't forward (Warning), and the `Origin` header the CORS
+  check reads (an `Origin` that isn't a URL was an Error entry with a stack trace on every request). The
+  server accepts a vertical tab, ESC and U+2028 in a header, so a caller could break a log line or send
+  terminal codes. All four go through `LogText.Escape` now, and a malformed `Origin` is logged at Debug.
+- **A file or count query that returns several rows loses an error raised after them.** Kept by
+  design (decided 2026-10-10). The engine takes their first row by reading two, and closing the reader
+  discards the rest of the batch, the error included. Such a query should return one row; reading a
+  wrong one to its end would spend the memory and time the 512 MB, 1 vCPU footprint can't spare.
+  AGENTS.md rule 2 and errors.md state the exception.
+- **One `<path>` under `<additional_configurations>` was never loaded.** Fixed in 1.7.9. The XML reader
+  gives a single element as a value of its own and numbers only repeated ones, and the engine read the
+  list as numbered children only. So a `settings.xml` listing one file started without it (and its
+  endpoints), and its encrypted sections weren't encrypted. Both shapes are read now, so a single
+  listed file that is missing now stops start-up, as it already did when several were listed.
+- **The TLS walkthrough ran the engine as Development.** Fixed in 1.7.9. Step 5's `dotnet run
+  --environment Production` doesn't reach the engine with the .NET 10 SDK, so the launch profile's
+  `Development` stayed in force and `appsettings.Production.json` was never read. The page now says
+  `dotnet run -- --environment Production`.
+- **The request's route was logged as decoded.** Fixed in 1.7.9. A `%0A` in the path put a line break
+  into every log line that names the route. Step1 now stores it with control characters, the Unicode
+  line separators and `%` percent-encoded (`LogText.Escape`), so it stays on one line and two paths
+  never look alike.
+- **The gateway docs and the shipped `settings.xml` named settings the engine never reads.** Fixed in
+  1.7.9. Topic 08 showed `<n>` for `<name>` in `<applied_headers>` and `<ignore_certificate_errors>`
+  for `<ignore_target_route_certificate_errors>`; tutorial 12 and `settings.xml` used
+  `<headers_to_exclude_from_routing>` and `<ignore_certificate_errors_when_routing>` for the global
+  `<excluded_headers>` and `<ignore_target_route_certificate_errors>`, and said a route's list adds to
+  the global one (it replaces it). The shipped `settings.xml` now sets the global `excluded_headers` to
+  `Host`, as it meant to. Two `<header>` elements in `<applied_headers>` also applied neither header,
+  because the configuration reader numbers repeated siblings; each is applied now.
+- **With the header and query-string patterns overridden to one string, a header beat the body.** Fixed
+  in 1.7.9 by Com.H.Data.Common 10.1.0.12. Sources with the exact same pattern string were read together
+  in the place of the last of them, so the headers moved past the body. The body, listed between them,
+  now keeps its place.
+- **A value from an earlier query could pull a setting into an `{http{}}` call.** Fixed in 1.7.9 by
+  Com.H.Data.Common 10.1.0.12. The block was filled one source at a time, and each source read the
+  values written in before it. So a `{s{name}}` or `{{name}}` marker inside a value an earlier query
+  returned (a caller's field it passed through, say) was filled too, and a caller could send a
+  `<vars>` value to the call's target. Values are now written in as they are. One name under two
+  markers of one pattern in a block (`{{id}}` and `{j{id}}`) also gets its value at both; only the
+  first one found used to be filled, and the other, depending on their order, was left as written,
+  emptied, or filled from a lower-ranked source.
+- **A skipped or `no_wait` `{http{}}` call could get another query's response.** Fixed in 1.7.9. Each
+  query of a chain, and the main query after a `count_query`, numbered its calls from 1, and every
+  query's responses were read with one marker pattern. So a skipped or `no_wait` call in a later
+  query got the response of the earlier query's call with the same number instead of `NULL`. Calls
+  are now numbered across the request.
+- **Some input names made the query fail, or bound the wrong value.** Fixed in 1.7.9 by
+  Com.H.Data.Common 10.1.0.11. The generated parameter name kept `@` and characters outside ASCII,
+  which SQLite (`@`) and SQL Server (`€`, `°`, typographic quotes) reject, and two markers could get
+  the same name: `{{first name}}` with `{{first-name}}`, `{{Email}}` with `{{email}}` on SQL Server,
+  and `{{email}}` with `{j{email}}`. SQL Server and SQLite refused such a query. PostgreSQL ran it,
+  and both placeholders got the first one's value, so rows written that way may hold the wrong one.
+  Generated names now hold only ASCII letters, digits and underscores and are unique ignoring case.
+- **A download's `http` URL reached the caller.** Fixed in 1.7.9. The `http` source's error
+  messages held the full URL, a signed query string included. The caller's message no longer names
+  it. No log line in the engine shows a URL's query string, fragment or user info any more: the
+  download lines, the `{http{}}` lines (which also wrote a key in the url string at Information on
+  every successful call, now at Debug) and the prepared-call Debug line (which held the whole filled
+  JSON, headers included, and now holds its length), and the OIDC lines naming the authority and the
+  key-set URL. A value that isn't an http or https URL is
+  logged as `(not a network URL)`: .NET reads `//host/a?k=`, `/a?k=` (Linux), Windows paths and ftp
+  URLs with `?` as an ordinary character. The executor's Debug request line names headers without
+  their values; its pattern-based redaction missed names like `Ocp-Apim-Subscription-Key`.
+- **The gateway and `{http{}}` calls shared cookies between callers.** Fixed in 1.7.9. Their pooled
+  handlers kept a cookie jar, so a `Set-Cookie` from the target while serving one caller went out with
+  the next caller's request, merged into a gateway caller's own `Cookie` header. No engine client keeps
+  cookies now. A cached gateway route also stored the target's `Set-Cookie` and replayed it to every
+  caller; a response with a `Set-Cookie` is no longer cached.
+- **The configuration sources were read out of the documented order.** Fixed in 1.7.9.
+  `appsettings.json` was added again after `settings.xml`, so it beat `settings.xml`, the environment
+  file and command-line arguments, and its `Debug` level beat `appsettings.Production.json`'s
+  `Information`. It is now the lowest layer, command-line arguments the highest, and the shipped level
+  is `Information`.
+- **A key in an encrypted section ignored environment variables and command-line arguments.** Fixed
+  in 1.7.9. The encryption service laid the values it decrypted from the XML files over every source,
+  so a `ConnectionStrings__default` environment variable lost to an encrypted `<default>`. It now
+  decrypts only encrypted text, an override written in encrypted form included.
+- **The HTTPS start-up check looked for the certificate beside the executable.** Fixed in 1.7.9.
+  Kestrel loads a relative `Kestrel:Endpoints:Https:Certificate:Path` from the working directory, so
+  `dotnet run` with the certificate in the project's `config/certs` (the TLS walkthrough) skipped
+  HTTPS, and a release started elsewhere with the certificate beside the executable failed to start.
+  The check now looks where Kestrel does, and its warning names the full path.
+- **A failed OIDC discovery or key-set fetch logged the whole URL.** Fixed in 1.7.9. IdentityModel's
+  exception message holds the address with its query string (an Azure AD B2C `?p=` policy); the
+  engine now rethrows it with the address as the URL rule logs it.
+- **Every GET threw and caught a JsonException.** Fixed in 1.7.9. A request without a Content-Type
+  counts as JSON, so its empty body was parsed. The parse is skipped when the server knows there is no
+  body.
+- **OIDC signing keys were fetched twice per discovery, through a static HttpClient, and http
+  downloads opened a new HttpClient each.** Fixed in 1.7.9: both use pooled IHttpClientFactory
+  clients, which the tests answer in process. A download's client no longer keeps the cookies a
+  redirect sets for its next hop (see Open). The key set is parsed before it is cached, so a
+  provider's maintenance page or an empty key set is fetched again on the next request instead of
+  breaking sign-in for the cache's 24 hours.
 - **A name with a space couldn't be listed in `mandatory_parameters`.** The list was split on
   spaces too, so `first name` required `first` and `name`. Fixed in 1.7.8: commas and line breaks
   separate names, or `|` and line breaks when the list contains a `|` (for names with commas). The

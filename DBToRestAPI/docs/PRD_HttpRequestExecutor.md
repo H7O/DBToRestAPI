@@ -108,8 +108,8 @@ A singleton service (`IHttpRequestExecutor`) that:
 | `retry` | object | No | `null` | Retry policy configuration |
 
 > **Two more properties exist only when a block is embedded in SQL.** `ApiController` reads `skip`
-> (truthy → the call is not made and the SQL variable is `NULL`) and `no_wait` (truthy → the call runs
-> in the background after the response is sent and the variable is `NULL`) before the JSON reaches
+> (truthy → the call is not made and the SQL variable is `NULL`) and `no_wait` (truthy → the call starts
+> in the background before the query runs, nothing waits for it, and the variable is `NULL`) before the JSON reaches
 > this service. They are documented in
 > [docs/topics/17-embedded-http-calls.md](../../docs/topics/17-embedded-http-calls.md).
 >
@@ -355,7 +355,6 @@ builder.Services.AddHttpRequestExecutor(options =>
     options.DefaultTimeoutSeconds = 60;
     options.DefaultRetryAttempts = 3;
     options.EnableRequestLogging = true;
-    options.SensitiveHeaderPatterns = ["Authorization", "X-API-Key"];
 });
 ```
 
@@ -386,11 +385,6 @@ public class HttpExecutorOptions
     /// Enable detailed request/response logging.
     /// </summary>
     public bool EnableRequestLogging { get; set; } = false;
-    
-    /// <summary>
-    /// Header name patterns to redact in logs.
-    /// </summary>
-    public string[] SensitiveHeaderPatterns { get; set; } = ["Authorization", "API-Key", "Token"];
     
     /// <summary>
     /// Maximum response body size to buffer (in bytes).
@@ -793,37 +787,27 @@ Return: success response with RetryAttempts = 2
 
 | Level | Events |
 |-------|--------|
-| `Trace` | Full request/response bodies (only when explicitly enabled) |
-| `Debug` | Request/response headers, timing details |
-| `Information` | Request initiated, response received (method, URL, status) |
-| `Warning` | Retry attempts, non-2xx responses, slow requests |
-| `Error` | Request failures, exceptions, validation errors |
+| `Debug` | Each call: the request (method, URL, header names), a response in 2xx, timing |
+| `Warning` | Retry attempts, responses outside 2xx, timeouts and cancellations |
+| `Error` | Requests that fail to connect, unexpected exceptions |
+
+Nothing is logged at `Information`, so the engine's shipped log level shows only problems.
 
 ### 8.2 Log Examples
 
 ```
-[INF] HttpExecutor: POST https://api.example.com/users -> 201 Created (156ms)
-[WRN] HttpExecutor: GET https://api.example.com/data -> 503 Service Unavailable, retrying (1/3)...
-[DBG] HttpExecutor: Request headers: { "Content-Type": "application/json", "Authorization": "[REDACTED]" }
-[ERR] HttpExecutor: Request failed: Connection refused (https://offline-api.example.com)
+[DBG] HttpExecutor: POST https://api.example.com/users - Headers: ["Content-Type","Authorization"]
+[DBG] HttpExecutor: POST https://api.example.com/users -> 201 Created (156ms)
+[WRN] HttpExecutor: GET https://api.example.com/data -> 503, retrying (1/3)...
+[ERR] HttpExecutor: Request failed for https://offline-api.example.com/ after 12ms (timeout was 30s)
 ```
 
-### 8.3 Sensitive Data Redaction
+### 8.3 Sensitive Data
 
-Headers matching `SensitiveHeaderPatterns` are redacted in logs:
-
-```csharp
-// Configuration
-options.SensitiveHeaderPatterns = ["Authorization", "API-Key", "Token", "Secret"];
-
-// Log output
-[DBG] Request headers: { 
-    "Content-Type": "application/json", 
-    "Authorization": "[REDACTED]",
-    "X-API-Key": "[REDACTED]",
-    "X-Request-Id": "abc-123"
-}
-```
+Header values are never logged, only their names, as a JSON array: a value can be a key under any
+name (`Ocp-Apim-Subscription-Key`, `apikey`, `Cookie`). A URL is logged by `LogText.Url`: an http or
+https URL without its query string, fragment or user name and password, and any other value as
+`(not a network URL)`. Its path is kept.
 
 ---
 

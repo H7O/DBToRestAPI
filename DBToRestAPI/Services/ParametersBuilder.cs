@@ -1,6 +1,7 @@
 using Com.H.Data.Common;
 using Com.H.IO;
 using DBToRestAPI.Settings;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
 using Microsoft.AspNetCore.StaticFiles;
@@ -429,6 +430,10 @@ public class ParametersBuilder
         if (!StringComparer.InvariantCultureIgnoreCase.Equals(contentType, "application/json"))
             return nullProtectionParams();
 
+        // A request without a Content-Type counts as JSON, so a GET came here with no body to parse,
+        // and threw and caught a JsonException every time. The server knows when there is none.
+        if (context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == false)
+            return nullProtectionParams();
 
         try
         {

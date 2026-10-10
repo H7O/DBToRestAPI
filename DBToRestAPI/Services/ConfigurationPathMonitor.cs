@@ -18,17 +18,7 @@ public static class ConfigurationExtensions
         this IConfigurationBuilder configurationBuilder, 
         IConfiguration configuration)
     {
-        var pathsSection = configuration.GetSection("additional_configurations:path");
-        
-        if (pathsSection is null || !pathsSection.Exists())
-            return configurationBuilder;
-
-        var additionalConfigPaths = pathsSection.Get<List<string>>();
-        
-        if (additionalConfigPaths is null || !additionalConfigPaths.Any())
-            return configurationBuilder;
-
-        foreach (var path in additionalConfigPaths)
+        foreach (var path in configuration.AdditionalConfigurationPaths())
         {
             var extension = Path.GetExtension(path);
             
@@ -43,6 +33,23 @@ public static class ConfigurationExtensions
         }
 
         return configurationBuilder;
+    }
+
+    /// <summary>
+    /// The files listed in "additional_configurations:path". The XML reader gives one &lt;path&gt; element
+    /// as a value of its own (additional_configurations:path) and numbers several (path:0, path:1), so
+    /// both shapes are read.
+    /// </summary>
+    public static List<string> AdditionalConfigurationPaths(this IConfiguration configuration)
+    {
+        var pathsSection = configuration.GetSection("additional_configurations:path");
+        if (!string.IsNullOrWhiteSpace(pathsSection.Value))
+            return [pathsSection.Value];
+        return pathsSection.GetChildren()
+            .Select(child => child.Value)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path!)
+            .ToList();
     }
 }
 
@@ -135,8 +142,8 @@ public class ConfigurationPathMonitor : IHostedService, IDisposable
 
     private List<string>? GetCurrentPaths()
     {
-        var pathsSection = _configuration.GetSection("additional_configurations:path");
-        return pathsSection.Exists() ? pathsSection.Get<List<string>>() : null;
+        var paths = _configuration.AdditionalConfigurationPaths();
+        return paths.Count > 0 ? paths : null;
     }
 
     private static bool PathsAreEqual(List<string>? paths1, List<string>? paths2)

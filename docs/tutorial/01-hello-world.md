@@ -140,8 +140,8 @@ The `{{name}}` marker tells DBToRestAPI: "Replace this with the value of the `na
 
 Where can the `name` parameter come from? Multiple places, checked in this priority order:
 
-1. **Query string** (highest priority): `?name=Alice`
-2. **Route segment**: `/hello_world/{{name}}` (if configured)
+1. **Route segment** (highest priority): `/hello_world/{{name}}` (if configured)
+2. **Query string**: `?name=Alice`
 3. **Request body** (JSON): `{"name": "Alice"}`
 4. **HTTP headers** (lowest priority): `name: Alice`
 

@@ -2,7 +2,6 @@
 title: Response formats
 summary: The shape of a successful response (one object, an array, a count wrapper or a file), chosen with response_structure, plus nested JSON, status codes and empty results.
 keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, "204", "{type{json{...}}}", FOR JSON]
-applies_to: 1.7.8
 ---
 
 # Response Formats
@@ -27,17 +26,17 @@ A query that returns one record (`SELECT ... WHERE id = {{id}}`, or an `INSERT` 
 
 A route with a `count_query` always answers `{"success": true, "count": N, "data": [...]}` and ignores the tag ([below](#pagination-with-count-query)).
 
-Don't write `single` or `auto`. From 1.7.8 both are read as the tag left out, and the start-up log names every route that still has one. Before 1.7.8, `single` answered the first row of any result, so a `single` route whose query returns several rows now answers all of them as an array, streamed like any other result (and with `<cache>`, cached whole). Limit such a query to one row (`TOP 1`, `LIMIT 1`), then remove the tag.
+Don't write `single` or `auto`. Both are read as the tag left out, and the start-up log names every route that has one. So a `single` route whose query returns several rows answers all of them as an array, streamed like any other result (and with `<cache>`, cached whole). Limit such a query to one row (`TOP 1`, `LIMIT 1`), then remove the tag.
 
-Any other value makes every request to the route answer `500`, unless the route has a `count_query`, and is logged at start-up. An empty `<response_structure></response_structure>` counts as no tag (from 1.7.8; before, it answered `500`). A `<response_structure>` placed directly under `<settings>`, which earlier versions applied to every route without its own tag, is not read from 1.7.8, and the start-up log reports it: set the tag on each route that needs `array` or `file`.
+Any other value makes every request to the route answer `500`, unless the route has a `count_query`, and is logged at start-up. An empty `<response_structure></response_structure>` counts as no tag. A `<response_structure>` placed directly under `<settings>` is not read, and the start-up log reports it: set the tag on each route that needs `array` or `file`.
 
 ### A column with no name
 
-A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) is returned as the bare value: `2`, or `[2]` with `array`. Alias the column (`COUNT(*) AS total`) to get an object. When that bare value is `NULL` (an unaliased `MAX(x)` over no rows), it counts as no row (`204`, or `{"<root_node>": null}` with `root_node`), and `array` answers `[null]`. Before 1.7.7 each such row came back twice (`[2,{"":2}]`, and `[null,{},{"":null}]` for `NULL`), except with `single`.
+A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Server) is returned as the bare value: `2`, or `[2]` with `array`. Alias the column (`COUNT(*) AS total`) to get an object. When that bare value is `NULL` (an unaliased `MAX(x)` over no rows), it counts as no row (`204`, or `{"<root_node>": null}` with `root_node`), and `array` answers `[null]`.
 
 ### An error raised after the rows
 
-Raise errors before the first statement that returns rows ([errors.md](../reference/errors.md)). From 1.7.7, an error raised after them still gets its status when the result has zero rows or one. A file download's query and a count query take their first row by reading two (from 1.7.8). When such a query returns one row, it is read to its end, so an error after the row gets its status. When it returns more, the engine stops at the second row, and an error after the rows is lost. In 1.7.7 these queries were read to their end however many rows they returned.
+Raise errors before the first statement that returns rows ([errors.md](../reference/errors.md)). An error raised after them still gets its status when the result has zero rows or one. A file download's query and a count query take their first row by reading two. When such a query returns one row, it is read to its end, so an error after the row gets its status. When it returns more, the engine stops at the second row, and an error after the rows is lost.
 
 ## One Record: No Tag
 

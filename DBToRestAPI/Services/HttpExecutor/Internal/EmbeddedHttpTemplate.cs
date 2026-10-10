@@ -80,8 +80,8 @@ internal static class EmbeddedHttpTemplate
         }
 
         /// <summary>
-        /// True only for a name used outside strings and nowhere else. A name that is also
-        /// used inside a string, sits only in a comment, or isn't in the block at all is not.
+        /// True only for a name used outside strings and nowhere else. A name that is also used inside a
+        /// string or a comment, or isn't in the block at all, is not.
         /// </summary>
         public bool IsStructuralOnly(string name)
             => Structural.Contains(name) && !InsideString.Contains(name);
@@ -98,9 +98,11 @@ internal static class EmbeddedHttpTemplate
     /// <c>{{name}}</c> and <c>{prefix{name}}</c> markers are found.
     /// </param>
     /// <remarks>
-    /// A marker inside a JSON comment is in neither set, so it is escaped like an in-string one.
-    /// So is a marker that only appears once an earlier value has been inserted, because the
-    /// fill re-scans the text after each pattern.
+    /// A marker inside a JSON comment, or one that starts inside another marker, counts as inside a
+    /// string: the fill gives every use of a name the same text, so that name is escaped wherever it
+    /// appears and its value can't end the comment or the string around it.
+    /// A marker inside an inserted value is not filled: the fill writes every value in at the
+    /// end, so a value's text stays as it is.
     /// </remarks>
     public static MarkerContexts ClassifyMarkers(string template, IEnumerable<string>? markerPatterns = null)
     {
@@ -135,17 +137,12 @@ internal static class EmbeddedHttpTemplate
         {
             if (markers.TryGetValue(i, out var marker))
             {
-                var set = inString ? result.InsideString : result.Structural;
-                foreach (var name in marker.Names)
-                {
-                    set.Add(name);
-                    var trimmed = name.Trim();
-                    if (trimmed.Length > 0)
-                        set.Add(trimmed);
-                }
+                AddNames(inString ? result.InsideString : result.Structural, marker);
                 // Skip the marker body, so a slash or quote in a name (a claim type such as
                 // {auth{http://...}}) can't be read as a comment or the end of a string. A
-                // marker starting inside another one's body is never visited.
+                // marker starting inside another one's body isn't visited, but the fill can
+                // still fill it there, so it counts as inside a string.
+                AddMarkersWithin(markers, i + 1, marker.End, result.InsideString);
                 i = marker.End - 1;
                 continue;
             }
@@ -174,6 +171,7 @@ internal static class EmbeddedHttpTemplate
                 if (template[i + 1] == '/')
                 {
                     var eol = template.IndexOf('\n', i);
+                    AddMarkersWithin(markers, i + 2, eol < 0 ? template.Length : eol, result.InsideString);
                     if (eol < 0) break;
                     i = eol;
                     continue;
@@ -181,6 +179,7 @@ internal static class EmbeddedHttpTemplate
                 if (template[i + 1] == '*')
                 {
                     var end = template.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    AddMarkersWithin(markers, i + 2, end < 0 ? template.Length : end, result.InsideString);
                     if (end < 0) break;
                     i = end + 1;
                     continue;
@@ -195,6 +194,27 @@ internal static class EmbeddedHttpTemplate
     {
         public int End;
         public List<string> Names { get; } = [];
+    }
+
+    private static void AddNames(HashSet<string> set, MarkerSpan marker)
+    {
+        foreach (var name in marker.Names)
+        {
+            set.Add(name);
+            var trimmed = name.Trim();
+            if (trimmed.Length > 0)
+                set.Add(trimmed);
+        }
+    }
+
+    // Every marker that starts in [from, to): one in a comment, or inside another marker.
+    private static void AddMarkersWithin(Dictionary<int, MarkerSpan> markers, int from, int to, HashSet<string> set)
+    {
+        foreach (var (start, span) in markers)
+        {
+            if (start >= from && start < to)
+                AddNames(set, span);
+        }
     }
 
     /// <summary>
@@ -261,8 +281,8 @@ internal static class EmbeddedHttpTemplate
     /// </summary>
     /// <remarks>
     /// For a marker that is not used only outside strings: one inside a string, one used both
-    /// inside and outside (the fill gives every occurrence of a name the same text), one in a
-    /// comment, or one that only appeared once an earlier value was inserted.
+    /// inside and outside (the fill gives every occurrence of a name the same text), one in
+    /// a comment, or one that starts inside another marker.
     /// Inside a JSON string the escapes decode to the same text, so the value arrives
     /// unchanged. Anywhere else they are not valid JSON, so the value can't close a container,
     /// start or end a comment, or add a key: a plain number, true, false or null still works

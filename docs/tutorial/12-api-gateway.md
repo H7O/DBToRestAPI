@@ -179,7 +179,7 @@ By default, all responses are cached — including errors. To avoid caching erro
 </cache>
 ```
 
-This way, if the external API returns a 429 (rate limited) or 500 (server error), that error response isn't cached, and the next request will try the external API again. (Before 1.7.6, the next requests got an empty `200` until the entry expired.)
+This way, if the external API returns a 429 (rate limited) or 500 (server error), that error response isn't cached, and the next request will try the external API again.
 
 ## Ignoring Certificate Errors
 
@@ -196,7 +196,7 @@ For internal APIs with self-signed certificates (development/testing):
 
 There's also a global setting in `settings.xml`:
 ```xml
-<ignore_certificate_errors_when_routing>false</ignore_certificate_errors_when_routing>
+<ignore_target_route_certificate_errors>false</ignore_target_route_certificate_errors>
 ```
 
 The per-route setting overrides the global one.
@@ -206,10 +206,10 @@ The per-route setting overrides the global one.
 Headers to always exclude when proxying (defined in `settings.xml`):
 
 ```xml
-<headers_to_exclude_from_routing>Host</headers_to_exclude_from_routing>
+<excluded_headers>Host</excluded_headers>
 ```
 
-This applies to all gateway routes. Per-route `<excluded_headers>` adds to this list.
+This applies to every gateway route without an `<excluded_headers>` of its own. A route's own list replaces it, so list `host` in that one too.
 
 ## Complete Gateway Configuration Reference
 

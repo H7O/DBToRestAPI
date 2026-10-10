@@ -124,7 +124,7 @@ BEGIN
   RAISE_APPLICATION_ERROR(-20404, 'Not found');
 END;
 ```
-**Note:** `RAISE_APPLICATION_ERROR` is PL/SQL, so it runs only inside a `BEGIN ... END;` block or a procedure. The engine expects the -20000 to -20999 range (`-20404` → HTTP 404), but the Oracle driver reports the number as positive, so in 1.7.8 this arrives as the generic 400 (known issue).
+**Note:** `RAISE_APPLICATION_ERROR` is PL/SQL, so it runs only inside a `BEGIN ... END;` block or a procedure. The engine expects the -20000 to -20999 range (`-20404` → HTTP 404), but the Oracle driver reports the number as positive, so this arrives as the generic 400 (a known issue).
 
 ### SQLite
 ```sql
@@ -145,7 +145,7 @@ BEGIN
   SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
 END
 ```
-**Note:** In 1.7.8 this arrives as the generic 400: the engine reads the first `[nnnnn]` in the message, which is the SQLSTATE (known issue).
+**Note:** This arrives as the generic 400: the engine reads the first `[nnnnn]` in the message, which is the SQLSTATE (a known issue).
 
 The response body, every other status, and when uploaded files are rolled back: [Errors, status codes and rollback](../reference/errors.md).
 
@@ -187,6 +187,8 @@ Read an earlier query's columns with `{pq{name}}`. With `{{name}}`, a `NULL` col
   SELECT * FROM large_table;
 ]]></query>
 ```
+
+A query's timeout, in seconds, is the first of these that is set: its `db_command_timeout` attribute, its endpoint's `<db_command_timeout>`, the global `<db_command_timeout>` in `settings.xml`. When none is set, the connection string's timeout applies (`Command Timeout=120` on SQL Server), or the provider's default. A global value overrides every connection string's timeout, so the sample `settings.xml` leaves it commented out.
 
 ## Use Cases
 

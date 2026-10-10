@@ -82,7 +82,7 @@ The following are inferred automatically from your existing endpoint tags — no
 | `<rate_limit>` | `429` response with the `Retry-After` header and the `{ success, message, retry_after_seconds }` body; the effective limit noted in the description (see [Rate Limiting](18-rate-limiting.md)) |
 | `<count_query>` | Response wrapped in `{ success, count, data }` pagination envelope |
 
-Set `<response_structure>array</response_structure>` on list routes. Without it, the schema says one object or an array of them, which a generated client sees as a union type. Before 1.7.8 a route without the tag was described as an array, and a `single` route as the object alone: regenerated clients change accordingly.
+Set `<response_structure>array</response_structure>` on list routes. Without it, the schema says one object or an array of them, which a generated client sees as a union type.
 
 ## Per-Endpoint Enrichment
 
@@ -168,7 +168,7 @@ Every operation gets a `default` error response whose schema has one string prop
 }
 ```
 
-This schema doesn't match the body the engine sends yet. It is a known issue in 1.7.8. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
+This schema doesn't match the body the engine sends yet. It is a known issue. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
 
 ```json
 {

@@ -45,9 +45,9 @@ single API call should return the order enriched with customer details:
 
   <!-- Query 2: enrich with customer info (separate database) -->
   <query connection_string_name="customers_db"><![CDATA[
-    DECLARE @email NVARCHAR(255) = {{customer_email}};
-    DECLARE @total DECIMAL(10,2) = {{total_amount}};
-    DECLARE @date  DATE          = {{order_date}};
+    DECLARE @email NVARCHAR(255) = {pq{customer_email}};
+    DECLARE @total DECIMAL(10,2) = {pq{total_amount}};
+    DECLARE @date  DATE          = {pq{order_date}};
 
     SELECT @email AS email,
            @total AS total_amount,
@@ -92,7 +92,7 @@ The passing rule depends on **how many rows** the previous query returns.
 ### Single Row → Named Parameters
 
 When a query returns **exactly one row**, each column becomes a parameter for
-the next query, accessible with the usual `{{column_name}}` syntax:
+the queries after it, read with `{pq{column_name}}`:
 
 ```
 Query 1 result
@@ -104,15 +104,19 @@ Query 1 result
 
         ↓
 
-Query 2 can use: {{customer_email}}, {{total_amount}}, {{order_date}}
+Query 2 can use: {pq{customer_email}}, {pq{total_amount}}, {pq{order_date}}
 ```
 
 This is exactly what happens in the order example above.
 
+Use `{pq{...}}` rather than `{{...}}` for an earlier query's column. `{{customer_email}}` also reads it,
+but when the column is `NULL`, or the query returned zero rows or several, a request value with the
+same name fills the placeholder instead, so a caller could replace a value your SQL looked up.
+
 ### Multiple Rows → JSON Array
 
 When a query returns **more than one row**, the entire result set is serialised
-as a JSON array and passed through a variable called `{{json}}` by default:
+as a JSON array and passed through a variable called `{pq{json}}` by default:
 
 ```
 Query 1 result (3 rows)
@@ -126,7 +130,7 @@ Query 1 result (3 rows)
 
         ↓   serialised as JSON array
 
-Query 2 receives {{json}} containing:
+Query 2 receives {pq{json}} containing:
 [
   {"email":"alice@example.com","name":"Alice"},
   {"email":"bob@example.com","name":"Bob"},
@@ -137,10 +141,10 @@ Query 2 receives {{json}} containing:
 Query 2 then uses `OPENJSON` (SQL Server) or the equivalent JSON function in
 other databases to unpack the array.
 
-> **Note**: Single-row results are also available as `{{json}}` (a one-element
-> array), so you can always use `{{json}}` regardless of row count.  However,
-> named column parameters (`{{column_name}}`) are only available for single-row
-> results.
+> **Note**: Single-row results are also available as `{pq{json}}` (a one-element
+> array), so you can always use `{pq{json}}` regardless of row count.  However,
+> named column parameters (`{pq{column_name}}`) are only available for single-row
+> results. After zero rows or several, the columns of earlier queries stay as they were.
 
 ### Customising the JSON Variable Name
 
@@ -154,9 +158,9 @@ name that the **previous** query's results are stored under:
   SELECT role_name, role_level FROM roles;
 ]]></query>
 
-<!-- Query 2: receives Query 1's results as {{roles_data}} instead of {{json}} -->
+<!-- Query 2: receives Query 1's results as {pq{roles_data}} instead of {pq{json}} -->
 <query json_var="roles_data"><![CDATA[
-  DECLARE @roles NVARCHAR(MAX) = {{roles_data}};
+  DECLARE @roles NVARCHAR(MAX) = {pq{roles_data}};
   -- ...
 ]]></query>
 ```
@@ -170,19 +174,19 @@ each receiving query to give them distinct names:
   SELECT id, name FROM users;
 ]]></query>
 
-<!-- Query 2: json_var="users_json" means Query 1's results arrive as {{users_json}} -->
+<!-- Query 2: json_var="users_json" means Query 1's results arrive as {pq{users_json}} -->
 <query json_var="users_json"><![CDATA[
   SELECT * FROM orders WHERE user_id IN (
     SELECT JSON_VALUE(value, '$.id')
-    FROM OPENJSON({{users_json}})
+    FROM OPENJSON({pq{users_json}})
   );
 ]]></query>
 
-<!-- Query 3: json_var="orders_json" means Query 2's results arrive as {{orders_json}} -->
-<!--           Query 1's results are still available as {{users_json}} -->
+<!-- Query 3: json_var="orders_json" means Query 2's results arrive as {pq{orders_json}} -->
+<!--           Query 1's results are still available as {pq{users_json}} -->
 <query json_var="orders_json"><![CDATA[
-  DECLARE @users  NVARCHAR(MAX) = {{users_json}};
-  DECLARE @orders NVARCHAR(MAX) = {{orders_json}};
+  DECLARE @users  NVARCHAR(MAX) = {pq{users_json}};
+  DECLARE @orders NVARCHAR(MAX) = {pq{orders_json}};
   -- combine as needed
 ]]></query>
 ```
@@ -219,7 +223,8 @@ Long-running queries in the middle of a chain can have their own timeout:
 ```
 
 Resolution order for timeout: query attribute → endpoint-level
-`<db_command_timeout>` → global config → provider default.
+`<db_command_timeout>` → global `<db_command_timeout>` → the connection string's timeout or the
+provider's default.
 
 ---
 
@@ -250,7 +255,7 @@ in one database and access-control roles live in another:
 
   <!-- Query 2: fetch permissions from a separate database -->
   <query connection_string_name="permissions_db"><![CDATA[
-    DECLARE @email NVARCHAR(255) = {{email}};
+    DECLARE @email NVARCHAR(255) = {pq{email}};
 
     SELECT p.name        AS permission,
            p.description AS permission_desc
@@ -262,8 +267,8 @@ in one database and access-control roles live in another:
 
   <!-- Query 3: combine into a neat response (back on default DB) -->
   <query json_var="perms"><![CDATA[
-    DECLARE @contact_name NVARCHAR(255) = {{contact_name}};
-    DECLARE @perms_json   NVARCHAR(MAX) = {{perms}};
+    DECLARE @contact_name NVARCHAR(255) = {pq{contact_name}};
+    DECLARE @perms_json   NVARCHAR(MAX) = {pq{perms}};
 
     SELECT @contact_name AS name,
            (SELECT JSON_VALUE(value, '$.permission')      AS name,
@@ -310,7 +315,7 @@ is returned to the client.  The same `THROW 50xxx` pattern works:
 
 <!-- Query 2: safe to proceed -->
 <query><![CDATA[
-  DELETE FROM records WHERE owner_id = {{validated_user_id}};
+  DELETE FROM records WHERE owner_id = {pq{validated_user_id}};
   SELECT 'Deleted' AS status;
 ]]></query>
 ```
@@ -348,7 +353,7 @@ When the cache expires, all queries re-execute:
 | **Keep chains short** | 3–4 queries maximum; longer chains are hard to debug |
 | **Name columns carefully** | Column names become parameter names — be descriptive (`order_total` not `total`) |
 | **Validate early** | Check permissions and existence in Query 1 |
-| **Handle empty results** | An intermediate query returning zero rows passes `null` values; your SQL should use `IF @param IS NULL …` |
+| **Handle empty results** | A query that returns zero rows passes no columns, so `{pq{name}}` holds the `name` of an older query that returned one, or `NULL` when none did. Test `IS NULL`, and test the JSON variable (`{pq{json}}`, or the name in this query's `json_var`) against `[]` to know whether the query just before found a row |
 | **No parallel execution** | Queries run sequentially; there is no way to fan out |
 | **No cross-database transactions** | Each query runs in its own transaction context |
 | **Large JSON payloads** | Very large result sets serialised as JSON can impact performance; filter aggressively in intermediate queries |
@@ -358,8 +363,8 @@ When the cache expires, all queries re-execute:
 ## What You Learned
 
 - Place multiple `<query>` nodes inside an endpoint to create a chain.
-- Single-row results pass as named parameters; multi-row results pass as a
-  `{{json}}` array.
+- Single-row results pass as named parameters, read with `{pq{column_name}}`;
+  every result also passes as a `{pq{json}}` array.
 - Use `json_var` on the receiving query to custom-name the JSON variable.
 - Each query can target a different database via `connection_string_name`.
 - Errors in any query stop the chain immediately.

@@ -115,8 +115,8 @@ the user via `{auth{auth_provider}}`:
 declare @provider nvarchar(100) = {auth{auth_provider}};  -- e.g. 'google', 'azure_b2c'
 ```
 
-> A single `<provider>name</provider>` keeps working exactly as before — multi-provider behavior
-> only kicks in when you list more than one (or `*`). See the
+> A single `<provider>name</provider>` validates against that provider alone. Multi-provider
+> selection applies only when you list more than one (or `*`). See the
 > [Authentication reference](../topics/12-authentication.md#multiple-providers-per-endpoint) for
 > full details.
 
@@ -197,7 +197,7 @@ declare @roles nvarchar(500) = {auth{roles}};
 | `roles` | `{auth{roles}}` | User roles (if included in token) |
 | `scp`, `scope` | `{auth{scp}}`, `{auth{scope}}` | Scopes, space-separated, from whichever claim the provider sends (`scp` for Entra ID and Okta) |
 
-.NET renames many token claims on the way in: `sub` becomes `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier`, and `oid`, `given_name`, `family_name`, `tid`, `scp`, `email` and `roles` get long names too. From 1.7.6 every claim is available under the name the token used and under its long type (see below), so `{auth{sub}}`, `{auth{oid}}`, `{auth{tid}}`, `{auth{scp}}`, `{auth{given_name}}` and `{auth{family_name}}` all work. Where several claims share a name (two `role` claims, say), the placeholder holds the first one. `{auth{roles}}` holds every role, and `{auth{scp}}` and `{auth{scope}}` hold every scope, space-separated. The engine also adds `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`, which work the same for every provider. When the token lacks a claim listed in `userinfo_fallback_claims`, the engine calls the provider's UserInfo endpoint and adds, as text, the fields the token doesn't have. A claim the token carries keeps the token's value, and `required_scopes` and `required_roles` read the token only. In 1.7.5 and earlier a renamed claim was available only under its long type, and a UserInfo field used in a query failed with the generic 400.
+.NET renames many token claims on the way in: `sub` becomes `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier`, and `oid`, `given_name`, `family_name`, `tid`, `scp`, `email` and `roles` get long names too. Every claim is available under the name the token used and under its long type (see below), so `{auth{sub}}`, `{auth{oid}}`, `{auth{tid}}`, `{auth{scp}}`, `{auth{given_name}}` and `{auth{family_name}}` all work. Where several claims share a name (two `role` claims, say), the placeholder holds the first one. `{auth{roles}}` holds every role, and `{auth{scp}}` and `{auth{scope}}` hold every scope, space-separated. The engine also adds `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`, which work the same for every provider. When the token lacks a claim listed in `userinfo_fallback_claims`, the engine calls the provider's UserInfo endpoint and adds, as text, the fields the token doesn't have. A claim the token carries keeps the token's value, and `required_scopes` and `required_roles` read the token only.
 
 A provider that sends the same subject for every user gives every user the same `user_id`. For example, an Azure AD B2C user flow with the subject claim turned off sends `Not supported` as the subject. Configure the provider to send a unique subject (in B2C, the object ID).
 
@@ -209,7 +209,7 @@ Some providers use dots or URLs as claim names. Write the claim exactly as its c
 |----------------|--------|
 | `user.email` | `{auth{user.email}}` |
 | `http://schemas.example.com/role` | `{auth{http://schemas.example.com/role}}` |
-| `tid` under the long type .NET gives it (`{auth{tid}}` also works from 1.7.6) | `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}` |
+| `tid` under the long type .NET gives it (`{auth{tid}}` also works) | `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}` |
 
 ## Role and Scope Requirements
 

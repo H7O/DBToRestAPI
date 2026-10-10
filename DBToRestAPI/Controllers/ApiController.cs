@@ -49,7 +49,8 @@ namespace DBToRestAPI.Controllers
         IQueryConfigurationParser queryConfigurationParser,
         IHttpRequestExecutor httpRequestExecutor,
         ILogger<ApiController> logger,
-        IHostApplicationLifetime appLifetime
+        IHostApplicationLifetime appLifetime,
+        IHttpClientFactory httpClientFactory
             ) : ControllerBase
     {
         private readonly IEncryptedConfiguration _configuration = configuration;
@@ -57,10 +58,24 @@ namespace DBToRestAPI.Controllers
 
         private readonly IQueryConfigurationParser _queryConfigurationParser = queryConfigurationParser;
         private readonly IHttpRequestExecutor _httpRequestExecutor = httpRequestExecutor;
+        private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+
+        // The named HttpClient that fetches a file a download query names by its `http` URL.
+        internal const string FileDownloadClient = "fileDownload";
 
         private readonly ILogger<ApiController> _logger = logger;
 
         private readonly IHostApplicationLifetime _appLifetime = appLifetime;
+
+        // Numbers the {http{}} calls of one request across its chained queries and its count query.
+        private int _embeddedHttpResponseCount;
+
+        // How an {http{}} block is read: comments skipped, trailing commas allowed (as JsonRequestParser).
+        private static readonly System.Text.Json.JsonDocumentOptions LenientBlockOptions = new()
+        {
+            CommentHandling = System.Text.Json.JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        };
 
 
         private readonly SettingsService _settings = settingsService;
@@ -454,7 +469,7 @@ namespace DBToRestAPI.Controllers
                 {
                     _logger.LogWarning(
                         "{Time}: [EmbeddedHTTP] Route: {Route} — marker(s) {Markers} are used both inside "
-                        + "and outside a JSON string in the same block. They are escaped for a string, so "
+                        + "a JSON string or comment and outside one in the same block. They are escaped for a string, so "
                         + "the use outside a string works only for a plain number, true, false or null. "
                         + "Split them into separate markers.",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route,
@@ -464,10 +479,10 @@ namespace DBToRestAPI.Controllers
                 httpRequestDetails = httpRequestDetails.Fill(
                     qParams,
                     valueConverter: (name, value) => EmbeddedHttpTemplate.ConvertValue(markerContexts, name, value));
+                // Not the filled JSON itself: its url, headers and body can hold keys and caller values.
                 _logger.LogDebug(
-                    "{Time}: [EmbeddedHTTP] Route: {Route} — Prepared call #{Index}: {Details}",
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, index,
-                    httpRequestDetails.Length > 500 ? httpRequestDetails[..500] + "..." : httpRequestDetails);
+                    "{Time}: [EmbeddedHTTP] Route: {Route} — Prepared call #{Index} ({Length} characters)",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, index, httpRequestDetails.Length);
                 return (Index: index, Match: matched, RequestDetails: httpRequestDetails);
             }).ToList();
 
@@ -544,11 +559,11 @@ namespace DBToRestAPI.Controllers
                 QueryParamsRegex = internallyReplacedMarkerPattern
             };
 
-            int count = 0;
             for (int i = 0; i < preparedCalls.Count; i++)
             {
-                count++;
-                var placeholderName = $"http_response_{count}";
+                // Numbered across the request: every query's responses share one marker pattern, so a
+                // number an earlier query used would fill this query's skipped or no_wait call.
+                var placeholderName = $"http_response_{++_embeddedHttpResponseCount}";
                 var structuredJson = results[i];
 
                 if (structuredJson != null)
@@ -631,7 +646,9 @@ namespace DBToRestAPI.Controllers
         {
             try
             {
-                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                // As leniently as JsonRequestParser reads the block for the call itself: a comment or a
+                // trailing comma must not make a call the author meant to skip go out anyway.
+                using var doc = System.Text.Json.JsonDocument.Parse(json, LenientBlockOptions);
                 if (!doc.RootElement.TryGetProperty(propertyName, out var prop))
                     return false;
 
@@ -667,7 +684,7 @@ namespace DBToRestAPI.Controllers
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(httpRequestDetails);
                 if (doc.RootElement.TryGetProperty("url", out var urlProp))
-                    urlForLog = urlProp.GetString() ?? "(null)";
+                    urlForLog = urlProp.GetString() is { } url ? LogText.Url(url) : "(null)";
             }
             catch { /* ignore parse errors for logging */ }
 
@@ -1397,42 +1414,50 @@ namespace DBToRestAPI.Controllers
             else if (dictResult.ContainsKey("http"))
             {
                 var httpUrl = dictResult["http"]?.ToString() ?? string.Empty;
+                // The URL comes from the query and can name a host behind the engine or carry a signed
+                // token, so the caller never sees it, and the log sees it without its query string.
                 if (string.IsNullOrWhiteSpace(httpUrl)
                     || !Uri.IsWellFormedUriString(httpUrl, UriKind.Absolute))
                 {
+                    _logger.LogWarning(
+                        "{Time}: Invalid HTTP URL `{Url}` for route `{Route}`",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), LogText.Url(httpUrl), HttpContext.Items["route"]);
                     return NotFound(new
                     {
                         success = false,
-                        message = $"Invalid HTTP URL `{httpUrl}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                        message = $"Invalid HTTP URL for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
 
                     });
                 }
 
-                using (HttpClient httpClient = new HttpClient())
+                // A pooled client: a new HttpClient per download opened a new connection each time.
+                var httpClient = _httpClientFactory.CreateClient(FileDownloadClient);
+                var response = await httpClient.GetAsync(httpUrl, HttpCompletionOption.ResponseHeadersRead, HttpContext.RequestAborted);
+                // Released once the response has been sent, which frees the connection for the next download.
+                HttpContext.Response.RegisterForDispose(response);
+                if (!response.IsSuccessStatusCode)
                 {
-                    var response = await httpClient.GetAsync(httpUrl, HttpCompletionOption.ResponseHeadersRead, HttpContext.RequestAborted);
-                    if (!response.IsSuccessStatusCode)
+                    _logger.LogWarning(
+                        "{Time}: Download for route `{Route}` from `{Url}` answered {Status}",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), HttpContext.Items["route"], LogText.Url(httpUrl), (int)response.StatusCode);
+                    return StatusCode((int)response.StatusCode, new
                     {
-                        return StatusCode((int)response.StatusCode, new
-                        {
-                            success = false,
-                            message = $"Failed to download file from `{httpUrl}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
-                        });
-                    }
-
-                    // Stream the content instead of loading into memory
-                    var stream = await response.Content.ReadAsStreamAsync(HttpContext.RequestAborted);
-                    mimeType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
-                    return File(stream, mimeType, fileName);
+                        success = false,
+                        message = $"Failed to download file for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                    });
                 }
+
+                // Stream the content instead of loading into memory
+                var stream = await response.Content.ReadAsStreamAsync(HttpContext.RequestAborted);
+                mimeType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+                return File(stream, mimeType, fileName);
             }
             return NotFound(new
             {
                 success = false,
                 message = $"No valid file content source found to download for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
             });
-        }
-    }
+        }    }
 
 }
 

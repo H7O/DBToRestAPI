@@ -62,7 +62,7 @@ IF JSON_VALUE(@response, '$.status_code') != '200'
 SELECT * FROM OPENJSON(@response, '$.data');
 ```
 
-> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block. When executed, the response is **always** a structured JSON string — check `JSON_VALUE(@var, '$.status_code')` to determine success or failure. The only case where the variable receives `NULL` is when the call is explicitly skipped via the [`skip`](#skipping-http-calls) property.
+> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block. When executed, the response is **always** a structured JSON string — check `JSON_VALUE(@var, '$.status_code')` to determine success or failure. The variable receives `NULL` only when the call is skipped with the [`skip`](#skipping-http-calls) property or launched in the background with `no_wait`.
 
 > **For LLMs / AI agents**: Do **not** assume that `{http{...}http}` results are string-replaced into the SQL. They are SQL-parameterized. The parameter value is a **structured JSON string** with `status_code`, `headers`, and `data` fields. This means: (1) SQL `IF` guards around the `DECLARE @var = {http{...}http}` assignment **do** control whether the variable receives the value, (2) the HTTP call still fires during pre-processing regardless (unless the `skip` property is truthy — see [Skipping HTTP Calls](#skipping-http-calls)), (3) there is no SQL injection risk from HTTP response content, and (4) the actual API response body is at `$.data`, not at the root level.
 
@@ -122,7 +122,7 @@ The JSON inside `{http{...}http}` supports the full HTTP executor configuration:
 | `auth` | object | No | Authentication configuration — `basic`, `bearer` or `api_key` (see [Authentication Options](#authentication-options)) |
 | `retry` | object | No | Retry policy: `max_attempts` (default 3), `delay_ms` (1000), `exponential_backoff` (true), `retry_status_codes` ([500, 502, 503, 504]) |
 | `skip` | bool/string/number | No | When truthy (`true`, `"true"`, `"1"`, `"yes"`, non-zero), the call is **not executed** and the SQL variable receives `NULL` instead of structured JSON. See [Skipping HTTP Calls](#skipping-http-calls). |
-| `no_wait` | bool/string/number | No | When truthy, the call is launched in the background after the response is sent and the SQL variable receives `NULL`. See [Fire-and-Forget](../tutorial/16-http-from-sql.md#fire-and-forget-with-no_wait) in the tutorial. |
+| `no_wait` | bool/string/number | No | When truthy, the call starts in the background before the query runs, nothing waits for it, and the SQL variable receives `NULL`. It can still be running after the response is sent, and it goes out even if the query then fails. See [Fire-and-Forget](../tutorial/16-http-from-sql.md#fire-and-forget-with-no_wait) in the tutorial. |
 
 ## Using Request Parameters
 
@@ -186,8 +186,8 @@ inside a JSON string literal and escapes those values (`"`, `\`, control charact
 `a","url":"https://attacker.example` therefore stays inside the string it was substituted into; it
 cannot close that string, append a second `url` key, or otherwise change the request. Markers that
 sit *outside* a string — `"body": {{doc}}` — are not escaped, because that is how a whole
-JSON document is injected. From 1.7.6 the value must be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`), read as leniently as the block itself (comments and trailing commas are allowed) and inserted as compact JSON; anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it cannot add keys. Markers are found with the patterns the route uses, including overridden ones such as `||name||`. A marker used both inside and outside a string, or inside a comment, is escaped so it can't change the structure anywhere: outside a string it then works only for a plain number, `true`, `false` or `null`. A boolean or number from the request body becomes JSON `true`, `false` or a number. Even so, reserve that form for values you built yourself
-(a settings variable, a column from a previous chained query); to forward a caller-supplied document, use
+JSON document is injected. The value must be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`), read as leniently as the block itself (comments and trailing commas are allowed) and inserted as compact JSON; anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it cannot add keys. Markers are found with the patterns the route uses, including overridden ones such as `||name||`. A marker inside a value is part of the value and is never filled: a document an earlier query returned arrives as it is, `{s{...}}` and `{{...}}` text included. A marker used both inside and outside a string, or inside a comment, is escaped so it can't change the structure anywhere: outside a string it then works only for a plain number, `true`, `false` or `null`. A boolean or number from the request body becomes JSON `true`, `false` or a number. Even so, reserve that form for values you built yourself
+(a settings variable, a column from a previous chained query read with `{pq{name}}`); to forward a caller-supplied document, use
 `"body_raw": "{{payload}}"`, which escapes it into a string and sends it verbatim. A marker used both
 inside and outside a string in the same block is escaped everywhere and a warning is logged, because
 that block needs splitting into two markers.
@@ -359,7 +359,7 @@ The `skip` property accepts multiple representations because `{{param}}` placeho
 
 The `skip` property is resolved during **Phase 1 pre-processing**, before any SQL executes. This means the skip decision must come from something available at that stage — request parameters (`{{param}}`), JWT claims (`{auth{claim}}`), or settings variables (`{s{var}}`). It **cannot** come from a SQL computation in the same query, because that SQL hasn't run yet.
 
-However, by combining `skip` with **[query chaining](14-query-chaining.md)**, you can let the database drive the skip decision. Query 1 runs first, and when it returns a single row, each output column becomes a `{{column_name}}` parameter for Query 2. Query 2 can reference one of those columns as the `skip` value — effectively letting SQL decide whether the HTTP call fires.
+However, by combining `skip` with **[query chaining](14-query-chaining.md)**, you can let the database drive the skip decision. Query 1 runs first, and when it returns a single row, Query 2 can read each output column as `{pq{column_name}}`. Query 2 can reference one of those columns as the `skip` value — effectively letting SQL decide whether the HTTP call fires.
 
 | Condition source | Can drive `skip`? | Mechanism |
 |---|---|---|
@@ -367,7 +367,7 @@ However, by combining `skip` with **[query chaining](14-query-chaining.md)**, yo
 | JWT claim (`{auth{claim}}`) | Yes | Any claim from the validated token |
 | Settings variable (`{s{var}}`) | Yes | From `<vars>` in settings.xml |
 | SQL in the **same** query | No | SQL hasn't run yet during Phase 1 |
-| SQL in a **previous** chained query | Yes | Output columns become `{{column}}` parameters — see below |
+| SQL in a **previous** chained query | Yes | Output columns are read as `{pq{column}}` — see below |
 
 #### Example: Skip Enrichment If Data Already Exists
 
@@ -380,7 +380,7 @@ Query 1 checks the database and outputs a `skip_http` flag. Query 2 uses it to c
   <mandatory_parameters>id</mandatory_parameters>
 
   <!-- Query 1: Check if enrichment is needed -->
-  <!-- Output columns become {{column}} parameters in Query 2 -->
+  <!-- Query 2 reads its output columns as {pq{column}} -->
   <query><![CDATA[
     DECLARE @id UNIQUEIDENTIFIER = {{id}};
 
@@ -401,17 +401,17 @@ Query 1 checks the database and outputs a `skip_http` flag. Query 2 uses it to c
   ]]></query>
 
   <!-- Query 2: Conditionally call the enrichment API -->
-  <!-- {{skip_http}}, {{id}}, {{email}} all come from Query 1's single-row output -->
+  <!-- {pq{skip_http}}, {pq{id}}, {pq{email}} all come from Query 1's single-row output -->
   <query><![CDATA[
-    DECLARE @id UNIQUEIDENTIFIER = {{id}};
-    DECLARE @email NVARCHAR(500) = {{email}};
+    DECLARE @id UNIQUEIDENTIFIER = {pq{id}};
+    DECLARE @email NVARCHAR(500) = {pq{email}};
 
     DECLARE @enrichment NVARCHAR(MAX) = {http{
       {
         "url": "{s{enrichment_api_url}}/lookup",
         "method": "POST",
         "headers": { "X-API-Key": "{s{enrichment_api_key}}" },
-        "body": { "email": "{{email}}" },
+        "body": { "email": "{pq{email}}" },
         "skip": "{pq{skip_http}}"
       }
     }http};
@@ -452,7 +452,7 @@ Query 1 checks the database and outputs a `skip_http` flag. Query 2 uses it to c
 </enrich_contact>
 ```
 
-**Why this works:** Query 1 executes first and outputs `skip_http` alongside `id` and `email`. Because Query 1 returns a single row, all output columns automatically become `{{column_name}}` parameters available to Query 2 (see [Query Chaining — Parameter Passing](14-query-chaining.md#parameter-passing)). When Query 2's Phase 1 pre-processing resolves `"skip": "{pq{skip_http}}"`, it reads `"1"` or `"0"` from that parameter — before any SQL in Query 2 runs. If `skip_http` is `"1"`, the HTTP call never fires and `@enrichment` receives `NULL`. If it's `"0"`, the call executes normally. The database made the decision; no application code, no extra round-trips. Use `{pq{skip_http}}` rather than `{{skip_http}}`: if Query 1 returned `NULL` or no row, `{{skip_http}}` would take a request value with the same name, letting the caller decide.
+**Why this works:** Query 1 executes first and outputs `skip_http` alongside `id` and `email`. Because Query 1 returns a single row, Query 2 can read all its output columns as `{pq{column_name}}` (see [Query Chaining — Parameter Passing](14-query-chaining.md#parameter-passing)). When Query 2's Phase 1 pre-processing resolves `"skip": "{pq{skip_http}}"`, it reads `"1"` or `"0"` from that parameter — before any SQL in Query 2 runs. If `skip_http` is `"1"`, the HTTP call never fires and `@enrichment` receives `NULL`. If it's `"0"`, the call executes normally. The database made the decision; no application code, no extra round-trips. Use `{pq{skip_http}}` rather than `{{skip_http}}`: if Query 1 returned `NULL` or no row, `{{skip_http}}` would take a request value with the same name, letting the caller decide.
 
 > **When to use this pattern:** pay-per-call APIs (avoid unnecessary charges), rate-limited APIs (protect your quota), slow external services (skip when data is already fresh), and idempotent enrichment workflows (safely re-run without double-calling).
 
@@ -570,7 +570,7 @@ SELECT * FROM OPENJSON(@response, '$.data');
 | `400`–`499` | Client error — `$.data` may contain error details from the server |
 | `500`–`599` | Server error — `$.data` may contain error details from the server |
 
-All HTTP calls are also logged with status codes and timing for debugging.
+Every call is logged with its status code and timing: at `Debug` when it succeeds, at `Warning` when it gets a status outside 2xx (a redirect it doesn't follow included) or times out, and at `Error` when it can't connect. The shipped log level is `Information`, so a successful call leaves no line there ([Log level](02-configuration.md#log-level)).
 
 ## Real-World Example: KYC Verification
 
@@ -652,5 +652,7 @@ All HTTP calls are also logged with status codes and timing for debugging.
 - **SQL injection safe**: HTTP responses are delivered to SQL as **parameterized values** (e.g., `@http_response_1`, `@http_response_2`) via the same parameterization mechanism used for `{{param}}` values. This is equivalent to binding parameters in `sp_executesql` — the response content is **never** concatenated or interpolated into the SQL string. Even a malicious external API response cannot alter query structure or cause SQL injection.
 - **No information leakage to clients**: The structured response (status_code, headers, data, error) is available only inside the SQL query. The query author controls what, if anything, is returned to the API consumer.
 - `{{param}}` placeholders inside `{http{...}http}` are substituted as text before the block is parsed. Values that land inside a JSON string are escaped automatically, headers containing line breaks are dropped, and caller-supplied values belong in `query` so they are percent-encoded — see [Caller-Supplied Values](#caller-supplied-values-url-encoding-and-json-escaping)
+- Calls keep no cookies: a cookie the remote sets is never sent with a later call, for this caller or another, nor with the next hop of a redirect the call follows. Send one in `headers` when an API needs it. When a remote sets the cookie on a redirect, set `"follow_redirects": false` and make the second call yourself, with the cookie from the first response's headers.
+- The log shows a url without its query string: a key in the query string stays out of it, but the path is logged, so a webhook URL whose path is the secret (Slack, Discord) appears in full when a call to it fails, and on every call at `Debug`. Headers are logged by name only, at `Debug` (see [Log level](02-configuration.md#log-level)).
 - Sensitive credentials in HTTP configurations should use [settings variables](21-settings-vars.md) with encryption — e.g., `{s{api_key}}` instead of hardcoding secrets (see [Settings Encryption](15-encryption.md))
 - Consider using header parameters (`{h{Header-Name}}`) to pass API keys from request headers rather than hardcoding

@@ -110,7 +110,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
         _logger.LogDebug(
             "HttpExecutor: Starting request {Method} {Url} with effective timeout {TimeoutSeconds}s",
             request.Method,
-            request.Url,
+            LogText.Url(request.Url),
             effectiveTimeoutSeconds);
         HttpResponseMessage? lastResponse = null;
         Exception? lastException = null;
@@ -140,7 +140,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
                     _logger.LogWarning(
                         "HttpExecutor: {Method} {Url} -> {StatusCode}, retrying ({Attempt}/{MaxAttempts})...",
                         request.Method,
-                        request.Url,
+                        LogText.Url(request.Url),
                         (int)lastResponse.StatusCode,
                         currentAttempt,
                         retryHandler.MaxAttempts);
@@ -163,7 +163,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
                 stopwatch.Stop();
                 _logger.LogWarning(
                     "HttpExecutor: Request cancelled for {Url} after {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
-                    request.Url,
+                    LogText.Url(request.Url),
                     stopwatch.ElapsedMilliseconds,
                     effectiveTimeoutSeconds);
                 return HttpExecutorResponse.FromError(
@@ -177,7 +177,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
                 lastException = ex;
                 _logger.LogWarning(
                     "HttpExecutor: Request timeout for {Url} after {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
-                    request.Url,
+                    LogText.Url(request.Url),
                     stopwatch.ElapsedMilliseconds,
                     effectiveTimeoutSeconds);
 
@@ -200,7 +200,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
                 _logger.LogError(
                     ex,
                     "HttpExecutor: Request failed for {Url} after {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
-                    request.Url,
+                    LogText.Url(request.Url),
                     stopwatch.ElapsedMilliseconds,
                     effectiveTimeoutSeconds);
 
@@ -225,7 +225,7 @@ public class HttpRequestExecutor : IHttpRequestExecutor
             catch (Exception ex)
             {
                 stopwatch.Stop();
-                _logger.LogError(ex, "HttpExecutor: Unexpected error for {Url}", request.Url);
+                _logger.LogError(ex, "HttpExecutor: Unexpected error for {Url}", LogText.Url(request.Url));
                 return HttpExecutorResponse.FromError(
                     $"Unexpected error: {ex.Message}",
                     ex,
@@ -285,35 +285,38 @@ public class HttpRequestExecutor : IHttpRequestExecutor
     {
         if (!_options.EnableRequestLogging)
         {
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "HttpExecutor: {Method} {Url}{Retry}",
                 request.Method,
-                request.Url,
+                LogText.Url(request.Url),
                 attempt > 1 ? $" (attempt {attempt})" : "");
             return;
         }
 
-        var headers = request.Headers != null
-            ? RedactSensitiveHeaders(request.Headers)
+        // Header names only: a value can be a key under any name (Ocp-Apim-Subscription-Key, apikey, Cookie).
+        // As a JSON array, so a name built from a caller value can't put a line break into the log.
+        var headers = request.Headers is { Count: > 0 }
+            ? JsonSerializer.Serialize(request.Headers.Keys)
             : "none";
 
         _logger.LogDebug(
             "HttpExecutor: {Method} {Url} - Headers: {Headers}{Retry}",
             request.Method,
-            request.Url,
+            LogText.Url(request.Url),
             headers,
             attempt > 1 ? $" (attempt {attempt})" : "");
     }
 
     private void LogResponse(HttpExecutorRequest request, HttpResponseMessage response, TimeSpan elapsed)
     {
-        var logLevel = response.IsSuccessStatusCode ? LogLevel.Information : LogLevel.Warning;
+        // A success is routine, so it stays out of the shipped Information log.
+        var logLevel = response.IsSuccessStatusCode ? LogLevel.Debug : LogLevel.Warning;
 
         _logger.Log(
             logLevel,
             "HttpExecutor: {Method} {Url} -> {StatusCode} {ReasonPhrase} ({ElapsedMs}ms)",
             request.Method,
-            request.Url,
+            LogText.Url(request.Url),
             (int)response.StatusCode,
             response.ReasonPhrase,
             elapsed.TotalMilliseconds.ToString("F0"));
@@ -321,24 +324,9 @@ public class HttpRequestExecutor : IHttpRequestExecutor
         _logger.LogDebug(
             "HttpExecutor: {Method} {Url} completed in {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
             request.Method,
-            request.Url,
+            LogText.Url(request.Url),
             elapsed.TotalMilliseconds.ToString("F1"),
             ResolveEffectiveTimeoutSeconds(request));
-    }
-
-    private string RedactSensitiveHeaders(Dictionary<string, string> headers)
-    {
-        var redacted = headers.ToDictionary(
-            h => h.Key,
-            h => IsSensitiveHeader(h.Key) ? "[REDACTED]" : h.Value);
-
-        return System.Text.Json.JsonSerializer.Serialize(redacted);
-    }
-
-    private bool IsSensitiveHeader(string headerName)
-    {
-        return _options.SensitiveHeaderPatterns.Any(pattern =>
-            headerName.Contains(pattern, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetFriendlyErrorMessage(HttpRequestException ex)

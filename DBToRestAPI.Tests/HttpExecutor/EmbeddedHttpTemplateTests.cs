@@ -118,6 +118,42 @@ public class EmbeddedHttpTemplateTests
         Assert.DoesNotContain("obj", inside);
     }
 
+    [Theory]
+    [InlineData("{\"url\": \"https://h/x\", /* id {{id}} */ \"skip\": true, \"body\": {{id}}}")]
+    [InlineData("{\"url\": \"https://h/x\",\n // sends {{id}}\n \"skip\": true, \"body\": {{id}}}")]
+    [InlineData("{\"url\": \"https://h/x\", \"skip\": true, \"body\": {{id}} /* {{id}} unterminated")]
+    public void Classify_ANameAlsoUsedInAComment_IsNotStructuralOnly(string template)
+    {
+        // Every use of a name gets the same text, so the comment's copy must be escaped too.
+        var contexts = EmbeddedHttpTemplate.ClassifyMarkers(template);
+
+        Assert.False(contexts.IsStructuralOnly("id"));
+        Assert.Contains("id", contexts.Mixed);
+    }
+
+    [Fact]
+    public void Fill_ANameInACommentAndOutsideAString_CannotDropTheKeysAfterTheComment()
+    {
+        var template = "{\"url\": \"https://internal/api\", /* id {{id}} */ \"skip\": true, \"body\": {{id}}}";
+
+        var filled = FillLikeController(template, new() { ["id"] = "*/ } //" });
+
+        // The block no longer parses, so its call fails; it can't lose its skip and go out.
+        Assert.ThrowsAny<Exception>(() => JsonRequestParser.Parse(filled));
+        Assert.DoesNotContain("*/ } //", filled);
+    }
+
+    [Fact]
+    public void Classify_AMarkerStartingInsideAnother_IsNotStructuralOnly()
+    {
+        // {s{a {{id}} is one settings marker to its pattern, and {{id}} starts inside it.
+        var template = "{\"url\": \"https://h/x?a={s{a {{id}}\", \"skip\": true, \"body\": {{id}}}";
+
+        var contexts = EmbeddedHttpTemplate.ClassifyMarkers(template, [DefaultMarkerRegex, DBToRestAPI.Settings.DefaultRegex.DefaultSettingsVariablesPattern]);
+
+        Assert.False(contexts.IsStructuralOnly("id"));
+    }
+
     [Fact]
     public void Classify_DoubleSlashInsideUrlString_IsNotAComment()
     {
@@ -452,11 +488,10 @@ public class EmbeddedHttpTemplateTests
     }
 
     [Fact]
-    public void Fill_MarkerInsideAnInsertedValue_StaysInsideItsString()
+    public void Fill_MarkerInsideAnInsertedValue_StaysAsWritten()
     {
-        // The fill re-scans the text after each pattern, so a marker inside a previous query's
-        // document is filled later from the request. It isn't in the block itself, so it is
-        // escaped for a string, which is where such a marker sits.
+        // The fill writes every value in at the end, so a marker inside a previous query's
+        // document is never filled from the request: the value arrives as the query returned it.
         var template = """{"url": "https://internal/api", "method": "POST", "body": {pq{doc}}}""";
         var qParams = new List<DbQueryParams>
         {
@@ -466,7 +501,7 @@ public class EmbeddedHttpTemplateTests
 
         var body = Assert.IsType<JsonElement>(JsonRequestParser.Parse(FillWithParams(template, qParams)).Body);
 
-        Assert.Equal("xplain \"quoted\"y", body.GetProperty("a").GetString());
+        Assert.Equal("x{{note}}y", body.GetProperty("a").GetString());
     }
 
     [Fact]

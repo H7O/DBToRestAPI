@@ -56,7 +56,7 @@ Fetch only what you need:
 | Quick Start | [01-overview.md](docs/topics/01-overview.md) | Getting started, philosophy, first endpoint |
 | Configuration | [02-configuration.md](docs/topics/02-configuration.md) | settings.xml, sql.xml, connection strings |
 | CRUD Operations | [03-crud-operations.md](docs/topics/03-crud-operations.md) | Create, Read, Update, Delete patterns |
-| Parameters | [04-parameters.md](docs/topics/04-parameters.md) | {{param}}, route params, mandatory params |
+| Parameters | [04-parameters.md](docs/topics/04-parameters.md) | {{param}}, which source wins, one-source markers ({r{}}, {qs{}}, {j{}}, {f{}}, {h{}}), names with any characters, route params, mandatory params |
 | Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON |
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
 | Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |
@@ -69,7 +69,7 @@ Fetch only what you need:
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
-| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | {http{}} syntax, full request schema, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, `query` field for caller-supplied values, automatic JSON escaping of substituted values, microservice calls from SQL |
+| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | `{http{ ... }http}` syntax, full request schema, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, `query` field for caller-supplied values, automatic JSON escaping of substituted values, microservice calls from SQL |
 | Rate Limiting | [18-rate-limiting.md](docs/topics/18-rate-limiting.md) | Per-endpoint `<rate_limit>` (max_requests, window_seconds, per=caller/ip/endpoint, enabled, message) with a global default under `<settings>`; 429 + Retry-After; counted per user, API key or client IP; runs after auth and before any database work; client_ip_header for reverse proxies; hot-reload; never a 500 from a config typo |
 | Webhooks | [19-webhooks.md](docs/topics/19-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
 | OpenAPI / Swagger | [20-openapi.md](docs/topics/20-openapi.md) | Auto-generated OpenAPI 3.0 spec at /openapi.json, built-in Swagger UI at /swagger, secure by default (opt-in), per-endpoint or global, enrichment tags (summary, description, tags, response_schema), hot-reload |
@@ -127,7 +127,7 @@ DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
 | PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` in a procedure you `CALL` with the values (a `DO` block can't see parameters) | 404 |
 | SQLite | `RAISE(ABORT, '[50404] Not found')`, inside a trigger only | 404 |
 
-An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: from 1.7.7 an error after them still gets its status unless part of a longer result has already been handed to the server (about 4 KB of short values, less with long text; then the connection is cut), or a file download's query or a count query returned several rows (only two are read, from 1.7.8); before 1.7.7 it was lost. Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map in 1.7.8. Every status and body: [errors.md](docs/reference/errors.md).
+An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: an error after them still gets its status unless part of a longer result has already been handed to the server (about 4 KB of short values, less with long text; then the connection is cut), or a file download's query or a count query returned several rows (only two are read). Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map yet (a known issue). Every status and body: [errors.md](docs/reference/errors.md).
 
 ### Key XML Tags
 | Tag | Purpose |
@@ -145,7 +145,7 @@ An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`,
 | `<cache>` | Response caching |
 | `<cors>` | Cross-origin settings |
 | `<file_management>` | File upload/download config |
-| `<response_structure>` | Leave it out for one record: one row answers an object, several an array. `array` for lists, so one matching row still answers `[...]`. `file` for downloads. Don't write `single` or `auto` (read as the tag left out, from 1.7.8) |
+| `<response_structure>` | Leave it out for one record: one row answers an object, several an array. `array` for lists, so one matching row still answers `[...]`. `file` for downloads. Don't write `single` or `auto` (read as the tag left out) |
 | `<openapi>` | Per-endpoint OpenAPI enrichment: `<enabled>`, `<summary>`, `<description>`, `<tags>`, `<response_schema>` |
 | `<rate_limit>` | Per-endpoint request limit: `<max_requests>`, `<window_seconds>`, `<per>`, `<enabled>`, `<message>`; global default under `<settings>` |
 
@@ -163,7 +163,7 @@ An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`,
 
 ### Environment Variable Overrides
 
-Any setting can be overridden via environment variables (loaded last, highest priority).
+Any setting can be overridden via environment variables, which beat every config file; only command-line arguments beat them.
 Use `__` as hierarchy separator: `ConnectionStrings__default`, `Logging__LogLevel__Default`.
 This enables cloud-native deployment on Azure App Service, Docker, AWS, Kubernetes, etc.
 without modifying config files.
@@ -191,7 +191,7 @@ Client sends: `x-api-key: secret-key-123`
 <!-- Multiple providers on one endpoint ("Log in with X"); or use * for any configured provider -->
 <authorize><provider>google,azure_b2c,auth0</provider></authorize>
 ```
-Access claims: `{auth{user_id}}` (the user's id, from the token's subject), `{auth{email}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`. Prefer `{auth{user_id}}` to `{auth{sub}}`, which is empty before 1.7.6. From 1.7.6 every claim is also available under the name the token used, such as `{auth{sub}}`, `{auth{scp}}`, `{auth{tid}}` and `{auth{given_name}}`.
+Access claims: `{auth{user_id}}` (the user's id, from the token's subject), `{auth{email}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`. Prefer `{auth{user_id}}` to `{auth{sub}}`, which is empty for a token without a subject. Every claim is also available under the name the token used, such as `{auth{sub}}`, `{auth{scp}}`, `{auth{tid}}` and `{auth{given_name}}`.
 For multi-provider endpoints the provider is selected by the `X-Auth-Provider` hint header
 (overridable), else by the token's `iss`. Selection only *routes* — the token is still fully
 validated (signature, issuer, audience, lifetime) against the chosen provider.
@@ -239,7 +239,7 @@ See [19-webhooks.md](docs/topics/19-webhooks.md) for complete configuration refe
 ### Cross-Database Query Chain
 ```xml
 <query>SELECT id FROM users WHERE email = {{email}};</query>
-<query connection_string_name="analytics_db">SELECT * FROM events WHERE user_id = {{id}};</query>
+<query connection_string_name="analytics_db">SELECT * FROM events WHERE user_id = {pq{id}};</query>
 ```
 
 ### File Upload (files + form fields in one request, SQL Server)

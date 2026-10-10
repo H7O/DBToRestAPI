@@ -88,9 +88,14 @@ The certificate path is relative to the application's working directory.
 
 ### Step 5: Run the Application
 
+From `DBToRestAPI/config`, where Step 3 left you, go back to the project folder and run it:
+
 ```bash
-dotnet run --environment Production
+cd ..
+dotnet run -- --environment Production
 ```
+
+The `--` hands `--environment` to the engine. Without it, `dotnet run` takes the option itself, and the launch profile's `Development` stays in force.
 
 The API is now available at `https://localhost:5001`.
 

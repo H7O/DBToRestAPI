@@ -17,7 +17,7 @@ If the same parameter appears in multiple sources, the higher-priority source wi
 
 JWT claims and settings variables don't take part in this order. They use their own placeholders, `{auth{...}}` and `{s{...}}`, so they never fill a `{{name}}`.
 
-> **Parameter names are case-insensitive in queries.** `{{name}}`, `{{Name}}`, and `{{NAME}}` all resolve to the same value. Use one spelling per query, though: two in one query clash on SQL Server in 1.7.8. `<mandatory_parameters>` is the exception: its names must match the caller's exactly, case included.
+> **Parameter names are case-insensitive in queries.** `{{name}}`, `{{Name}}`, and `{{NAME}}` all resolve to the same value, even in one query. `<mandatory_parameters>` is the exception: its names must match the caller's exactly, case included.
 
 ## Route Parameters
 
@@ -148,7 +148,7 @@ declare @user_agent nvarchar(500) = {{User-Agent}};
 declare @custom_header nvarchar(500) = {{X-Request-Id}};
 ```
 
-Since headers have the **lowest priority**, they won't interfere with route, query string, or body parameters that share the same name.
+Since headers have the **lowest priority**, they won't interfere with route, query string, or body parameters that share the same name. A body field sent as `null` counts as missing, though, so a header with the same name fills it.
 
 A practical use case — logging the caller's IP or user agent:
 

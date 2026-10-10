@@ -177,7 +177,9 @@ public class Step1ServiceTypeChecks(
 
         if (routeConfig != null)
         {
-            context.Items["route"] = route;
+            // Escaped: the route is written into log lines (and the gateway's cache key), and a decoded
+            // %0A in it would start a new line.
+            context.Items["route"] = LogText.Escape(route);
             context.Items["section"] = routeConfig;
             context.Items["service_type"] = "api_gateway";
             context.Items["remaining_path"] = this._routeConfigResolver.GetRemainingPath(route, routeConfig);
@@ -233,7 +235,7 @@ public class Step1ServiceTypeChecks(
                 return;
             }
 
-            context.Items["route"] = route;
+            context.Items["route"] = LogText.Escape(route);
             context.Items["sections"] = allMatchingSections;  // Note: plural "sections"
             context.Items["section"] = allMatchingSections[0]; // Keep first one for backward compatibility
             context.Items["service_type"] = "db_query";
@@ -267,7 +269,7 @@ public class Step1ServiceTypeChecks(
 
         var routeParameters = this._queryRouteResolver.GetRouteParametersIfAny(serviceQuerySection, route);
 
-        context.Items["route"] = route;
+        context.Items["route"] = LogText.Escape(route);
         context.Items["section"] = serviceQuerySection;
         context.Items["service_type"] = "db_query";
         context.Items["content_type"] = contentType;

@@ -278,4 +278,15 @@ public class NoWaitPropertyTests
     }
 
     #endregion
+
+    [Theory]
+    [InlineData("{\"url\": \"https://example.com\", /* skip it */ \"skip\": true}")]
+    [InlineData("{\"url\": \"https://example.com\", \"skip\": true,}")]
+    [InlineData("{\n  // the caller decides\n  \"url\": \"https://example.com\",\n  \"skip\": \"1\",\n}")]
+    public void ShouldSkipHttpCall_ABlockWithACommentOrATrailingComma_IsStillSkipped(string json)
+    {
+        // The call itself is parsed with comments skipped and trailing commas allowed, so skip must be too.
+        Assert.True(ApiController.ShouldSkipHttpCall(json));
+        Assert.True(ApiController.IsNoWait(json.Replace("skip", "no_wait")));
+    }
 }

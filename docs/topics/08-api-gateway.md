@@ -72,6 +72,14 @@ Remove headers before forwarding:
 - `host` — Prevents TLS errors
 - `authorization` — Keep JWT tokens local
 
+A route without `<excluded_headers>` uses the global `<excluded_headers>` in `settings.xml` (the shipped file sets `Host`). A route's own list replaces the global one, so list `host` in it too.
+
+The gateway keeps no cookies. A caller's `Cookie` header is forwarded like any other header (exclude
+`cookie` to drop it), and the target's `Set-Cookie` goes back to that caller. A response that
+carries a `Set-Cookie` is never cached, so no other caller receives it. The gateway follows
+redirects itself: a `Set-Cookie` sent with a redirect is dropped, and only the final response's
+cookies reach the caller.
+
 ### Apply Headers
 
 Add or override headers:
@@ -81,16 +89,18 @@ Add or override headers:
   <url>https://api.example.com/data</url>
   <applied_headers>
     <header>
-      <n>X-API-Key</n>
+      <name>X-API-Key</name>
       <value>external-api-secret-key</value>
     </header>
     <header>
-      <n>Accept</n>
+      <name>Accept</name>
       <value>application/json</value>
     </header>
   </applied_headers>
 </external_api>
 ```
+
+Each child of `<applied_headers>` is one header, with its `<name>` and `<value>`. An applied header replaces a caller's header with the same name.
 
 ## API Key Protection
 
@@ -134,13 +144,13 @@ Cache external API responses:
 | `invalidators` | Query params that create separate cache entries |
 | `exclude_status_codes_from_cache` | Don't cache these HTTP codes |
 
-> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. The former `max_per_value_cache_size` setting is no longer needed and is ignored if present.
+> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. A `max_per_value_cache_size` setting is ignored.
 
 ### Default Caching Behavior
 
-Only GET and HEAD requests are cached. Other verbs are always forwarded, because the request body is not part of the key (from 1.7.6; before, a cached POST answered every later POST without forwarding it).
+Only GET and HEAD requests are cached. Other verbs are always forwarded, because the request body is not part of the key.
 
-By default, **all responses are cached** including errors. A response with an excluded status is passed to its caller and not stored, so the next request is forwarded again (from 1.7.6; before, later requests got an empty `200` until the entry expired). Caching errors protects external APIs during:
+By default, **all responses are cached** including errors. A response with an excluded status, or with a `Set-Cookie` header, is passed to its caller and not stored, so the next request is forwarded again. Caching errors protects external APIs during:
 - High traffic
 - Temporary outages
 - Rate limiting by the external API
@@ -152,9 +162,11 @@ For development/internal APIs with self-signed certs:
 ```xml
 <internal_api>
   <url>https://internal.local/api</url>
-  <ignore_certificate_errors>true</ignore_certificate_errors>
+  <ignore_target_route_certificate_errors>true</ignore_target_route_certificate_errors>
 </internal_api>
 ```
+
+A route without it uses the global `<ignore_target_route_certificate_errors>` in `settings.xml` (`false` when not set).
 
 ⚠️ **Never use in production with external APIs**
 
@@ -199,7 +211,7 @@ Outbound calls also respect request cancellation (`HttpContext.RequestAborted`).
       <excluded_headers>x-api-key,host</excluded_headers>
       <applied_headers>
         <header>
-          <n>X-Weather-API-Key</n>
+          <name>X-Weather-API-Key</name>
           <value>weather-service-key</value>
         </header>
       </applied_headers>

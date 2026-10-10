@@ -192,10 +192,12 @@ Without this header, errors return a generic message instead:
 
 ### Database Timeout
 
-Set a global timeout (in seconds) for all database queries:
+Optionally, set a global timeout (in seconds) for all database queries. It overrides any timeout in
+the connection strings; without it, each query uses its connection string's timeout, or the
+provider's default. The sample `settings.xml` leaves it commented out:
 
 ```xml
-<db_command_timeout>30</db_command_timeout>
+<db_command_timeout>60</db_command_timeout>
 ```
 
 ### Max Payload Size

@@ -103,8 +103,7 @@ providers comma-separated in `<provider>`, or use `*` to accept any provider def
 </open_endpoint>
 ```
 
-A single value (e.g. `<provider>azure_b2c</provider>`) behaves exactly as before — this feature
-is fully backward compatible.
+A single value (e.g. `<provider>azure_b2c</provider>`) validates against that one provider.
 
 ### How a provider is selected
 
@@ -199,7 +198,7 @@ DECLARE @roles NVARCHAR(500) = {auth{roles}};
 | `auth_time` | `{auth{auth_time}}` | Login instant as Unix time (seconds): the `auth_time` claim when present, otherwise `iat` |
 | `auth_provider` | `{auth{auth_provider}}` | Resolved provider name (e.g. `google`, `azure_b2c`) |
 
-.NET renames many token claims on the way in: `sub` becomes `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier`, and `oid`, `given_name`, `family_name`, `tid`, `scp`, `email` and `roles` get long names too. From 1.7.6 every claim is available under the name the token used and under its long type (see [Special Characters](#special-characters)), so `{auth{sub}}`, `{auth{oid}}`, `{auth{tid}}`, `{auth{scp}}`, `{auth{given_name}}` and `{auth{family_name}}` all work. Where several claims share a name (two `role` claims, say), the placeholder holds the first one. `{auth{roles}}` holds every role, and `{auth{scp}}` and `{auth{scope}}` hold every scope, space-separated. The engine also adds `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`, which work the same for every provider. When the token lacks a claim listed in `userinfo_fallback_claims`, the engine calls the provider's UserInfo endpoint and adds, as text, the fields the token doesn't have. A claim the token carries keeps the token's value, and `required_scopes` and `required_roles` read the token only. In 1.7.5 and earlier a renamed claim was available only under its long type, and a UserInfo field used in a query failed with the generic 400.
+.NET renames many token claims on the way in: `sub` becomes `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier`, and `oid`, `given_name`, `family_name`, `tid`, `scp`, `email` and `roles` get long names too. Every claim is available under the name the token used and under its long type (see [Special Characters](#special-characters)), so `{auth{sub}}`, `{auth{oid}}`, `{auth{tid}}`, `{auth{scp}}`, `{auth{given_name}}` and `{auth{family_name}}` all work. Where several claims share a name (two `role` claims, say), the placeholder holds the first one. `{auth{roles}}` holds every role, and `{auth{scp}}` and `{auth{scope}}` hold every scope, space-separated. The engine also adds `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`, which work the same for every provider. When the token lacks a claim listed in `userinfo_fallback_claims`, the engine calls the provider's UserInfo endpoint and adds, as text, the fields the token doesn't have. A claim the token carries keeps the token's value, and `required_scopes` and `required_roles` read the token only.
 
 A provider that sends the same subject for every user gives every user the same `user_id`. For example, an Azure AD B2C user flow with the subject claim turned off sends `Not supported` as the subject. Configure the provider to send a unique subject (in B2C, the object ID).
 
@@ -222,7 +221,7 @@ IF EXISTS (SELECT 1 FROM users WHERE email = {auth{email}} AND sessions_invalida
 Write a claim exactly as its claim type, including dots and slashes. Don't replace them with underscores:
 - `user.email` → `{auth{user.email}}`
 - `http://schemas.example.com/role` → `{auth{http://schemas.example.com/role}}`
-- `tid` under the long type .NET gives it → `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}` (`{auth{tid}}` also works from 1.7.6)
+- `tid` under the long type .NET gives it → `{auth{http://schemas.microsoft.com/identity/claims/tenantid}}` (`{auth{tid}}` also works)
 
 ## Authorization Patterns
 
@@ -285,13 +284,13 @@ The user must have **all** listed roles (AND logic). In the example above, the u
 </authorize>
 ```
 
-The user must have **all** listed scopes (AND logic). In the example above, the token must contain both `api.read` and `api.write` scopes. Scopes are read from the token's `scp` claim (Entra ID, Okta) or `scope` claim, each a space-separated list. A token without them gets `403` with `{"success":false,"message":"Insufficient permissions"}`. Before 1.7.6, a token whose scopes were in `scp` always got that `403`.
+The user must have **all** listed scopes (AND logic). In the example above, the token must contain both `api.read` and `api.write` scopes. Scopes are read from the token's `scp` claim (Entra ID, Okta) or `scope` claim, each a space-separated list. A token without them gets `403` with `{"success":false,"message":"Insufficient permissions"}`.
 
 ## Provider Configuration Options
 
 | Setting | Description |
 |---------|-------------|
-| `authority` | OIDC discovery URL |
+| `authority` | OIDC discovery URL. It must be `https`: with `http`, a request that carries a token answers `500` (one without gets its `401` first), and the log says the address must be https |
 | `audience` | Expected audience (your API client ID) |
 | `issuer` | Expected issuer (optional, from discovery) |
 | `validate_issuer` | Validate iss claim |

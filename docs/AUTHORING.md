@@ -16,7 +16,7 @@ The first reader of these docs is usually an AI agent working in a clone of this
 
 Sections in this order. [09 file uploads](topics/09-file-uploads.md) follows it fully. [10 file downloads](topics/10-file-downloads.md) is a shorter page and skips the sections it doesn't need.
 
-1. **Front matter:** `title`, a one-sentence `summary`, and `keywords`. The keywords are the literal tags, placeholders, status codes and messages the page owns, so a grep for any of them finds the page. Add `applies_to` with the version the page describes.
+1. **Front matter:** `title`, a one-sentence `summary`, and `keywords`. The keywords are the literal tags, placeholders, status codes and messages the page owns, so a grep for any of them finds the page.
 2. **H1, then the agent banner:** `> For AI agents: read AGENTS.md first. The documentation index is llms.txt.`, with links.
 3. **What it does,** when to use it, and what to use instead.
 4. **Rules:** numbered and imperative. Each rule prevents a mistake that is silent or looks like it works.
@@ -30,7 +30,7 @@ Sections in this order. [09 file uploads](topics/09-file-uploads.md) follows it 
 8. **Contract:** what the query receives and must return, and a settings table with name, scope, default and notes.
 9. **Errors:** exact messages and statuses, and a "silent failures" list of mistakes that return success.
 10. **Do and don't:** short code pairs.
-11. **Known issues:** with the version, linked to `TODO.md`.
+11. **Known issues:** linked to `TODO.md`.
 12. **Related:** links one level deep.
 
 ## Writing rules
@@ -39,6 +39,7 @@ Sections in this order. [09 file uploads](topics/09-file-uploads.md) follows it 
 - **Match the shipped config.** Examples use the field names and settings in `DBToRestAPI/config/*.xml`, or say plainly where they differ. When an agent edits the shipped config and follows a page, the two must agree.
 - **Say what happens when nothing happens.** A missing setting that makes a request succeed while doing nothing is the most important thing on a page.
 - **State every default and every precedence order.** Don't leave a reader to guess either.
+- **Describe what the engine does now.** No version history: no "from 1.7.x", "before 1.7.x" or "earlier versions", and no version on a known issue. An agent takes every sentence as the contract of the engine the docs ship with, and a history note reads as a second, conflicting contract. Release notes and git keep the history.
 - **A bug is not a feature.** When the engine misbehaves, record it under Known issues and in `TODO.md`. Don't document the misbehaviour as the contract.
 - **Keep one canonical example per task, and link to it.** Copies on other pages drift.
 - **Name the SQL dialect.** Examples default to SQL Server. For anything dialect-specific (raising errors, parsing JSON), give the other databases too.

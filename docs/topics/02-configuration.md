@@ -221,6 +221,8 @@ Port numbers in the request are ignored during matching.
 ]]></query>
 ```
 
+An endpoint's `<db_command_timeout>` and a global one in `settings.xml` set it too. See [Databases](13-databases.md#per-query-timeout) for which one wins and when the connection string's timeout applies.
+
 ## api_keys.xml
 
 ```xml
@@ -334,15 +336,44 @@ Reference in sql.xml:
 
 ## Environment Variables
 
-Any XML or JSON setting can be overridden by an environment variable.  Environment
-variables are loaded **last** in the configuration chain, so they take precedence
-over everything in config files.
+Any XML or JSON setting can be overridden by an environment variable. Environment variables
+take precedence over every config file; only command-line arguments
+(`--Logging:LogLevel:Default=Warning`) come after them.
 
 The full override chain (last wins):
 
 ```
-appsettings.json → appsettings.{Environment}.json → settings.xml → additional XML files → environment variables
+appsettings.json → appsettings.{Environment}.json → settings.xml → additional XML files → environment variables → command-line arguments
 ```
+
+`settings.xml` and the additional files are found in the executable's folder, whatever the
+working directory. `appsettings.json` is read twice: from the executable's folder first, then from
+the working directory, whose copy wins where both set a key. `appsettings.{Environment}.json` is
+found in the working directory, and so is a relative certificate path in it
+(`Kestrel:Endpoints:Https:Certificate:Path`). So start the engine from its own folder: the `runme`
+scripts, the Docker image and IIS do; a systemd unit needs `WorkingDirectory=`. The environment is `Production` unless `ASPNETCORE_ENVIRONMENT` says
+otherwise; `dotnet run` uses `Development`.
+
+### Log level
+
+The shipped `appsettings.json` and `appsettings.Production.json` log at `Information`: start-up,
+configuration reloads, rate-limit summaries, warnings and errors, and nothing for a request that
+succeeds. `appsettings.Development.json` logs at `Debug`, about 18 entries per request, which slows
+each one. `dotnet run`, with or without `--project DBToRestAPI`, starts the engine in the
+`DBToRestAPI` folder as `Development`, so it reads that file and logs at `Debug`. To trace a problem
+in production, set `Logging__LogLevel__Default=Debug` for a while.
+
+A URL in the log is an http or https URL without its query string, its fragment or a user name and
+password; any other value is logged as `(not a network URL)`. So a key in a URL's query string stays
+out of the log, but a key in its path doesn't: a webhook URL whose path is the secret is logged in
+full when a call to it fails, and at `Debug` on every call. A `{http{ ... }http}` call is logged at
+`Debug` when it succeeds, at
+`Warning` when it gets a status outside 2xx (a redirect it doesn't follow included) or times out, and at `Error` when it can't connect; at
+`Debug` its headers are logged by name, never by value. A download from an `http` source is logged
+at `Warning` when its URL is invalid or the remote answers an error status, and at `Error` when the
+remote can't be reached or doesn't answer in time. The .NET HTTP
+clients behind them log four lines per call at `Information`, under `System.Net.Http.HttpClient`,
+which the shipped `appsettings.json` sets to `Warning`.
 
 ### Mapping convention
 

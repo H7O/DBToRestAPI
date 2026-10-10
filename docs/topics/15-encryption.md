@@ -182,6 +182,14 @@ spec:
 2. Save the file — the application detects the change automatically
 3. Value encrypted without a restart
 
+### Overriding an Encrypted Value
+An environment variable or a command-line argument overrides a key in an encrypted section, as it
+does any other key (`ConnectionStrings__default=...` replaces an encrypted `<default>`). Write the
+override in plain text. Encrypted text made with the same keys, such as a value copied from a
+deployment that shares them, also works for a key the encrypted file holds: the engine decrypts it.
+If it can't, it logs an error and uses the file's value. For a key the file doesn't hold, encrypted
+text is used as written.
+
 ## Security Notes
 
 ### Windows DPAPI

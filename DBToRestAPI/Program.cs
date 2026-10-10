@@ -17,13 +17,25 @@ using System.Data.Common;
 var builder = WebApplication.CreateBuilder(args);
 
 
+// The documented order, each source overriding the ones before it: appsettings.json,
+// appsettings.{Environment}.json, settings.xml, the additional files, environment variables,
+// command-line arguments. The default sources read both JSON files from the working directory (the
+// content root, where Kestrel also resolves a relative certificate path). appsettings.json is also
+// read from the executable's folder, as the lowest layer, so it applies whatever the working directory.
+builder.Configuration.Sources.Insert(0, new Microsoft.Extensions.Configuration.Json.JsonConfigurationSource
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(AppContext.BaseDirectory),
+    Path = "appsettings.json",
+    Optional = false,
+    ReloadOnChange = true,
+});
 builder.Configuration
     .SetBasePath(AppContext.BaseDirectory)
     .AddResilientXmlFile("config/settings.xml", optional: false, reloadOnChange: true)
-    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
     // Load additional configuration files specified in "additional_configurations:path"
     .AddDynamicConfigurationFiles(builder.Configuration)
     .AddEnvironmentVariables()
+    .AddCommandLine(args)
     ;
 
 
@@ -83,6 +95,11 @@ builder.Services.AddSingleton<OpenApiDocumentBuilder>();
 
 builder.Services.AddHttpClient();
 
+// OIDC discovery documents and signing keys, and files a download query names by URL: pooled
+// connections (without cookies, below), and clients that tests answer in process.
+builder.Services.AddHttpClient(Step4JwtAuthorization.OidcMetadataClient);
+builder.Services.AddHttpClient(DBToRestAPI.Controllers.ApiController.FileDownloadClient);
+
 builder.Services.AddHttpClient("checkCertificateErrors")
     .ConfigureHttpClient(client =>
     {
@@ -113,6 +130,20 @@ builder.Services.AddHttpRequestExecutor(options =>
     options.EnableRequestLogging = true;
 });
 
+// The engine's HTTP clients serve every caller, so none of them keeps cookies: a pooled handler would
+// send a cookie a remote service set while serving one caller with the next caller's request. A Cookie
+// header the request carries itself (a gateway caller's, say) is still sent. Registered after every
+// client, so it runs after each client has chosen its handler.
+builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions>(options =>
+    options.HttpMessageHandlerBuilderActions.Add(handlerBuilder =>
+    {
+        switch (handlerBuilder.PrimaryHandler)
+        {
+            case HttpClientHandler handler: handler.UseCookies = false; break;
+            case SocketsHttpHandler handler: handler.UseCookies = false; break;
+        }
+    }));
+
 
 builder.Services.AddControllers();
 
@@ -124,11 +155,13 @@ var maxFileSize = builder.Configuration.GetValue<long?>("max_payload_size_in_byt
 // Gracefully skip HTTPS endpoint if the configured certificate file is missing
 var httpsCertPath = builder.Configuration["Kestrel:Endpoints:Https:Certificate:Path"];
 var httpsSkipped = false;
+string? resolvedCertPath = null;
 if (!string.IsNullOrEmpty(httpsCertPath))
 {
-    var resolvedCertPath = Path.IsPathRooted(httpsCertPath)
+    // Where Kestrel loads it from: a relative path is under the content root (the working directory).
+    resolvedCertPath = Path.IsPathRooted(httpsCertPath)
         ? httpsCertPath
-        : Path.Combine(AppContext.BaseDirectory, httpsCertPath);
+        : Path.Combine(builder.Environment.ContentRootPath, httpsCertPath);
 
     if (!File.Exists(resolvedCertPath))
     {
@@ -221,7 +254,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
 
     if (httpsSkipped)
     {
-        logger.LogWarning("HTTPS endpoint skipped — certificate not found at '{CertPath}'. Place your .pfx certificate there and restart to enable HTTPS. See docs/topics/16-tls-certificates.md", httpsCertPath);
+        logger.LogWarning("HTTPS endpoint skipped — certificate not found at '{CertPath}'. Place your .pfx certificate there and restart to enable HTTPS. See docs/topics/16-tls-certificates.md", resolvedCertPath);
     }
 });
 

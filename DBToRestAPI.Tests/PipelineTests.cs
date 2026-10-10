@@ -1,8 +1,11 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace DBToRestAPI.Tests;
 
@@ -27,6 +30,9 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
 
     private const string ThreeRows = "SELECT 1 AS a UNION ALL SELECT 2 UNION ALL SELECT 3";
     private const string Raise = "INSERT INTO raise_after VALUES (1);";
+
+    // A marker pattern that reads {{name}} only.
+    private const string BracesOnly = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})";
 
     // About 5,000 characters, longer than one 4 KB buffer segment.
     private const string LongValue = "printf('%.5000c', 'x')";
@@ -132,6 +138,21 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         ["queries:pl_chain:query:0"] = "SELECT '{\"id\": 99}' AS \"\";",
         ["queries:pl_chain:query:1"] = "SELECT {{id}} AS id_used, {pq{json}} AS j;",
 
+        // Only a one-row result passes its columns: after zero or several rows, {pq{name}} still holds
+        // the name an earlier query returned, and only {pq{json}} shows what the query just before found.
+        ["queries:pl_chain_rows:route"] = "pl/chain_rows/{{rows}}",
+        ["queries:pl_chain_rows:verb"] = "GET",
+        ["queries:pl_chain_rows:query:0"] = "SELECT 'first' AS name;",
+        ["queries:pl_chain_rows:query:1"] =
+            "WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 2) "
+            + "SELECT 'second' AS name FROM r WHERE i <= CAST({{rows}} AS INTEGER);",
+        ["queries:pl_chain_rows:query:2"] = "SELECT {pq{name}} AS name, {pq{json}} AS j;",
+
+        // Fails with a database error, which the controller logs with the route.
+        ["queries:pl_fail:route"] = "pl/fail/{{x}}",
+        ["queries:pl_fail:verb"] = "GET",
+        ["queries:pl_fail:query"] = "SELECT * FROM no_such_table WHERE {{x}} IS NULL;",
+
         ["queries:pl_scalar:route"] = "pl/scalar",
         ["queries:pl_scalar:verb"] = "GET",
         ["queries:pl_scalar:query"] = "SELECT COUNT(*) AS \"\" FROM (SELECT 1 UNION ALL SELECT 2);",
@@ -148,8 +169,7 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
             "SELECT {{first name}} AS first_name, {{e-mail}} AS email, {{unit price ($)}} AS price, "
             + "{{a.b}} AS dotted, {{email}} AS renamed;",
 
-        // Matched without regard to case. Each name is spelled one way in a query: {{first name}}
-        // and {{FIRST NAME}} together would clash on SQL Server.
+        // Matched without regard to case.
         ["queries:pl_names_case:route"] = "pl/names_case",
         ["queries:pl_names_case:verb"] = "POST",
         ["queries:pl_names_case:query"] = "SELECT {{FIRST NAME}} AS any_case;",
@@ -164,6 +184,43 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         ["queries:pl_names_get:verb"] = "GET",
         ["queries:pl_names_get:query"] =
             "SELECT {{first name}} AS first_name, {qs{sort-by}} AS sort_by, {h{X-Tenant-Id}} AS tenant;",
+
+        // Names that clean to one parameter name ({{first name}}, {{first-name}}) each get their own value;
+        // case variants and one name in two marker forms read the same one. Characters some databases
+        // reject in a parameter name never reach it. Spaces inside the braces are part of the name.
+        ["queries:pl_names_any:route"] = "pl/names_any",
+        ["queries:pl_names_any:verb"] = "POST",
+        ["queries:pl_names_any:query"] =
+            "SELECT {{first name}} AS a, {{first-name}} AS b, {{First Name}} AS c, {j{first name}} AS d, "
+            + "{{@type}} AS t, {{price (\u20ac)}} AS p, {{pr\u00e9nom}} AS pr, {{ first name }} AS spaced;",
+
+        // A JSON null counts as missing, so a lower source fills {{name}}; {j{name}} reads the body only.
+        ["queries:pl_null_body:route"] = "pl/null_body",
+        ["queries:pl_null_body:verb"] = "POST",
+        ["queries:pl_null_body:query"] = "SELECT {{name}} AS any_source, {j{name}} AS j;",
+
+        // The header and query-string patterns overridden to one string, which also matches {{name}}: the
+        // body, listed between them with a pattern of its own, still beats the header.
+        ["queries:pl_shared_hq:route"] = "pl/shared_hq",
+        ["queries:pl_shared_hq:verb"] = "POST",
+        ["queries:pl_shared_hq:headers_variables_pattern"] = BracesOnly,
+        ["queries:pl_shared_hq:query_string_variables_pattern"] = BracesOnly,
+        ["queries:pl_shared_hq:query"] = "SELECT {{name}} AS any_source;",
+
+        // Every request source with one pattern string: they act as one source, so the body's null
+        // hides the header's value.
+        ["queries:pl_shared_all:route"] = "pl/shared_all",
+        ["queries:pl_shared_all:verb"] = "POST",
+        ["queries:pl_shared_all:headers_variables_pattern"] = BracesOnly,
+        ["queries:pl_shared_all:json_variables_pattern"] = BracesOnly,
+        ["queries:pl_shared_all:query_string_variables_pattern"] = BracesOnly,
+        ["queries:pl_shared_all:query"] = "SELECT {{name}} AS any_source;",
+
+        // Each source's own marker, and {{id}}, which takes the highest source that has the name.
+        ["queries:pl_names_src:route"] = "pl/names_src/{{id}}",
+        ["queries:pl_names_src:verb"] = "POST",
+        ["queries:pl_names_src:query"] =
+            "SELECT {r{id}} AS r, {qs{id}} AS qs, {j{id}} AS j, {f{id}} AS f, {h{id}} AS h, {{id}} AS any_source;",
     };
 
     /// <summary>
@@ -171,21 +228,41 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
     /// </summary>
     public class PipelineEngine : IDisposable
     {
-        private readonly string _directory;
         private readonly WebApplicationFactory<Program> _factory;
         public HttpClient Client { get; }
 
+        /// <summary>The engine's temporary folder, which holds its database.</summary>
+        public string Folder { get; }
+
+        /// <summary>Answers every HTTP call the engine makes; nothing reaches the network.</summary>
+        public FakeHttpServer Http { get; } = new();
+
+        public CapturedLogs Logs { get; } = new();
+
+        /// <summary>
+        /// The in-memory server, for a request HttpClient refuses to build (a control character in a
+        /// header). Not for an engine on Kestrel.
+        /// </summary>
+        public Microsoft.AspNetCore.TestHost.TestServer Server => _factory.Server;
+
         public PipelineEngine() : this(null) { }
 
-        /// <param name="globalSettings">
-        /// Settings outside any route, such as a global response_structure, built from the engine's
-        /// temporary folder (for a file store, say).
+        /// <param name="extraSettings">
+        /// More settings, built from the engine's temporary folder: global ones such as a file
+        /// store, or more routes, which get the test database like the others.
         /// </param>
-        protected PipelineEngine(Func<string, Dictionary<string, string?>>? globalSettings)
+        /// <param name="kestrel">
+        /// Serve on a real socket (Kestrel on a free loopback port) instead of the in-memory test server.
+        /// </param>
+        /// <param name="fakeHttp">
+        /// Answer the engine's outgoing HTTP calls with <see cref="Http"/>. Off, they go to the real
+        /// handlers, for tests that serve their own upstream on a loopback port.
+        /// </param>
+        protected PipelineEngine(Func<string, Dictionary<string, string?>>? extraSettings, bool kestrel = false, bool fakeHttp = true)
         {
-            _directory = Path.Combine(Path.GetTempPath(), "dbtorest-pipeline-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(_directory);
-            var database = Path.Combine(_directory, "pipeline.db");
+            Folder = Path.Combine(Path.GetTempPath(), "dbtorest-pipeline-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Folder);
+            var database = Path.Combine(Folder, "pipeline.db");
 
             using (var connection = new SqliteConnection($"Data Source={database}"))
             {
@@ -198,29 +275,42 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
                     BEGIN
                       SELECT RAISE(ABORT, '[50404] Category not found');
                     END;
+                    CREATE TABLE uploads (id INTEGER PRIMARY KEY, path TEXT);
                     """;
                 command.ExecuteNonQuery();
             }
 
             var settings = Routes();
-            foreach (var key in settings.Keys.Where(k => k.EndsWith(":route", StringComparison.Ordinal)).ToList())
+            foreach (var (key, value) in extraSettings?.Invoke(Folder) ?? [])
+                settings[key] = value;
+            foreach (var key in settings.Keys.Where(k => k.StartsWith("queries:", StringComparison.Ordinal)
+                                                         && k.EndsWith(":route", StringComparison.Ordinal)).ToList())
                 settings[key[..^":route".Length] + ":connection_string_name"] = "pipeline";
             settings["ConnectionStrings:pipeline"] = $"Data Source={database}";
             settings["ConnectionStrings:pipeline:provider"] = "Microsoft.Data.Sqlite";
-            foreach (var (key, value) in globalSettings?.Invoke(_directory) ?? [])
-                settings[key] = value;
 
-            _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings)));
+            var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings));
+                builder.ConfigureLogging(logging => logging.AddProvider(Logs));
+                if (fakeHttp)
+                    builder.ConfigureTestServices(Http.Install);
+            });
+            if (kestrel)
+                factory.UseKestrel(options => options.Listen(IPAddress.Loopback, 0));
+            _factory = factory;
+            // No cookie jar: each request is a caller of its own, as a test of the engine's handling expects.
+            // Set on ClientOptions: options passed to CreateClient replace Kestrel's address with localhost.
+            _factory.ClientOptions.HandleCookies = false;
             Client = _factory.CreateClient();
         }
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             Client.Dispose();
             _factory.Dispose();
             SqliteConnection.ClearAllPools();
-            try { Directory.Delete(_directory, recursive: true); } catch (IOException) { }
+            try { Directory.Delete(Folder, recursive: true); } catch (IOException) { }
         }
     }
 
@@ -262,6 +352,20 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.DoesNotContain("no_such_table", body);
         Assert.False(JsonDocument.Parse(body).RootElement.GetProperty("success").GetBoolean());
+    }
+
+    [Fact]
+    public async Task AGetWithoutABody_ParsesNoJson()
+    {
+        // A request without a Content-Type counts as JSON. Its empty body used to be parsed, which threw
+        // and caught a JsonException on every GET. Only this request's entries count: a request built on
+        // the test server directly (Server.SendAsync) can't say it has no body, so its body is parsed.
+        var before = engine.Logs.Entries.Count;
+
+        var (status, _) = await GetAsync("pl/ok");
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.DoesNotContain(engine.Logs.Entries.Skip(before), e => e.Exception is JsonException);
     }
 
     [Fact]
@@ -401,6 +505,145 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("""{"first_name":"Ann","sort_by":"name","tenant":"t1"}""",
             await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Names_WithAnyCharacters_EachGetTheirOwnValue()
+    {
+        using var response = await Client.PostAsync("pl/names_any", new StringContent(
+            "{\"first name\": \"Ann\", \"first-name\": \"Bob\", \"@type\": \"person\", "
+            + "\"price (\u20ac)\": 5, \"pr\u00e9nom\": \"Zo\u00e9\"}",
+            System.Text.Encoding.UTF8, "application/json"));
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var row = JsonDocument.Parse(body).RootElement;
+        Assert.Equal("Ann", row.GetProperty("a").GetString());
+        Assert.Equal("Bob", row.GetProperty("b").GetString());
+        Assert.Equal("Ann", row.GetProperty("c").GetString());
+        Assert.Equal("Ann", row.GetProperty("d").GetString());
+        Assert.Equal("person", row.GetProperty("t").GetString());
+        Assert.Equal(5, row.GetProperty("p").GetInt32());
+        Assert.Equal("Zo\u00e9", row.GetProperty("pr").GetString());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("spaced").ValueKind);
+    }
+
+    [Fact]
+    public async Task SourceMarkers_EachReadOnlyTheirSource()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "pl/names_src/R1?id=Q1")
+        {
+            Content = new StringContent("""{"id": "J1"}""", System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("id", "H1");
+        using var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"r":"R1","qs":"Q1","j":"J1","f":null,"h":"H1","any_source":"R1"}""",
+            await response.Content.ReadAsStringAsync());
+
+        using var form = new HttpRequestMessage(HttpMethod.Post, "pl/names_src/R1")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["id"] = "F1" }),
+        };
+        using var formResponse = await Client.SendAsync(form);
+
+        Assert.Equal(HttpStatusCode.OK, formResponse.StatusCode);
+        Assert.Equal("""{"r":"R1","qs":null,"j":null,"f":"F1","h":null,"any_source":"R1"}""",
+            await formResponse.Content.ReadAsStringAsync());
+    }
+
+    private async Task<string> PostWithHeaderAsync(string path, string json, string header)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("name", header);
+        using var response = await Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    [Fact]
+    public async Task Sources_AJsonNull_LetsAHeaderFillTheName()
+    {
+        Assert.Equal("""{"any_source":"H","j":null}""", await PostWithHeaderAsync("pl/null_body", """{"name": null}""", "H"));
+        Assert.Equal("""{"any_source":"J","j":"J"}""", await PostWithHeaderAsync("pl/null_body", """{"name": "J"}""", "H"));
+    }
+
+    [Fact]
+    public async Task Sources_HeaderAndQueryStringWithOnePattern_TheBodyStillBeatsTheHeader()
+    {
+        Assert.Equal("""{"any_source":"J"}""", await PostWithHeaderAsync("pl/shared_hq", """{"name": "J"}""", "H"));
+        Assert.Equal("""{"any_source":"H"}""", await PostWithHeaderAsync("pl/shared_hq", """{"name": null}""", "H"));
+    }
+
+    [Fact]
+    public async Task Sources_AllWithOnePattern_ABodyNullHidesTheHeader()
+    {
+        Assert.Equal("""{"any_source":"J"}""", await PostWithHeaderAsync("pl/shared_all", """{"name": "J"}""", "H"));
+        Assert.Equal("""{"any_source":null}""", await PostWithHeaderAsync("pl/shared_all", """{"name": null}""", "H"));
+        Assert.Equal("""{"any_source":"H"}""", await PostWithHeaderAsync("pl/shared_all", """{"other": 1}""", "H"));
+    }
+
+    [Theory]
+    [InlineData(0, "first", "[]")]
+    [InlineData(1, "second", """[{"name":"second"}]""")]
+    [InlineData(2, "first", """[{"name":"second"},{"name":"second"}]""")]
+    public async Task Chain_OnlyAOneRowResult_PassesItsColumns(int rows, string name, string json)
+    {
+        var (status, body) = await GetAsync($"pl/chain_rows/{rows}");
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        var row = JsonDocument.Parse(body).RootElement;
+        Assert.Equal(name, row.GetProperty("name").GetString());
+        Assert.Equal(json, row.GetProperty("j").GetString());
+    }
+
+    [Fact]
+    public async Task Route_WithALineBreak_StaysOnOneLogLine()
+    {
+        var (status, _) = await GetAsync("pl/fail/a%0Ab%0D%25c");
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        var entry = Assert.Single(engine.Logs.Entries, e => e.Message.Contains("Exception in ApiController.Index")
+                                                            && e.Message.Contains("pl/fail/a"));
+        Assert.Contains("Route: pl/fail/a%0Ab%0D%25c,", entry.Message);
+        Assert.DoesNotContain('\n', entry.Message);
+        Assert.DoesNotContain('\r', entry.Message);
+    }
+
+    [Fact]
+    public async Task Cors_AnOriginThatIsNotAUrl_IsLoggedEscaped_AndIsNoError()
+    {
+        // The shipped settings.xml sets a CORS pattern, so every request's Origin is checked against it.
+        var context = await engine.Server.SendAsync(c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/pl/ok";
+            c.Request.Headers.Origin = "x\u000B\u001B[2K\u2028forged-origin";
+        });
+
+        Assert.Equal(200, context.Response.StatusCode);
+        var entry = Assert.Single(engine.Logs.Entries, e => e.Message.Contains("forged-origin"));
+        Assert.Equal(LogLevel.Debug, entry.Level);
+        Assert.Contains("Origin 'x%0B%1B[2K%E2%80%A8forged-origin' is not an absolute URL", entry.Message);
+    }
+
+    [Theory]
+    [InlineData("items/42", "items/42")]
+    [InlineData("a\nb", "a%0Ab")]
+    [InlineData("a\r\nb\tc", "a%0D%0Ab%09c")]
+    [InlineData("100%", "100%25")]
+    [InlineData("a%0Ab", "a%250Ab")] // the text %0A, not a line break: it can't look like one
+    [InlineData("a\u2028b\u0085c", "a%E2%80%A8b%C2%85c")]
+    [InlineData("caf\u00e9", "caf\u00e9")]
+    [InlineData("", "")]
+    [InlineData(null, "")]
+    public void LogTextEscape_KeepsALogLineOneLine(string? text, string expected)
+    {
+        Assert.Equal(expected, DBToRestAPI.Services.LogText.Escape(text));
     }
 
     [Fact]

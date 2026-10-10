@@ -215,25 +215,33 @@ public class Step2CorsCheck(
             return null;
         }
 
+        // The Origin header is the caller's text: it is logged escaped, and one that isn't an absolute
+        // URL is the caller's mistake, so it matches no pattern without an error entry.
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri))
+        {
+            this._logger.LogDebug("CORS: Origin '{origin}' is not an absolute URL, so it matches no pattern",
+                LogText.Escape(origin));
+            return null;
+        }
+
         // Pattern configured - check if origin matches
         try
         {
-            var originDomain = new Uri(origin).Host;
-
-            if (Regex.IsMatch(originDomain, pattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
+            if (Regex.IsMatch(originUri.Host, pattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             {
                 // Origin matches pattern - allow it
-                this._logger.LogDebug("CORS: Origin '{origin}' matches pattern '{pattern}'", origin, pattern);
+                this._logger.LogDebug("CORS: Origin '{origin}' matches pattern '{pattern}'", LogText.Escape(origin), pattern);
                 return origin;
             }
 
             // Origin doesn't match pattern - return null (will use fallback)
-            this._logger.LogDebug("CORS: Origin '{origin}' doesn't match pattern '{pattern}'", origin, pattern);
+            this._logger.LogDebug("CORS: Origin '{origin}' doesn't match pattern '{pattern}'", LogText.Escape(origin), pattern);
             return null;
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "CORS: Error processing origin '{origin}' with pattern '{pattern}'", origin, pattern);
+            // An invalid pattern, or one that takes too long: a configuration problem.
+            this._logger.LogError(ex, "CORS: Error processing origin '{origin}' with pattern '{pattern}'", LogText.Escape(origin), pattern);
             // On error, return null (will use fallback)
             return null;
         }

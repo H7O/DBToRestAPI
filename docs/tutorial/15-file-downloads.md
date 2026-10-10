@@ -212,7 +212,7 @@ Error bodies are JSON with `"success": false` and a `message`. Errors raised fro
 
 - **Streaming**: Files from a store or a URL are streamed in chunks. Base64 content from the database is decoded in memory.
 - **SFTP**: Each download opens its own connection.
-- **No caching**: Don't add `<cache>` to a download endpoint; in this version it breaks the download.
+- **No caching**: Don't add `<cache>` to a download endpoint; it breaks the download (a known issue).
 
 ---
 

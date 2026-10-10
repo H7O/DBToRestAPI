@@ -124,13 +124,15 @@ ALB) and let Kestrel listen on HTTP only behind it.
 
 ## 5. Set Appropriate Timeouts
 
-The global database command timeout defaults to 30 seconds:
+A database command uses its connection string's timeout (`Command Timeout=120` on SQL Server), or
+the provider's default when the connection string sets none. To give every query one timeout
+instead, set a global value in `settings.xml`. It overrides the timeouts in all connection strings:
 
 ```xml
-<db_command_timeout>30</db_command_timeout>
+<db_command_timeout>60</db_command_timeout>
 ```
 
-Review this for your workload.  You can also set per-endpoint timeouts:
+Review this for your workload.  You can also set per-endpoint timeouts, which override the global one:
 
 ```xml
 <slow_report>
@@ -308,7 +310,8 @@ Configure ASP.NET Core logging levels in `appsettings.Production.json`:
 }
 ```
 
-In production you typically want `Warning` or `Error` level to reduce noise.
+The shipped files already log at `Information`, which records start-up, warnings and errors and
+nothing for a request that succeeds. `Warning` or `Error` reduce it further.
 Pipe logs to a centralised system (Application Insights, ELK, Seq, etc.) for
 alerting and troubleshooting.
 
@@ -330,8 +333,8 @@ The mapping convention uses `__` (double underscore) as the hierarchy separator:
 | `Kestrel:Endpoints:Http:Url` | `Kestrel__Endpoints__Http__Url` |
 | `Logging:LogLevel:Default` | `Logging__LogLevel__Default` |
 
-Environment variables are loaded **last** in the configuration chain, so they
-override everything in XML and JSON files.
+Environment variables override everything in XML and JSON files. Only command-line
+arguments come after them.
 
 > **Note:** The colon (`:`) separator also works — for example,
 > `ConnectionStrings:default` is a valid environment variable name and is
@@ -373,6 +376,8 @@ environment:
 
 ```ini
 [Service]
+# The engine's folder: appsettings.Production.json and a relative certificate path are read from here.
+WorkingDirectory=/opt/dbtorestapi
 Environment=ConnectionStrings__default=Server=prod;Database=app;...
 Environment=ASPNETCORE_ENVIRONMENT=Production
 ```
@@ -386,7 +391,7 @@ This works for **any** setting — connection strings, CORS patterns, logging le
 Kestrel URLs, encryption paths, and more.  The full override chain is:
 
 ```
-appsettings.json → appsettings.{Environment}.json → settings.xml → additional XML files → environment variables
+appsettings.json → appsettings.{Environment}.json → settings.xml → additional XML files → environment variables → command-line arguments
 ```
 
 ---

@@ -101,6 +101,9 @@ public class SettingsEncryptionService : IEncryptedConfiguration
     // Dictionary of decrypted values only (used for overlay during merge and public API)
     private Dictionary<string, string?> _decryptedValues = new(StringComparer.OrdinalIgnoreCase);
 
+    // Keys set through the indexer, whose value wins over every source.
+    private readonly HashSet<string> _keysSetInCode = new(StringComparer.OrdinalIgnoreCase);
+
     // Tracks which sections are configured for encryption
     private HashSet<string> _sectionsToEncrypt = new(StringComparer.OrdinalIgnoreCase);
 
@@ -342,10 +345,19 @@ public class SettingsEncryptionService : IEncryptedConfiguration
         // Recursively copy all values from original configuration
         CopyAllConfigValues(_originalConfiguration, mergedValues, "");
 
-        // Overlay with decrypted values (these take precedence)
+        // A key's value is the configuration's, decrypted when it is encrypted text: the file's own, or an
+        // override written in encrypted form (copied from a deployment that shares the keys). One that
+        // can't be decrypted gives way to the file's value; Decrypt has logged why. Any other value is
+        // either the file's plain text, which this service has just encrypted and is the same, or one
+        // from a later source (an environment variable, a command-line argument), which wins as it does
+        // for any other key. A key set through the indexer wins over every source.
         foreach (var kvp in _decryptedValues)
         {
-            mergedValues[kvp.Key] = kvp.Value;
+            var current = mergedValues.TryGetValue(kvp.Key, out var value) ? value : null;
+            if (current == null || _keysSetInCode.Contains(kvp.Key))
+                mergedValues[kvp.Key] = kvp.Value;
+            else if (IsEncrypted(current))
+                mergedValues[kvp.Key] = Decrypt(current) ?? kvp.Value;
         }
 
         // Build the merged configuration
@@ -490,26 +502,8 @@ public class SettingsEncryptionService : IEncryptedConfiguration
         }
 
         // Add files from additional_configurations:path
-        var pathsSection = _originalConfiguration.GetSection("additional_configurations:path");
-        if (pathsSection.Exists())
-        {
-            foreach (var child in pathsSection.GetChildren())
-            {
-                // Handle both single and multiple path elements
-                var grandChildren = child.GetChildren().ToList();
-                if (grandChildren.Any())
-                {
-                    foreach (var grandChild in grandChildren)
-                    {
-                        AddXmlFileIfExists(files, basePath, grandChild.Value);
-                    }
-                }
-                else if (!string.IsNullOrWhiteSpace(child.Value))
-                {
-                    AddXmlFileIfExists(files, basePath, child.Value);
-                }
-            }
-        }
+        foreach (var path in _originalConfiguration.AdditionalConfigurationPaths())
+            AddXmlFileIfExists(files, basePath, path);
 
         return files;
     }
@@ -796,6 +790,7 @@ public class SettingsEncryptionService : IEncryptedConfiguration
             if (!string.IsNullOrWhiteSpace(key))
             {
                 _decryptedValues[key] = value;
+                _keysSetInCode.Add(key);
                 RebuildMergedConfiguration();
             }
         }

@@ -307,12 +307,18 @@ namespace DBToRestAPI.Middlewares
 
             #region see if there are headers that should be overridden for this particular route
 
-            var appliedHeaders = section.GetSection("applied_headers")?.GetChildren()?
-                // remove null `name` headers
-                .Where(x => !string.IsNullOrWhiteSpace(x.GetValue<string>("name")))
-                .Select(x => new KeyValuePair<string, string>(x.GetValue<string>("name")!,
-                x.GetValue<string>("value") ?? string.Empty))
-                .ToDictionary(x => x.Key, x => x.Value);
+            // Each child of <applied_headers> is one header with a <name> and a <value>, whatever the child
+            // is called. Repeated siblings with one element name (<header> twice) are numbered by the
+            // configuration reader, so the numbered children of a child without a <name> are headers too.
+            // A name given twice keeps its last value.
+            var appliedHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var child in section.GetSection("applied_headers").GetChildren()
+                         .SelectMany(x => string.IsNullOrWhiteSpace(x.GetValue<string>("name")) ? x.GetChildren() : [x]))
+            {
+                var name = child.GetValue<string>("name");
+                if (!string.IsNullOrWhiteSpace(name))
+                    appliedHeaders[name] = child.GetValue<string>("value") ?? string.Empty;
+            }
             // adding the override headers to the target request
             if (appliedHeaders?.Count > 0 == true)
             {
@@ -370,9 +376,10 @@ namespace DBToRestAPI.Middlewares
                 else
                 {
                     success = targetRequestMsg.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+                    // The caller chose this name, and the server accepts control characters in one.
                     if (!success)
                         this._logger.LogWarning("Failed to add header `{headerKey}` to target request",
-                            header.Key);
+                            LogText.Escape(header.Key));
                 }
             }
             #endregion
@@ -419,6 +426,11 @@ namespace DBToRestAPI.Middlewares
                     }
                 }
                 #endregion
+
+                // A Set-Cookie belongs to the caller it was sent for, so a response that carries one
+                // goes to that caller and is never stored for the next.
+                if (targetRouteResponse.Headers.Contains("Set-Cookie"))
+                    disableStreaming = false;
 
                 if (disableStreaming)
                 {

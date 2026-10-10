@@ -19,7 +19,7 @@ Cache API responses to improve performance and reduce database load.
 
 Response cached for 60 seconds.
 
-Only GET and HEAD requests use the cache. Any other verb always runs the query and leaves the cached entry alone, so an endpoint with no `<verb>` can still take writes. Before 1.7.6, a POST, PUT or DELETE to such an endpoint got the cached GET response and its SQL never ran.
+Only GET and HEAD requests use the cache. Any other verb always runs the query and leaves the cached entry alone, so an endpoint with no `<verb>` can still take writes.
 
 ## Cache Invalidators
 
@@ -43,9 +43,9 @@ Invalidate cache when specific parameters change:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `duration_in_milliseconds` | Required | Cache lifetime |
-| `invalidators` | None | Names of the inputs that change the answer, separated by commas, or by `\|` when a name contains a comma. From 1.7.8 a name that contains a space, a comma or `;` stays whole only when one of the route's queries (or its `count_query`) uses it in a marker, such as `{{sort by}}` (or a marker with the route's own delimiters). Otherwise it is split on them, as before 1.7.8, so no input drops out of the key. An API gateway route runs no query, so its names are always split that way. |
+| `invalidators` | None | Names of the inputs that change the answer, separated by commas, or by `\|` when a name contains a comma. A name that contains a space, a comma or `;` stays whole only when one of the route's queries (or its `count_query`) uses it in a marker, such as `{{sort by}}` (or a marker with the route's own delimiters). Otherwise it is split on them, so a list separated by spaces or `;` still names every input. An API gateway route runs no query, so its names are always split that way. |
 
-> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. The former `max_per_value_cache_size` setting is no longer needed and is ignored if present.
+> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. A `max_per_value_cache_size` setting is ignored.
 
 ## Example: User-Specific Cache
 
@@ -122,7 +122,7 @@ By default, all responses are cached (including errors). Exclude specific codes:
 <exclude_status_codes_from_cache>401,403,429,500</exclude_status_codes_from_cache>
 ```
 
-A response with an excluded status is passed to its caller and not stored, so the next request is forwarded again (from 1.7.6; before, later requests got an empty `200` until the entry expired).
+A response with an excluded status, or with a `Set-Cookie` header, is passed to its caller and not stored, so the next request is forwarded again.
 
 ## Cache Behavior
 
@@ -131,12 +131,12 @@ A response with an excluded status is passed to its caller and not stored, so th
 For a query endpoint, the key is built from:
 - the endpoint (its element in the configuration);
 - the verb (GET or HEAD);
-- the route values, such as the `{{id}}` in `users/{{id}}/data` (from 1.7.6). Spellings of one route that run the same SQL (`Items/1`, `items//1`, `items/1/`) share an entry;
-- the values of the parameters named in `<invalidators>`, from each source separately: a header and a query-string value with the same name are different parts of the key (from 1.7.6).
+- the route values, such as the `{{id}}` in `users/{{id}}/data`. Spellings of one route that run the same SQL (`Items/1`, `items//1`, `items/1/`) share an entry;
+- the values of the parameters named in `<invalidators>`, from each source separately: a header and a query-string value with the same name are different parts of the key.
 
 Nothing else is in the key. A query-string value, a body field, a header or the caller's identity separates entries only when its name is in `<invalidators>`. A cache hit runs no SQL, so authorization written in SQL is skipped: cache only answers that are the same for every caller, or name the caller (for example `user_id`) in `<invalidators>`.
 
-For an API gateway route, the key is the route, the verb, the requested path, and the query-string values and headers named in `<invalidators>`. From 1.7.6, a header and a query-string value with the same name are separate parts of the key, query-string names keep their spelling, and a value sent several times (`?tag=a&tag=b`) is not the same key as one comma-joined value (`?tag=a,b`).
+For an API gateway route, the key is the route, the verb, the requested path, and the query-string values and headers named in `<invalidators>`. A header and a query-string value with the same name are separate parts of the key, query-string names keep their spelling, and a value sent several times (`?tag=a&tag=b`) is not the same key as one comma-joined value (`?tag=a,b`).
 
 ### First Request
 
@@ -171,7 +171,7 @@ Caching works with query chains — entire chain result is cached:
   </cache>
   
   <query>SELECT * FROM local WHERE id = {{lookup_id}};</query>
-  <query connection_string_name="remote">SELECT * FROM remote WHERE ref = {{id}};</query>
+  <query connection_string_name="remote">SELECT * FROM remote WHERE ref = {pq{id}};</query>
 </chained_with_cache>
 ```
 

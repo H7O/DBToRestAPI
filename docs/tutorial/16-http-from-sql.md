@@ -46,7 +46,7 @@ Every embedded HTTP call — whether it succeeds or fails — produces a JSON st
 | `data` | any | The response body — parsed as a JSON object/array if valid JSON, a plain string if not, or `null` if empty. |
 | `error` | object\|null | `null` when a server response was received (even 4xx/5xx). Contains `{"message": "..."}` only when `status_code` is `0` — e.g., `"Request timed out after 30 seconds"` or `"Host not found: api.example.com"`. |
 
-This means you **always** get a result back — you never have to guess whether the call failed or why. Check `$.status_code` to decide what to do, and `$.error.message` to understand infrastructure failures. The only exception is when the [`skip`](#skipping-http-calls) property is truthy — in that case the variable receives `NULL` because the call was never made.
+This means you **always** get a result back — you never have to guess whether the call failed or why. Check `$.status_code` to decide what to do, and `$.error.message` to understand infrastructure failures. There are two exceptions, and in both the variable receives `NULL`: the [`skip`](#skipping-http-calls) property is truthy, so the call is never made, or [`no_wait`](#fire-and-forget-with-no_wait) is, so nothing waits for its response.
 
 > **For DB Admins — how parameters are bound**: The HTTP response is **never** pasted or concatenated into your SQL string. Instead, it works exactly like `sp_executesql` parameter binding:
 >
@@ -123,7 +123,7 @@ The JSON inside `{http{...}http}` supports these properties:
 | `auth` | object | No | — | Authentication config — see [Authentication Options](#authentication-options) |
 | `retry` | object | No | — | Retry policy: `max_attempts` (3), `delay_ms` (1000), `exponential_backoff` (true), `retry_status_codes` ([500,502,503,504]) |
 | `skip` | bool/string/number | No | `false` | When truthy (`true`, `"true"`, `"1"`, `"yes"`, non-zero), the call is not executed and the variable receives `NULL` |
-| `no_wait` | bool/string/number | No | `false` | When truthy, the call runs in the background after the response is sent and the variable receives `NULL` — see [Fire-and-Forget](#fire-and-forget-with-no_wait) |
+| `no_wait` | bool/string/number | No | `false` | When truthy, the call starts in the background before the query runs, nothing waits for it, and the variable receives `NULL` — see [Fire-and-Forget](#fire-and-forget-with-no_wait) |
 
 ### Caller-supplied values in a URL: use `query`
 
@@ -149,7 +149,7 @@ What about a caller value that contains a double quote? That is handled for you.
 is parsed, every marker that lands inside a JSON string is escaped, so a value such as
 `a","url":"https://evil.example` stays inside the string it was substituted into. It cannot close
 that string, add a second `url` key, or otherwise change the request. Markers placed *outside* a
-string (`"body": {{doc}}`) are not escaped, because that is how you inject a whole JSON document. From 1.7.6 the value must be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`; comments and trailing commas are allowed, as in the block itself); anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it cannot add keys. A boolean or number from the request body becomes JSON `true`, `false` or a number.
+string (`"body": {{doc}}`) are not escaped, because that is how you inject a whole JSON document. The value must be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`; comments and trailing commas are allowed, as in the block itself); anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it cannot add keys. A boolean or number from the request body becomes JSON `true`, `false` or a number.
 Even so, only put values you built yourself there, never a raw caller value. To forward a caller-supplied
 JSON document, use `"body_raw": "{{payload}}"`.
 
@@ -318,7 +318,7 @@ SELECT JSON_VALUE(@response, '$.headers.X-RateLimit-Remaining') AS rate_limit_le
 
 ## Error Handling
 
-Every embedded HTTP call returns a structured JSON string — you can inspect `$.status_code` to know exactly what happened. The only case where the variable is `NULL` is when the call is [skipped](#skipping-http-calls):
+Every embedded HTTP call returns a structured JSON string — you can inspect `$.status_code` to know exactly what happened. The variable is `NULL` only when the call is [skipped](#skipping-http-calls) or launched with [`no_wait`](#fire-and-forget-with-no_wait):
 
 ```sql
 DECLARE @response NVARCHAR(MAX) = {http{
@@ -402,12 +402,16 @@ Truthy values for `skip`: `true`, `"true"`, `"1"`, `"yes"` (case-insensitive), a
 The `skip` value is resolved **before** SQL runs, so it can't come from SQL in the same query. But by combining `skip` with [multi-query chaining](17-multi-query.md), you can let the database decide:
 
 1. **Query 1** runs SQL and outputs a flag column (e.g., `skip_http` = `'1'` or `'0'`)
-2. Because Query 1 returns a single row, its columns become `{{column_name}}` parameters for Query 2
+2. Because Query 1 returns a single row, Query 2 can read its columns as `{pq{column_name}}`
 3. **Query 2** uses `"skip": "{pq{skip_http}}"`: the value comes from Query 1's SQL result. Use `{pq{...}}` rather than `{{...}}` here: if Query 1 returned `NULL` or no row, `{{skip_http}}` would take a request value with the same name, letting the caller decide
 
 ```xml
 <!-- Query 1: Check if enrichment is needed -->
 <query><![CDATA[
+  -- Without a row, Query 2 would have no skip_http and would make the call
+  IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = {{id}})
+    THROW 50404, 'Contact not found', 1;
+
   SELECT id, email,
     CASE WHEN enriched_at IS NOT NULL THEN '1' ELSE '0' END AS skip_http
   FROM contacts WHERE id = {{id}};
@@ -418,18 +422,18 @@ The `skip` value is resolved **before** SQL runs, so it can't come from SQL in t
   DECLARE @enrichment NVARCHAR(MAX) = {http{
     {
       "url": "{s{enrichment_api_url}}/lookup",
-      "body": { "email": "{{email}}" },
+      "body": { "email": "{pq{email}}" },
       "skip": "{pq{skip_http}}"
     }
   }http};
 
   -- NULL = skipped (already enriched), otherwise process the response
   IF @enrichment IS NULL
-    SELECT *, 'already_enriched' AS status FROM contacts WHERE id = {{id}};
+    SELECT *, 'already_enriched' AS status FROM contacts WHERE id = {pq{id}};
   ELSE IF CAST(JSON_VALUE(@enrichment, '$.status_code') AS INT) BETWEEN 200 AND 299
   BEGIN
-    UPDATE contacts SET company = JSON_VALUE(@enrichment, '$.data.company') WHERE id = {{id}};
-    SELECT *, 'enriched' AS status FROM contacts WHERE id = {{id}};
+    UPDATE contacts SET company = JSON_VALUE(@enrichment, '$.data.company') WHERE id = {pq{id}};
+    SELECT *, 'enriched' AS status FROM contacts WHERE id = {pq{id}};
   END
   ELSE
     THROW 50502, 'Enrichment API failed', 1;
@@ -440,7 +444,7 @@ This is especially useful for pay-per-call APIs, rate-limited services, or idemp
 
 ## Fire-and-Forget with `no_wait`
 
-Sometimes you need to trigger an HTTP call but don't care about the response — fire off a webhook notification, enqueue a background job, or ping an analytics service. The `no_wait` property tells the engine to launch the call on a background thread and immediately continue SQL execution without waiting:
+Sometimes you need to trigger an HTTP call but don't care about the response — fire off a webhook notification, enqueue a background job, or ping an analytics service. The `no_wait` property tells the engine to launch the call on a background thread and run the query without waiting for it:
 
 ```sql
 DECLARE @notify NVARCHAR(MAX) = {http{
@@ -453,11 +457,12 @@ DECLARE @notify NVARCHAR(MAX) = {http{
 }http};
 
 -- @notify is always NULL — the call runs in the background
+-- The URL's path is this webhook's secret: a call that fails logs it, and at Debug every call does.
 -- SQL continues immediately without blocking
 SELECT 'Order created' AS status;
 ```
 
-When `no_wait` is truthy, the SQL variable always receives `NULL` (same as a skipped call), and the HTTP request runs independently after the response is sent to the client. This is ideal for notifications where you don't need the result.
+When `no_wait` is truthy, the SQL variable always receives `NULL` (same as a skipped call). Like every call in a query, the HTTP request starts before the query runs; it then runs on its own, can still be going after the response is sent, and goes out even if the query fails. So a row the same query inserts may not exist yet when the call arrives: insert it in an earlier chained query (see [Validate Before Accepting](../topics/19-webhooks.md#validate-before-accepting)). This is ideal for notifications where you don't need the result.
 
 ### Truthy values
 
@@ -520,7 +525,7 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 ## Security Considerations
 
 - **SQL injection safe** — HTTP responses are delivered as parameterized SQL variables (`@http_response_1`, `@http_response_2`, etc.), not string-replaced into the query. This is the same `sp_executesql`-style parameter binding that DB Admins already trust for preventing SQL injection. Even if an external API returns `'; DROP TABLE users; --`, it is treated as a harmless string value, not executable SQL.
-- **Caller values cannot rewrite the request** — a marker that lands inside a JSON string is escaped before the block is parsed, so a value carrying `"` cannot close the string and add or replace keys such as `url`. Markers outside a string (`"body": {{doc}}`) insert one JSON value, and anything else becomes a JSON string (from 1.7.6); reserve them for values you built yourself.
+- **Caller values cannot rewrite the request** — a marker that lands inside a JSON string is escaped before the block is parsed, so a value carrying `"` cannot close the string and add or replace keys such as `url`. Markers outside a string (`"body": {{doc}}`) insert one JSON value, and anything else becomes a JSON string; reserve them for values you built yourself.
 - **Caller values cannot smuggle headers** — a header whose name or value contains a line break is dropped rather than sent.
 - **Put caller-supplied values in `query`, not in the `url` string** — they are percent-encoded there, so `&`, `#` and `=` cannot add or split parameters.
 - **Never expose secrets in client-visible responses** — API keys in `{http{...}http}` are server-side only
@@ -533,7 +538,7 @@ This works because the `{http{...}http}` marker becomes a parameter like `@http_
 ### What You Learned
 
 - The `{http{...}http}` syntax for embedded HTTP calls
-- The **structured response format** — every call returns `{status_code, headers, data, error}` (or `NULL` when the `skip` property is truthy)
+- The **structured response format** — every call returns `{status_code, headers, data, error}` (or `NULL` when the `skip` or `no_wait` property is truthy)
 - How to check `$.status_code` to handle success, client errors, server errors, and network failures
 - How to read `$.error.message` for infrastructure failure details (timeout, DNS, connection refused, etc.)
 - How to access the response body via `$.data` and response headers via `$.headers`

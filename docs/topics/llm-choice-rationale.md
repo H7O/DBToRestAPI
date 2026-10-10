@@ -96,8 +96,8 @@ The SQL `THROW` statement maps directly to HTTP responses:
 
 An error numbered `50000 + status` becomes that HTTP status: use `50400` to `50599`.
 This works with SQL Server `THROW`, PostgreSQL `RAISE EXCEPTION` (inside a procedure the query
-`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. In 1.7.8,
-Oracle and DB2 custom errors are not mapped yet and arrive as a generic 400. See
+`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. Oracle and DB2
+custom errors are not mapped yet and arrive as a generic 400. See
 [Errors, status codes and rollback](../reference/errors.md).
 
 An agent writing a DbToRestAPI endpoint produces a secure API by default. There is

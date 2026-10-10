@@ -37,6 +37,9 @@ namespace DBToRestAPI.Middlewares
         // <authorize><provider_hint_header> or globally via authorize:provider_hint_header.
         private const string DefaultProviderHintHeader = "X-Auth-Provider";
 
+        // The named HttpClient that fetches each provider's discovery document and signing keys.
+        internal const string OidcMetadataClient = "oidcMetadata";
+
         public async Task InvokeAsync(HttpContext context)
         {
 
@@ -355,14 +358,14 @@ namespace DBToRestAPI.Middlewares
                 discoveryDocument = await GetDiscoveryDocumentAsync(authority, context.RequestAborted);
 
                 // DEBUG: Log discovery document details
-                _logger.LogDebug("Discovery document loaded from: {authority}", authority);
+                _logger.LogDebug("Discovery document loaded from: {authority}", LogText.Url(authority));
                 _logger.LogDebug("Issuer from discovery: {issuer}", discoveryDocument.Issuer);
-                _logger.LogDebug("JWKS URI: {jwksUri}", discoveryDocument.JwksUri);
+                _logger.LogDebug("JWKS URI: {jwksUri}", LogText.Url(discoveryDocument.JwksUri));
                 _logger.LogDebug("Number of signing keys: {count}", discoveryDocument.SigningKeys?.Count ?? 0);
 
                 if (discoveryDocument.SigningKeys == null || !discoveryDocument.SigningKeys.Any())
                 {
-                    _logger.LogError("No signing keys found in discovery document. JWKS URI: {jwksUri}", discoveryDocument.JwksUri);
+                    _logger.LogError("No signing keys found in discovery document. JWKS URI: {jwksUri}", LogText.Url(discoveryDocument.JwksUri));
                     throw new InvalidOperationException("No signing keys available from OIDC provider");
                 }
 
@@ -855,17 +858,47 @@ namespace DBToRestAPI.Middlewares
                 cacheDuration,
                 async (ct) =>
                 {
-                    var configurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
-                        $"{normalizedAuthority}/.well-known/openid-configuration",
-                        new OpenIdConnectConfigurationRetriever(),
-                        new HttpDocumentRetriever());
+                    // A pooled client from the factory, which also lets tests answer for the provider
+                    // in process. The retriever refuses any address that isn't https.
+                    var retriever = new HttpDocumentRetriever(_httpClientFactory.CreateClient(OidcMetadataClient));
+                    async Task<string> FetchAsync(string address)
+                    {
+                        try
+                        {
+                            return await retriever.GetDocumentAsync(address, ct);
+                        }
+                        catch (Exception ex) when (ex is IOException or ArgumentException)
+                        {
+                            // The retriever's message holds the whole address, query string included, and
+                            // this exception is logged. So it is replaced by one that says why without it.
+                            // The inner exception, kept, names the host at most.
+                            var cause = ex switch
+                            {
+                                ArgumentNullException => "no address",
+                                ArgumentException when !address.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                                    => "the address must be https",
+                                _ when ex.Data["status_code"] is System.Net.HttpStatusCode status
+                                    => $"the provider answered {(int)status} {status}",
+                                _ => ex.GetType().Name,
+                            };
+                            throw new IOException($"Unable to retrieve {LogText.Url(address)}: {cause}", ex.InnerException);
+                        }
+                    }
 
-                    var config = await configurationManager.GetConfigurationAsync(ct);
+                    var config = OpenIdConnectConfiguration.Create(await FetchAsync(
+                        $"{normalizedAuthority}/.well-known/openid-configuration"));
 
-                    // Fetch JWKS JSON separately to ensure proper serialization through cache
-                    // (OpenIdConnectConfiguration.SigningKeys doesn't serialize properly with HybridCache)
-                    var jwksJson = await new HttpDocumentRetriever().GetDocumentAsync(config.JwksUri!, ct);
-                    _logger.LogDebug("Fetched JWKS from {uri}", config.JwksUri);
+                    // The keys are cached as their JSON, because OpenIdConnectConfiguration.SigningKeys
+                    // doesn't survive HybridCache's serialization. Fetched once: a ConfigurationManager
+                    // fetched them too, only for its copy to be dropped.
+                    var jwksJson = await FetchAsync(config.JwksUri!);
+                    _logger.LogDebug("Fetched JWKS from {uri}", LogText.Url(config.JwksUri));
+
+                    // Parsed here, so that a document that isn't a key set (a maintenance page sent with a
+                    // 200), or one without a signing key, throws and is never cached: the next request
+                    // fetches again instead of failing for the cache's 24 hours.
+                    if (new JsonWebKeySet(jwksJson).GetSigningKeys().Count == 0)
+                        throw new InvalidOperationException($"No signing keys in the JWKS at {LogText.Url(config.JwksUri)}");
 
                     // Create cacheable wrapper that stores JWKS as JSON string
                     return CachedOpenIdConnectConfiguration.FromDiscoveryDocument(config, jwksJson);
@@ -985,7 +1018,7 @@ namespace DBToRestAPI.Middlewares
                     // To prefer leniency, remove this block and let resolution fall through to the issuer.
                     _logger.LogWarning(
                         "Provider hint '{hint}' (header '{header}') is not allowed for route `{route}`",
-                        hint, hintHeaderName, route);
+                        LogText.Escape(hint), hintHeaderName, route);
                     return Task.FromResult<string?>(null);
                 }
             }
@@ -1003,7 +1036,7 @@ namespace DBToRestAPI.Middlewares
             if (resolved == null)
                 _logger.LogDebug(
                     "Token issuer '{iss}' did not resolve to a single allowed provider for route `{route}` " +
-                    "(send the '{header}' hint header to disambiguate)", jwt.Issuer, route, hintHeaderName);
+                    "(send the '{header}' hint header to disambiguate)", LogText.Escape(jwt.Issuer), route, hintHeaderName);
 
             return Task.FromResult<string?>(resolved);
         }

@@ -158,7 +158,7 @@ Each contact ID gets its own 2-minute cache entry.
 | `<duration_in_milliseconds>` | Yes | — | How long to cache the response |
 | `<invalidators>` | No | None | Comma-separated parameter names for cache key |
 
-> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. The former `max_per_value_cache_size` setting is no longer needed and is ignored if present.
+> Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. A `max_per_value_cache_size` setting is ignored.
 
 ## Global Caching
 
@@ -185,7 +185,7 @@ This is only a default duration. It doesn't turn caching on: an endpoint is cach
 - Aggregated/computed data (dashboards, reports)
 - External API call results (via API Gateway)
 
-Only GET and HEAD requests use the cache. A POST, PUT or DELETE to a cached endpoint always runs its SQL and leaves the cached entry alone (from 1.7.6; before, an endpoint with no `<verb>` answered them with the cached GET response). The route values are part of the key too.
+Only GET and HEAD requests use the cache. A POST, PUT or DELETE to a cached endpoint always runs its SQL and leaves the cached entry alone. The route values are part of the key too.
 
 **Don't cache:**
 - Data that must be real-time (financial transactions, live status)
