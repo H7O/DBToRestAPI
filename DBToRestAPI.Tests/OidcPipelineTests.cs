@@ -42,15 +42,17 @@ public sealed class FakeIdp
 
         server.Map(JwksUrl, _ => KeySet());
 
-        server.Map(UserInfoUrl, _ => FakeHttpServer.Json(new
-        {
-            sub = "userinfo-subject",
-            given_name = "Grace",
-            family_name = "Hopper",
-            email = "grace@example.com",
-            email_verified = true,
-        }));
+        server.Map(UserInfoUrl, _ => UserInfoAnswer());
     }
+
+    public static HttpResponseMessage UserInfoAnswer() => FakeHttpServer.Json(new
+    {
+        sub = "userinfo-subject",
+        given_name = "Grace",
+        family_name = "Hopper",
+        email = "grace@example.com",
+        email_verified = true,
+    });
 
     public static RsaSecurityKey NewKey(string keyId) => new(RSA.Create(2048)) { KeyId = keyId };
 
@@ -274,6 +276,47 @@ public class OidcPipelineTests(OidcPipelineTests.OidcEngine engine) : IClassFixt
         Assert.Equal(calls + 1, Http.Count(engine.Idp.UserInfoUrl));
         var call = Http.Requests.Last(r => r.Uri.AbsoluteUri == engine.Idp.UserInfoUrl);
         Assert.Equal("Bearer " + token, call.Authorization);
+    }
+
+    [Fact]
+    public async Task UserInfo_TheCallerWhoStartedTheLookupLeaves_TheOthersStillGetTheClaims()
+    {
+        // Callers with the same token share one UserInfo lookup, which must not stop when the
+        // caller who started it leaves.
+        var token = engine.Idp.Issue(FakeIdp.Claims("email"));
+        var calls = Http.Count(engine.Idp.UserInfoUrl);
+        var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Http.MapAsync(engine.Idp.UserInfoUrl, async (_, cancel) =>
+        {
+            called.TrySetResult();
+            await release.Task.WaitAsync(cancel);
+            return FakeIdp.UserInfoAnswer();
+        });
+        try
+        {
+            using var leaving = new CancellationTokenSource();
+            using var firstRequest = new HttpRequestMessage(HttpMethod.Get, "auth/claims");
+            firstRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var first = engine.Client.SendAsync(firstRequest, leaving.Token);
+            await called.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var second = GetAsync("auth/claims", token);
+            await Task.Delay(500);
+            leaving.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+            await Task.Delay(300);
+            release.SetResult();
+
+            var (status, row) = await second.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(HttpStatusCode.OK, status);
+            Assert.Equal("grace@example.com", Text(row, "email"));
+            Assert.Equal(calls + 1, Http.Count(engine.Idp.UserInfoUrl));   // one lookup served both
+        }
+        finally
+        {
+            Http.Map(engine.Idp.UserInfoUrl, _ => FakeIdp.UserInfoAnswer());
+        }
     }
 
     [Fact]

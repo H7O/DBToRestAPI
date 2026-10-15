@@ -314,7 +314,7 @@ Resolution order:
 4. Global `userinfo_timeout_seconds` (if configured)
 5. Default: `30` seconds
 
-UserInfo calls also respect request cancellation (`HttpContext.RequestAborted`).
+Requests with the same token share one UserInfo call, which keeps running until all of them have disconnected or the timeout passes.
 
 ## Endpoint Overrides
 

@@ -188,7 +188,7 @@ Resolution order:
 2. Global `target_route_timeout_seconds`
 3. Default: `30` seconds
 
-Outbound calls also respect request cancellation (`HttpContext.RequestAborted`).
+An outbound call stops when its caller disconnects. On a route with `<cache>`, a call that other callers are waiting on keeps running until all of them have gone ([caching](07-caching.md#requests-that-arrive-while-the-query-runs)).
 
 ## Complete Example
 

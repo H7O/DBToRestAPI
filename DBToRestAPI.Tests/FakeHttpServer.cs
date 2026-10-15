@@ -21,7 +21,8 @@ public sealed class FakeHttpServer
         public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
     }
 
-    private readonly ConcurrentDictionary<string, Func<Request, HttpResponseMessage>> _answers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Func<Request, CancellationToken, Task<HttpResponseMessage>>> _answers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>> _requestAnswers = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentQueue<Request> _requests = new();
 
     public IReadOnlyCollection<Request> Requests => _requests;
@@ -30,7 +31,23 @@ public sealed class FakeHttpServer
     /// Answers every request to <paramref name="url"/>: its scheme, host and path, with any query
     /// string or user name.
     /// </summary>
-    public void Map(string url, Func<Request, HttpResponseMessage> answer) => _answers[Key(new Uri(url))] = answer;
+    public void Map(string url, Func<Request, HttpResponseMessage> answer)
+        => _answers[Key(new Uri(url))] = (request, _) => Task.FromResult(answer(request));
+
+    /// <summary>
+    /// As <see cref="Map"/>, for an answer that takes its time: it gets the caller's token, so a
+    /// caller that gives up cancels it.
+    /// </summary>
+    public void MapAsync(string url, Func<Request, CancellationToken, Task<HttpResponseMessage>> answer)
+        => _answers[Key(new Uri(url))] = answer;
+
+    /// <summary>
+    /// As <see cref="MapAsync"/>, but the answer gets the request message itself, with its content
+    /// not yet read: it reads the body when it chooses, as a real server does once its connection is
+    /// up. The recorded request has no body.
+    /// </summary>
+    public void MapRequest(string url, Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> answer)
+        => _requestAnswers[Key(new Uri(url))] = answer;
 
     /// <summary>
     /// The number of requests made so far to <paramref name="url"/>, with any query string or user name.
@@ -58,6 +75,14 @@ public sealed class FakeHttpServer
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage message, CancellationToken cancellationToken)
         {
+            if (server._requestAnswers.TryGetValue(Key(message.RequestUri!), out var requestAnswer))
+            {
+                server._requests.Enqueue(new Request(message.Method, message.RequestUri!, message.Headers.Authorization?.ToString(), null));
+                var answered = await requestAnswer(message, cancellationToken);
+                answered.RequestMessage = message;
+                return answered;
+            }
+
             var request = new Request(
                 message.Method,
                 message.RequestUri!,
@@ -70,7 +95,7 @@ public sealed class FakeHttpServer
             server._requests.Enqueue(request);
 
             var response = server._answers.TryGetValue(Key(request.Uri), out var answer)
-                ? answer(request)
+                ? await answer(request, cancellationToken)
                 : new HttpResponseMessage(HttpStatusCode.NotFound);
             response.RequestMessage = message;
             return response;

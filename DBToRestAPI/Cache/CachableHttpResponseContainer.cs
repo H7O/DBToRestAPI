@@ -16,7 +16,7 @@ namespace DBToRestAPI.Cache
         public Dictionary<string, string[]> Headers { get; set; } = new Dictionary<string, string[]>();
 
 
-        public static async Task<CachableHttpResponseContainer> Parse(HttpResponseMessage response)
+        public static async Task<CachableHttpResponseContainer> Parse(HttpResponseMessage response, CancellationToken cancellationToken = default)
         {
             CachableHttpResponseContainer cachedResponse = new CachableHttpResponseContainer
             {
@@ -49,7 +49,7 @@ namespace DBToRestAPI.Cache
             }
 
             // third - copying the content
-            cachedResponse.Content = await response.Content.ReadAsByteArrayAsync();
+            cachedResponse.Content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
 
             return cachedResponse;
         }

@@ -964,7 +964,9 @@ namespace DBToRestAPI.Middlewares
                     var httpClient = _httpClientFactory.CreateClient("checkCertificateErrors");
                     var request = new HttpRequestMessage(HttpMethod.Get, discoveryDocument.UserInfoEndpoint);
                     request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
-                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, cancellationToken);
+                    // The cache's own token: callers with the same token share this lookup, so it must
+                    // not stop when the caller who started it leaves.
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     linkedCts.CancelAfter(TimeSpan.FromSeconds(userInfoTimeoutSeconds));
                     var response = await httpClient.SendAsync(request, linkedCts.Token);
                     if (!response.IsSuccessStatusCode)

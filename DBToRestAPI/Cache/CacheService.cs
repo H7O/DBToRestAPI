@@ -33,14 +33,21 @@ namespace DBToRestAPI.Cache
         /// <param name="serviceSection">The configuration section containing cache settings.</param>
         /// <param name="context">The HTTP context containing request information.</param>
         /// <param name="resolvedRoute">The resolved route path after wildcard matching.</param>
-        /// <param name="dataFactory">A function that generates the item if it is not found in the cache.</param>
-        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+        /// <param name="dataFactory">A function that generates the item if it is not found in the cache. It receives
+        /// whether to buffer the response for the cache, and the token to stop on (see the remarks).</param>
+        /// <param name="cancellationToken">The request's token.</param>
         /// <returns>A task that represents the asynchronous operation.</returns>
+        /// <remarks>
+        /// A cache fill is shared: every caller with the same key waits on the one fill. So it runs on
+        /// the cache's own token, which is cancelled only once all of them have gone, never on the
+        /// request that happened to start it, and it must not touch that request, which can end
+        /// first. Outside a fill, the factory gets the request's token.
+        /// </remarks>
         public async Task<T?> GetForGateway<T>(
                 IConfigurationSection serviceSection,
                 HttpContext context,
                 string resolvedRoute,
-                Func<bool, Task<T?>> dataFactory,
+                Func<bool, CancellationToken, Task<T?>> dataFactory,
                 CancellationToken cancellationToken = default
             ) where T : class
         {
@@ -51,7 +58,7 @@ namespace DBToRestAPI.Cache
             {
                 // if there is no cache configuration, just return the data by calling
                 // the dataFactory with disableDeferredExecution = false (streaming mode)
-                return await dataFactory(false);
+                return await dataFactory(false, cancellationToken);
             }
 
             var options = new HybridCacheEntryOptions
@@ -60,11 +67,11 @@ namespace DBToRestAPI.Cache
                 LocalCacheExpiration = cacheInfo.Duration,
             };
 
-            // A factory that returns null has already streamed its response to its own caller,
-            // because the upstream status is in exclude_status_codes_from_cache. HybridCache would
-            // store that null like any value, and every later request would get an empty 200
-            // without being forwarded, until the entry expired. So a null leaves the factory as an
-            // exception, which HybridCache never stores.
+            // A factory that returns null has a response that must not be stored (its status is in
+            // exclude_status_codes_from_cache, or it sets a cookie), and has handed it to its own
+            // caller. HybridCache would store that null like any value, and every later request
+            // would get an empty 200 without being forwarded, until the entry expired. So a null
+            // leaves the factory as an exception, which HybridCache never stores.
             var ranOwnFactory = false;
             try
             {
@@ -75,27 +82,35 @@ namespace DBToRestAPI.Cache
                     {
                         ranOwnFactory = true;
                         // Buffered mode, for caching
-                        return await dataFactory(true) ?? throw new ResponseNotCachedException();
+                        return await dataFactory(true, cancel) ?? throw new ResponseNotCachedException();
                     },
                     options: options,
                     cancellationToken: cancellationToken);
             }
             catch (ResponseNotCachedException) when (ranOwnFactory)
             {
-                // This request's response was streamed by its own factory.
+                // This request's factory handed its response to it.
                 return null;
             }
             catch (ResponseNotCachedException)
             {
                 // This request waited on another request's factory, whose response was not cached
                 // and went to that other caller. Forward this one on its own.
-                return await dataFactory(false);
+                return await dataFactory(false, cancellationToken);
             }
         }
 
         /// <summary>
-        /// Thrown out of a gateway cache factory whose response was streamed rather than buffered,
-        /// so that HybridCache stores nothing for it.
+        /// True when <see cref="GetForGateway"/> uses the cache for this request: it either answers
+        /// from the cache or forwards the request in a cache fill.
+        /// </summary>
+        public bool CachesGatewayRequest(IConfigurationSection serviceSection, HttpContext context, string resolvedRoute)
+            => IsCacheableMethod(context.Request.Method)
+               && GetCacheInfoForGateway(serviceSection, context, resolvedRoute) != null;
+
+        /// <summary>
+        /// Thrown out of a gateway cache fill whose response must not be stored (the fill handed it to
+        /// its own caller instead), so that HybridCache stores nothing for it.
         /// </summary>
         private sealed class ResponseNotCachedException : Exception
         {
@@ -137,15 +152,17 @@ namespace DBToRestAPI.Cache
         /// And if the data is meant to be cached in memory, then it should be generated directly.
         /// The boolean value represents `disableDefferedExecution`, this means if it's true, then the data should be generated directly,
         /// and if it's false, then the data should be generated in deffered fashion.
+        /// The function also receives the token to stop on: the cache's own in a cache fill, the request's otherwise
+        /// (see <see cref="GetForGateway"/>).
         /// </param>
-        /// <param name="cancellationToken">A token to monitor for cancellation requests. The default value is <see cref="CancellationToken.None"/>.</param>
+        /// <param name="cancellationToken">The request's token. The default value is <see cref="CancellationToken.None"/>.</param>
         /// <returns>A task that represents the asynchronous operation. The task result contains the item retrieved from the
         /// cache or generated by the data factory.</returns>
         public async Task<T> GetQueryResultAsync<T>(
                 IConfigurationSection serviceSection,
                 HttpContext context,
                 List<DbQueryParams> qParams,
-                Func<bool, Task<T>> dataFactory,
+                Func<bool, CancellationToken, Task<T>> dataFactory,
                 CancellationToken cancellationToken = default
             )
         {
@@ -154,7 +171,7 @@ namespace DBToRestAPI.Cache
             {
                 // if there is no cache configuration, just return the data by calling
                 // the dataFactory with disableDefferedExecution = false (which means the data should be generated in deffered fashion)
-                return await dataFactory(false);
+                return await dataFactory(false, cancellationToken);
             }
 
             var options = new HybridCacheEntryOptions
@@ -165,7 +182,7 @@ namespace DBToRestAPI.Cache
             return await this._cache.GetOrCreateAsync<T>(
                 cacheInfo.Key, // Unique key to the cache entry
 
-                async cancel => await dataFactory(true),
+                async cancel => await dataFactory(true, cancel),
                 // ^ Data factory to generate the item (in direct fashion for caching) if not found in cache
                 options: options,
                 cancellationToken: cancellationToken);
@@ -183,14 +200,15 @@ namespace DBToRestAPI.Cache
         /// <param name="context">The HTTP context. Only GET and HEAD requests use the cache, and the request's route is part of the key.</param>
         /// <param name="qParams">A list of query parameters used to identify the cache entry.</param>
         /// <param name="dataFactory">A function that generates the IActionResult. Receives a boolean
-        /// for disableDeferredExecution (true = materialize for cache, false = stream).</param>
-        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+        /// for disableDeferredExecution (true = materialize for cache, false = stream), and the token to
+        /// stop on: the cache's own in a cache fill, the request's otherwise (see <see cref="GetForGateway"/>).</param>
+        /// <param name="cancellationToken">The request's token.</param>
         /// <returns>The IActionResult either from cache or freshly generated.</returns>
         public async Task<IActionResult> GetQueryResultAsActionAsync(
                 IConfigurationSection serviceSection,
                 HttpContext context,
                 List<DbQueryParams> qParams,
-                Func<bool, Task<IActionResult>> dataFactory,
+                Func<bool, CancellationToken, Task<IActionResult>> dataFactory,
                 CancellationToken cancellationToken = default
             )
         {
@@ -198,7 +216,7 @@ namespace DBToRestAPI.Cache
             if (cacheInfo == null)
             {
                 // No cache configured - return streaming IActionResult directly
-                return await dataFactory(false);
+                return await dataFactory(false, cancellationToken);
             }
 
             var options = new HybridCacheEntryOptions
@@ -213,7 +231,7 @@ namespace DBToRestAPI.Cache
                 async cancel =>
                 {
                     // Execute the data factory in materialized (non-deferred) mode
-                    var actionResult = await dataFactory(true);
+                    var actionResult = await dataFactory(true, cancel);
                     // Convert IActionResult to a serializable container
                     return CachableQueryResult.FromActionResult(actionResult);
                 },

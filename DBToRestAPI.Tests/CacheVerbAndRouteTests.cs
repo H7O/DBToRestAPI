@@ -97,7 +97,7 @@ public class CacheVerbAndRouteTests
 
         public async Task<int> CallAsync(CacheService cache, IConfigurationSection section, HttpContext context, object? values = null)
         {
-            var result = await cache.GetQueryResultAsActionAsync(section, context, Params(values), materialise =>
+            var result = await cache.GetQueryResultAsActionAsync(section, context, Params(values), (materialise, cancel) =>
             {
                 Materialised.Add(materialise);
                 return Task.FromResult<IActionResult>(new ObjectResult(new { call = ++Calls }) { StatusCode = 200 });
@@ -446,7 +446,7 @@ public class CacheVerbAndRouteTests
         var section = config.GetSection("routes:gateway_split");
         var forwarded = 0;
 
-        Task<string?> Forward(bool materialise) => Task.FromResult<string?>($"response {++forwarded}");
+        Task<string?> Forward(bool materialise, CancellationToken cancel) => Task.FromResult<string?>($"response {++forwarded}");
 
         Assert.Equal("response 1", await cache.GetForGateway(section, Request("GET", "gw/s", query: "?tag=a"), "gw/s", Forward));
         Assert.Equal("response 2", await cache.GetForGateway(section, Request("GET", "gw/s", query: "?tag=b"), "gw/s", Forward));
@@ -475,7 +475,7 @@ public class CacheVerbAndRouteTests
         var section = config.GetSection("routes:gateway");
         var forwarded = 0;
 
-        Task<string?> Forward(bool materialise) => Task.FromResult<string?>($"response {++forwarded}");
+        Task<string?> Forward(bool materialise, CancellationToken cancel) => Task.FromResult<string?>($"response {++forwarded}");
 
         Assert.Equal("response 1", await cache.GetForGateway(section, Request("POST", "gw/a"), "gw/a", Forward));
         Assert.Equal("response 2", await cache.GetForGateway(section, Request("POST", "gw/a"), "gw/a", Forward));
@@ -486,14 +486,14 @@ public class CacheVerbAndRouteTests
     [Fact]
     public async Task Gateway_ExcludedStatus_IsNotStored_SoTheNextGetIsForwarded()
     {
-        // A response whose status is in exclude_status_codes_from_cache is streamed by the
-        // factory, which returns null. HybridCache stored that null, and every later GET got an
-        // empty 200 without being forwarded.
+        // A response whose status is in exclude_status_codes_from_cache is handed to its own
+        // caller by the factory, which returns null. HybridCache stored that null, and every later
+        // GET got an empty 200 without being forwarded.
         var (cache, config) = Create();
         var section = config.GetSection("routes:gateway");
         var forwarded = 0;
 
-        Task<string?> ExcludedThenOk(bool materialise) =>
+        Task<string?> ExcludedThenOk(bool materialise, CancellationToken cancel) =>
             Task.FromResult(++forwarded == 1 ? null : $"response {forwarded}");
 
         Assert.Null(await cache.GetForGateway(section, Request("GET", "gw/a"), "gw/a", ExcludedThenOk));
@@ -509,7 +509,7 @@ public class CacheVerbAndRouteTests
         var section = config.GetSection("routes:gateway_tags");
         var forwarded = 0;
 
-        Task<string?> Forward(bool materialise) => Task.FromResult<string?>($"response {++forwarded}");
+        Task<string?> Forward(bool materialise, CancellationToken cancel) => Task.FromResult<string?>($"response {++forwarded}");
 
         Assert.Equal("response 1", await cache.GetForGateway(section, Request("GET", "gw/a", query: "?tag=a,b"), "gw/a", Forward));
         Assert.Equal("response 2", await cache.GetForGateway(section, Request("GET", "gw/a", query: "?tag=a&tag=b"), "gw/a", Forward));
@@ -525,7 +525,7 @@ public class CacheVerbAndRouteTests
         var section = config.GetSection("routes:gateway_tags");
         var forwarded = 0;
 
-        Task<string?> Forward(bool materialise) => Task.FromResult<string?>($"response {++forwarded}");
+        Task<string?> Forward(bool materialise, CancellationToken cancel) => Task.FromResult<string?>($"response {++forwarded}");
 
         var forgedRoute = "gw/a|category=" + "victim".ToXxHash3();
         Assert.Equal("response 1", await cache.GetForGateway(section, Request("GET", forgedRoute), forgedRoute, Forward));
@@ -542,7 +542,7 @@ public class CacheVerbAndRouteTests
         var section = config.GetSection("routes:gateway_tags");
         var forwarded = 0;
 
-        Task<string?> Forward(bool materialise) => Task.FromResult<string?>($"response {++forwarded}");
+        Task<string?> Forward(bool materialise, CancellationToken cancel) => Task.FromResult<string?>($"response {++forwarded}");
 
         Assert.Equal("response 1", await cache.GetForGateway(section,
             Request("GET", "gw/a", query: "?category=toys", headers: ("category", "books")), "gw/a", Forward));
@@ -563,7 +563,7 @@ public class CacheVerbAndRouteTests
         var section = config.GetSection("routes:gateway_tags");
         var forwarded = 0;
 
-        Task<string?> Forward(bool materialise) => Task.FromResult<string?>($"response {++forwarded}");
+        Task<string?> Forward(bool materialise, CancellationToken cancel) => Task.FromResult<string?>($"response {++forwarded}");
 
         Assert.Equal("response 1", await cache.GetForGateway(section, Request("GET", "gw/a", query: "?Tag=a&tag=b"), "gw/a", Forward));
         Assert.Equal("response 2", await cache.GetForGateway(section, Request("GET", "gw/a", query: "?tag=a&tag=b"), "gw/a", Forward));
@@ -580,7 +580,7 @@ public class CacheVerbAndRouteTests
         var section = config.GetSection("queries:tenant_scoped");
         var calls = 0;
 
-        Task<IActionResult> Run(bool materialise) =>
+        Task<IActionResult> Run(bool materialise, CancellationToken cancel) =>
             Task.FromResult<IActionResult>(new ObjectResult(new { call = ++calls }) { StatusCode = 200 });
 
         static List<DbQueryParams> Sources(string header, string query) =>

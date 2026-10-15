@@ -319,12 +319,16 @@ namespace DBToRestAPI.Controllers
             #region get the data from DB and return it
             try
             {
+                // Read from the request now: a cache fill runs the queries later, possibly after it ended.
+                var runRoute = HttpContext.Items.TryGetValue("route", out var routeItem) ? routeItem : null;
+                var runResponse = HttpContext.Response;
                 var response = await _settings.CacheService
                     .GetQueryResultAsActionAsync(
                     section,
                     HttpContext,
                     qParams,
-                    disableDiffered => GetResultFromDbMultipleQueriesAsync(section, queries, qParams, disableDiffered),
+                    (disableDiffered, cancel) => GetResultFromDbMultipleQueriesAsync(
+                        section, queries, qParams, new QueryRun(runRoute, disableDiffered, cancel, runResponse)),
                     HttpContext.RequestAborted
                     );
 
@@ -399,10 +403,11 @@ namespace DBToRestAPI.Controllers
         private async Task<string> PrepareEmbeddedHttpCallsParamsIfAny(
             string query,
             List<DbQueryParams> qParams,
-            IConfigurationSection section)
+            IConfigurationSection section,
+            QueryRun run)
         {
             var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var route = HttpContext.Items.TryGetValue("route", out var r) ? r?.ToString() : "unknown";
+            var route = run.Route?.ToString() ?? "unknown";
 
             // Check if there is an embedded http call within the query to resolve it before executing the main query.
             // Look for http regex in `http_variable_pattern` within the section to use for identifying http call variables.
@@ -501,7 +506,7 @@ namespace DBToRestAPI.Controllers
             }).ToList();
 
             // Phase 2: Execute all HTTP calls in parallel (fan-out)
-            // Normal calls share the request's cancellation token.
+            // Normal calls stop on the run's token: the request's, or in a cache fill the cache's own.
             // No-wait calls use the application stopping token so they survive after the response is sent.
             _logger.LogDebug(
                 "{Time}: [EmbeddedHTTP] Route: {Route} — Starting {Count} HTTP call(s) in parallel...",
@@ -542,7 +547,7 @@ namespace DBToRestAPI.Controllers
                 }
                 else
                 {
-                    awaitableTasks.Add((i, ExecuteSingleEmbeddedHttpCallAsync(call.RequestDetails, this.HttpContext.RequestAborted)));
+                    awaitableTasks.Add((i, ExecuteSingleEmbeddedHttpCallAsync(call.RequestDetails, run.Cancel)));
                 }
             }
 
@@ -762,6 +767,50 @@ namespace DBToRestAPI.Controllers
 
 
         /// <summary>
+        /// One run of an endpoint's queries, for its own request or as a cache fill.
+        /// </summary>
+        /// <remarks>
+        /// A cache fill is shared: every caller with the same key waits on it, and it can outlive the
+        /// request that started it, whose HttpContext is then disposed. So a run never reads the
+        /// request: it carries the route, stops on the token it was given (in a fill, the cache's own,
+        /// cancelled only once every waiting caller has gone), and in a fill, having read its results
+        /// to the end, disposes its connection and readers itself instead of leaving them to the
+        /// response.
+        /// </remarks>
+        private sealed class QueryRun(object? route, bool materialize, CancellationToken cancel, HttpResponse response)
+            : IAsyncDisposable
+        {
+            private readonly List<IAsyncDisposable> _disposables = [];
+
+            /// <summary>The route as Step1 stored it, for messages and logs.</summary>
+            public object? Route { get; } = route;
+
+            /// <summary>True for a cache fill: every result is read to its end before the run returns.</summary>
+            public bool Materialize { get; } = materialize;
+
+            public CancellationToken Cancel { get; } = cancel;
+
+            /// <summary>
+            /// Disposes <paramref name="disposable"/> when the run ends, or, for a run whose result is
+            /// streamed, with the response.
+            /// </summary>
+            public void DisposeWhenDone(IAsyncDisposable disposable)
+            {
+                if (Materialize)
+                    _disposables.Add(disposable);
+                else
+                    response.RegisterForDisposeAsync(disposable);
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                for (var i = _disposables.Count - 1; i >= 0; i--)
+                    await _disposables[i].DisposeAsync();
+                _disposables.Clear();
+            }
+        }
+
+        /// <summary>
         /// Executes one or more database queries, passing results between them when chained.
         /// Each query can target a different database via its ConnectionStringName.
         /// The final (or only) query's result is returned to the client.
@@ -769,14 +818,16 @@ namespace DBToRestAPI.Controllers
         /// <param name="serviceQuerySection">The configuration section for the specific service query.</param>
         /// <param name="queries">List of query definitions to execute in sequence.</param>
         /// <param name="qParams">Initial query parameters from the HTTP request.</param>
-        /// <param name="disableDeferredExecution">If true, materializes final result for caching.</param>
+        /// <param name="run">This run: a cache fill materializes the final result.</param>
         /// <returns>The result of the final query as an IActionResult.</returns>
         private async Task<IActionResult> GetResultFromDbMultipleQueriesAsync(
             IConfigurationSection serviceQuerySection,
             List<QueryDefinition> queries,
             List<DbQueryParams> qParams,
-            bool disableDeferredExecution = false)
+            QueryRun run)
         {
+            await using var _ = run;
+
             // Fallback timeouts from section and global config
             int? sectionTimeout = serviceQuerySection.GetValue<int?>("db_command_timeout");
             int? globalTimeout = _configuration.GetValue<int?>("db_command_timeout");
@@ -805,8 +856,8 @@ namespace DBToRestAPI.Controllers
                 {
                     if (query.IsLastInChain)
                     {
-                        // Final query: register connection for disposal at request end (supports streaming)
-                        HttpContext.Response.RegisterForDisposeAsync(connection);
+                        // Final query: disposed at request end (supports streaming), or when a cache fill ends
+                        run.DisposeWhenDone(connection);
 
                         // Delegate to existing method for response building
                         // We pass the accumulated qParams which now includes results from previous queries
@@ -816,23 +867,23 @@ namespace DBToRestAPI.Controllers
                             query.QueryText,
                             qParams,
                             commandTimeout,
-                            disableDeferredExecution);
+                            run);
                     }
                     else
                     {
                         // Intermediate query: prepare embedded HTTP calls (if any), execute, materialize, and add result to qParams
-                        var queryText = await PrepareEmbeddedHttpCallsParamsIfAny(query.QueryText, qParams, serviceQuerySection);
+                        var queryText = await PrepareEmbeddedHttpCallsParamsIfAny(query.QueryText, qParams, serviceQuerySection, run);
 
                         var result = await connection.ExecuteQueryAsync(
                             queryText,
                             qParams,
                             commandTimeout: commandTimeout,
-                            cToken: HttpContext.RequestAborted);
+                            cToken: run.Cancel);
 
-                        HttpContext.RequestAborted.ThrowIfCancellationRequested();
+                        run.Cancel.ThrowIfCancellationRequested();
 
                         // Detect single vs multiple rows using chambered enumerable
-                        var chamberedResult = await result.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
+                        var chamberedResult = await result.ToChamberedEnumerableAsync(2, run.Cancel);
 
                         // Get the NEXT query's JsonVariableName for the dictionary key
                         var nextQuery = queries[query.Index + 1];
@@ -913,7 +964,7 @@ namespace DBToRestAPI.Controllers
             return StatusCode(500, new
             {
                 success = false,
-                message = $"No queries to execute for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                message = $"No queries to execute for route `{run.Route}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
             });
         }
 
@@ -927,8 +978,10 @@ namespace DBToRestAPI.Controllers
             string query,
             List<DbQueryParams> qParams,
             int? commandTimeout,
-            bool disableDeferredExecution)
+            QueryRun run)
         {
+            var disableDeferredExecution = run.Materialize;
+
             // Check if count query is defined
             var countQuery = serviceQuerySection.GetSection("count_query")?.Value;
 
@@ -948,12 +1001,12 @@ namespace DBToRestAPI.Controllers
                     {
                         success = false,
                         message = $"Invalid response structure `{responseStructure}` defined for route "
-                        + $"`{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                        + $"`{run.Route}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                     });
                 }
 
                 // Prepare embedded HTTP calls for main query (if any)
-                query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
+                query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection, run);
 
                 // Diagnostic: check if unresolved {http{ markers remain before SQL execution
                 if (query.Contains("{http{"))
@@ -962,18 +1015,18 @@ namespace DBToRestAPI.Controllers
                         "{Time}: [SQL-PRE-EXEC] Route: {Route} — WARNING: Query still contains unresolved {{http{{}} markers before SQL execution! " +
                         "This will cause SQL syntax errors. qParams count: {ParamCount}, qParams regexes: [{Regexes}]",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                        HttpContext.Items.TryGetValue("route", out var preRoute) ? preRoute : "unknown",
+                        run.Route ?? "unknown",
                         qParams.Count,
                         string.Join("; ", qParams.Select((p, i) => $"#{i}: regex='{(p.QueryParamsRegex?.Length > 60 ? p.QueryParamsRegex[..60] + "..." : p.QueryParamsRegex)}' hasData={p.DataModel != null}")));
                 }
 
-                var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
+                var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: run.Cancel);
                 if (resultWithNoCount != null)
                 {
-                    HttpContext.Response.RegisterForDisposeAsync(resultWithNoCount);
+                    run.DisposeWhenDone(resultWithNoCount);
                 }
 
-                HttpContext.RequestAborted.ThrowIfCancellationRequested();
+                run.Cancel.ThrowIfCancellationRequested();
 
                 if (responseStructure == "array")
                 {
@@ -992,7 +1045,7 @@ namespace DBToRestAPI.Controllers
                     // inside this controller's catch and gets its status. With more, the rest is
                     // streamed while the response is written, and such an error can only reach
                     // Step6, which maps it if nothing has been sent yet.
-                    var chamberedArray = await resultWithNoCount.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
+                    var chamberedArray = await resultWithNoCount.ToChamberedEnumerableAsync(2, run.Cancel);
                     if (!string.IsNullOrWhiteSpace(rootNodeName))
                     {
                         var wrappedResult = new ExpandoObject();
@@ -1009,8 +1062,8 @@ namespace DBToRestAPI.Controllers
 
                 if (responseStructure == "auto")
                 {
-                    var chamberedResult = await resultWithNoCount.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
-                    HttpContext.RequestAborted.ThrowIfCancellationRequested();
+                    var chamberedResult = await resultWithNoCount.ToChamberedEnumerableAsync(2, run.Cancel);
+                    run.Cancel.ThrowIfCancellationRequested();
 
                     if (chamberedResult.WasExhausted(2))
                     {
@@ -1045,28 +1098,28 @@ namespace DBToRestAPI.Controllers
                 return StatusCode(500, new
                 {
                     success = false,
-                    message = $"Invalid response structure `{responseStructure}` defined for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                    message = $"Invalid response structure `{responseStructure}` defined for route `{run.Route}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                 });
             }
 
             // With count query - prepare embedded HTTP calls (if any)
-            countQuery = await PrepareEmbeddedHttpCallsParamsIfAny(countQuery, qParams, serviceQuerySection);
+            countQuery = await PrepareEmbeddedHttpCallsParamsIfAny(countQuery, qParams, serviceQuerySection, run);
 
-            var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
+            var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: commandTimeout, cToken: run.Cancel);
             if (resultCount != null)
             {
-                HttpContext.Response.RegisterForDisposeAsync(resultCount);
+                run.DisposeWhenDone(resultCount);
             }
 
-            var rowCount = await FirstRowAsync(resultCount, HttpContext.RequestAborted);
-            HttpContext.RequestAborted.ThrowIfCancellationRequested();
+            var rowCount = await FirstRowAsync(resultCount, run.Cancel);
+            run.Cancel.ThrowIfCancellationRequested();
 
             if (rowCount == null)
             {
                 return StatusCode(500, new
                 {
                     success = false,
-                    message = $"Count query did not return any records for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                    message = $"Count query did not return any records for route `{run.Route}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                 });
             }
             // Extract scalar value from single-column count result
@@ -1077,15 +1130,15 @@ namespace DBToRestAPI.Controllers
             await resultCount.CloseReaderAsync();
 
             // Prepare embedded HTTP calls for main query (if any)
-            query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection);
+            query = await PrepareEmbeddedHttpCallsParamsIfAny(query, qParams, serviceQuerySection, run);
 
-            var result = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: HttpContext.RequestAborted);
+            var result = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: run.Cancel);
             if (result != null)
             {
-                HttpContext.Response.RegisterForDisposeAsync(result);
+                run.DisposeWhenDone(result);
             }
 
-            HttpContext.RequestAborted.ThrowIfCancellationRequested();
+            run.Cancel.ThrowIfCancellationRequested();
 
             if (disableDeferredExecution)
             {
@@ -1102,7 +1155,7 @@ namespace DBToRestAPI.Controllers
 
             // The first two rows are read here, as for `array`, so a result of zero rows or one
             // is read to its end inside this controller's catch.
-            var chamberedData = await result.ToChamberedEnumerableAsync(2, HttpContext.RequestAborted);
+            var chamberedData = await result.ToChamberedEnumerableAsync(2, run.Cancel);
 
             if (!string.IsNullOrWhiteSpace(rootNodeName))
             {

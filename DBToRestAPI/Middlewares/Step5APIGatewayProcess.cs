@@ -248,17 +248,28 @@ namespace DBToRestAPI.Middlewares
             #region cache implementation
             try
             {
+                // Built from this request now: a cache fill forwards it later, possibly after this
+                // request has ended.
+                var targetRequestMsg = await BuildTargetRequestAsync(section, context, url,
+                    copyBody: _settings.CacheService.CachesGatewayRequest(section, context, resolvedRoute));
+                CachableHttpResponseContainer? notStored = null;
                 var cachedResponse = await _settings.CacheService.GetForGateway<CachableHttpResponseContainer>(
                     section,
                     context,
                     resolvedRoute,
-                    disableStreaming => ProcessApiGatewayRequestAsync(section, context, url, disableStreaming),
+                    (disableStreaming, cancel) => ProcessApiGatewayRequestAsync(
+                        section, context, targetRequestMsg, disableStreaming, cancel, response => notStored = response),
                     context.RequestAborted
                 );
 
-                // If response is null, it means streaming mode was used and response already written
+                // If response is null, it was streamed and already written, or this request's own cache
+                // fill got a response that must not be stored, and handed it back here.
                 if (cachedResponse == null)
+                {
+                    if (notStored != null)
+                        await WriteHttpResponseFromCache(context, notStored);
                     return;
+                }
 
                 // Response came from cache or was buffered - write it to the client
                 await WriteHttpResponseFromCache(context, cachedResponse);
@@ -272,25 +283,37 @@ namespace DBToRestAPI.Middlewares
         }
 
         /// <summary>
-        /// Processes the API gateway request by forwarding it to the target URL.
+        /// Builds the request to forward to the target URL from the caller's request.
         /// </summary>
-        /// <param name="section">Configuration section for the route.</param>
-        /// <param name="context">The HTTP context.</param>
-        /// <param name="url">The target URL to forward the request to.</param>
-        /// <param name="disableStreaming">If true, buffers the entire response for caching. If false, streams directly to client.</param>
-        /// <returns>CachableHttpResponseContainer if buffered, null if streamed.</returns>
-        private async Task<CachableHttpResponseContainer?> ProcessApiGatewayRequestAsync(
+        /// <remarks>
+        /// A request the cache handles may be forwarded by a cache fill, which can outlive the
+        /// caller's request, so its body is copied now (<paramref name="copyBody"/>). Any other
+        /// request is forwarded within its own request, and streams its body.
+        /// </remarks>
+        private async Task<HttpRequestMessage> BuildTargetRequestAsync(
             IConfigurationSection section,
             HttpContext context,
             string url,
-            bool disableStreaming)
+            bool copyBody)
         {
             #region prepare target request msg
             var targetRequestMsg = new HttpRequestMessage(new HttpMethod(context.Request.Method), url);
 
             // see if the request has a body
             if (context.Request.Body?.CanRead == true)
-                targetRequestMsg.Content = new StreamContent(context.Request.Body);
+            {
+                if (copyBody)
+                {
+                    // Grows with the bytes received, never with the length the caller claims.
+                    var body = new MemoryStream();
+                    await context.Request.Body.CopyToAsync(body, context.RequestAborted);
+                    targetRequestMsg.Content = new ByteArrayContent(body.GetBuffer(), 0, (int)body.Length);
+                }
+                else
+                {
+                    targetRequestMsg.Content = new StreamContent(context.Request.Body);
+                }
+            }
 
             #endregion
 
@@ -384,6 +407,33 @@ namespace DBToRestAPI.Middlewares
             }
             #endregion
 
+            return targetRequestMsg;
+        }
+
+        /// <summary>
+        /// Processes the API gateway request by forwarding it to the target URL.
+        /// </summary>
+        /// <param name="section">Configuration section for the route.</param>
+        /// <param name="context">The HTTP context, written to only when streaming.</param>
+        /// <param name="targetRequestMsg">The request to forward, from <see cref="BuildTargetRequestAsync"/>.</param>
+        /// <param name="disableStreaming">If true, buffers the entire response for caching. If false, streams directly to client.</param>
+        /// <param name="cancel">The token to stop on: the cache's own in a cache fill, the request's otherwise.</param>
+        /// <param name="handBackNotStored">Receives a buffered response that must not be stored.</param>
+        /// <returns>CachableHttpResponseContainer if buffered and storable, null otherwise.</returns>
+        /// <remarks>
+        /// When buffering, this is a cache fill, which every caller with the same key waits on and
+        /// which can outlive the request that started it. So it never touches that request: a
+        /// response that must not be stored is handed back, and that request's caller gets it if it
+        /// is still there.
+        /// </remarks>
+        private async Task<CachableHttpResponseContainer?> ProcessApiGatewayRequestAsync(
+            IConfigurationSection section,
+            HttpContext context,
+            HttpRequestMessage targetRequestMsg,
+            bool disableStreaming,
+            CancellationToken cancel,
+            Action<CachableHttpResponseContainer> handBackNotStored)
+        {
             #region check if the target route certificate errors should be ignored
             var ignoreCertificateErrors = section.GetValue<bool?>("ignore_target_route_certificate_errors");
             // if no ignore certificate errors for this route, check if there are default ignore certificate errors for all routes
@@ -401,11 +451,12 @@ namespace DBToRestAPI.Middlewares
                 : httpClientFactory.CreateClient("checkCertificateErrors")
                 )
             {
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancel);
                 linkedCts.CancelAfter(TimeSpan.FromSeconds(targetRouteTimeoutSeconds));
                 var targetRouteResponse = await client.SendAsync(targetRequestMsg, linkedCts.Token);
 
                 #region check if we should cache this status code
+                var storable = true;
                 var memorySection = section.GetSection("cache:memory");
                 if (memorySection.Exists())
                 {
@@ -420,8 +471,8 @@ namespace DBToRestAPI.Middlewares
 
                         if (excludedStatusCodes.Contains((int)targetRouteResponse.StatusCode))
                         {
-                            // This status code should not be cached - stream directly
-                            disableStreaming = false;
+                            // This status code should not be cached
+                            storable = false;
                         }
                     }
                 }
@@ -430,16 +481,20 @@ namespace DBToRestAPI.Middlewares
                 // A Set-Cookie belongs to the caller it was sent for, so a response that carries one
                 // goes to that caller and is never stored for the next.
                 if (targetRouteResponse.Headers.Contains("Set-Cookie"))
-                    disableStreaming = false;
+                    storable = false;
 
                 if (disableStreaming)
                 {
                     // Buffer the entire response for caching
-                    return await CachableHttpResponseContainer.Parse(targetRouteResponse);
+                    var buffered = await CachableHttpResponseContainer.Parse(targetRouteResponse, cancel);
+                    if (storable)
+                        return buffered;
+                    handBackNotStored(buffered);
+                    return null;
                 }
                 else
                 {
-                    // Stream directly to client (no caching or status code excluded from cache)
+                    // Stream directly to client (a route without a cache, or a caller forwarding on its own)
                     context.Response.StatusCode = (int)targetRouteResponse.StatusCode;
 
                     #region setup the response headers back to the caller
@@ -463,7 +518,7 @@ namespace DBToRestAPI.Middlewares
                     // Stream the response body
                     await targetRouteResponse.Content.CopyToAsync(
                         context.Response.BodyWriter.AsStream(),
-                        context.RequestAborted
+                        cancel
                         );
 
                     context.Response.BodyWriter.Complete();

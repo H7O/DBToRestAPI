@@ -82,16 +82,6 @@ against the code. Each was read in the code; none has a test yet.
   Escape the message, or log the exception type and number only.
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
-- **A caller waiting on another caller's cache fill gets a 400 when that caller disconnects.**
-  HybridCache runs one fill per key and every caller with the same key waits on it, but the fill
-  uses the first caller's `RequestAborted` (and, for a query endpoint, a connection registered for
-  disposal on the first caller's response). When that caller leaves, the fill fails and every
-  waiting caller gets the generic 400. Fix it by giving the fill HybridCache's own `cancel` token
-  (cancelled only when every caller has gone) plus the route's timeout, and by disposing the
-  connection inside the factory in materialised mode. Don't catch OperationCanceledException in
-  the callers instead: a 1.7.6 attempt did, and also caught upstream timeouts, so every waiting
-  caller re-sent its request to an upstream that was already too slow. Found by review on
-  2026-10-06.
 - **An error after part of a streamed result has been written cuts the connection.** Results
   of two or more rows (other than a file download's or a count query's count) stream their rows, so an error raised after the rows (from 1.7.7
   it surfaces) can't change a status that MVC has already handed to the server: Step6 aborts the
@@ -151,6 +141,18 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **A caller waiting on another caller's cache fill got a 400 when that caller disconnected.** Fixed
+  in 1.7.11. HybridCache runs one fill per key, and every caller with the same key waits on it, but
+  the fill ran on the first caller's `RequestAborted`, and a query endpoint's connection and readers
+  were disposed with the first caller's response. When that caller left, the fill failed, and every
+  caller waiting on it got the generic 400. A fill now runs on HybridCache's own token, cancelled only
+  once every waiting caller has gone; a query endpoint's fill disposes its own connection and readers
+  and no longer reads the first caller's `HttpContext`, which is disposed when that request ends. A
+  gateway fill forwards a request built, body included, before the fill starts, and hands a response
+  that must not be stored back to the first caller instead of writing to its response. The UserInfo
+  lookup, which callers with the same token share, no longer stops on the first caller's token either. The callers don't catch `OperationCanceledException`: a 1.7.6 attempt did, and
+  also caught upstream timeouts, so every waiting caller re-sent its request to an upstream that was
+  already too slow.
 - **A new endpoint could answer 404 until its file was saved a second time.** Fixed in 1.7.10. The
   services built from the configuration (endpoints, gateway routes, API keys, OIDC providers, static
   files, OpenAPI, the configuration path monitor) were woken by the same reload signal as
