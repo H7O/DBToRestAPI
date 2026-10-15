@@ -363,6 +363,12 @@ each one. `dotnet run`, with or without `--project DBToRestAPI`, starts the engi
 `DBToRestAPI` folder as `Development`, so it reads that file and logs at `Debug`. To trace a problem
 in production, set `Logging__LogLevel__Default=Debug` for a while.
 
+A status your query raises on purpose (`THROW 50404, ...`, see [errors](../reference/errors.md#raising-an-error-from-sql))
+is logged as one line with the route, the status and the message, without a stack trace: at
+`Information` for a 4xx, which a caller's input causes, and at `Warning` for any other status. A
+database error you didn't raise is logged at `Error` with its stack trace, and so is a raised status
+that can no longer reach the caller because the response has started.
+
 A URL in the log is an http or https URL without its query string, its fragment or a user name and
 password; any other value is logged as `(not a network URL)`. So a key in a URL's query string stays
 out of the log, but a key in its path doesn't: a webhook URL whose path is the secret is logged in

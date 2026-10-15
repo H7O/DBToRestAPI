@@ -1,4 +1,3 @@
-using Com.H.Threading;
 using DBToRestAPI.Controllers;
 using DBToRestAPI.Settings;
 using DBToRestAPI.Settings.Extensinos;
@@ -29,7 +28,7 @@ public class OpenApiDocumentBuilder
     private bool _enabled;
     private readonly IEncryptedConfiguration _configuration;
     private readonly ILogger<OpenApiDocumentBuilder> _logger;
-    private readonly AtomicGate _reloadingGate = new();
+    private readonly Lock _reloadLock = new();
     private readonly RateLimitPolicyResolver _rateLimitResolver;
 
     private static readonly Regex _routeParamRegex = new(
@@ -68,10 +67,9 @@ public class OpenApiDocumentBuilder
 
     private void Rebuild()
     {
+        _reloadLock.Enter();
         try
         {
-            if (!_reloadingGate.TryOpen()) return;
-
             var globalEnabled = string.Equals(
                 _configuration.GetSection("openapi")?.GetValue<string>("enabled"),
                 "true",
@@ -125,7 +123,7 @@ public class OpenApiDocumentBuilder
         }
         finally
         {
-            _reloadingGate.TryClose();
+            _reloadLock.Exit();
         }
     }
     private static string BuildSwaggerUiHtml(string title)

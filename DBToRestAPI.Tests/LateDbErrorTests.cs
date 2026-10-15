@@ -5,6 +5,7 @@ using DBToRestAPI.Controllers;
 using DBToRestAPI.Middlewares;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace DBToRestAPI.Tests;
 
@@ -89,6 +90,22 @@ public class LateDbErrorTests : IDisposable
         Assert.False(body.GetProperty("success").GetBoolean());
         Assert.Equal("Category not found", body.GetProperty("message").GetString());
         Assert.Equal(404, body.GetProperty("error_number").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(404, LogLevel.Information)]
+    [InlineData(409, LogLevel.Information)]
+    [InlineData(503, LogLevel.Warning)]
+    public void RaisedStatus_IsLoggedWithItsMessage_AndNoStackTrace(int status, LogLevel level)
+    {
+        var logs = new CapturedLogs();
+
+        ApiController.LogRaisedStatus(logs.CreateLogger("test"), "r/1", status, "Bad\nvalue");
+
+        var entry = Assert.Single(logs.Entries);
+        Assert.Equal(level, entry.Level);
+        Assert.Null(entry.Exception);
+        Assert.EndsWith($"Route r/1 answered {status}, raised by its query: Bad%0Avalue", entry.Message);
     }
 
     [Fact]

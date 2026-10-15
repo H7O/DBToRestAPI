@@ -46,14 +46,8 @@ against the code. Each was read in the code; none has a test yet.
   (`error_message`) doesn't match the runtime body (`success`, `message`, `error_number`).
 - **The shipped `settings.xml` sets `debug_mode_header_value` to 54321.** Anyone sending that header
   gets stack traces. Ship the sample without the element (an empty value is "off" from 1.7.6).
-- **Configuration reload, reported by review and not yet reproduced end to end:**
-  - The route resolvers and `SettingsEncryptionService` subscribe to the same root reload token. On
-    alternate reloads the resolvers may rebuild from the previous merged snapshot.
-  - On Linux and macOS without `settings_encryption:data_protection_key_path`,
-    `SettingsEncryptionService` returns before it registers its change token, so nothing would
-    hot-reload.
-  - A connection's provider is cached for the life of the process (`DbConnectionFactory`), so
-    changing it needs a restart.
+- **A connection's provider is cached for the life of the process** (`DbConnectionFactory`), so
+  changing it needs a restart.
 - **`max_payload_size_in_bytes` configures Kestrel only.** Under IIS in-process hosting (the
   default), ASP.NET Core's `IISServerOptions.MaxRequestBodySize` (30,000,000 bytes) applies
   instead, and IIS's `maxAllowedContentLength` before it. The engine could set
@@ -157,6 +151,38 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **A new endpoint could answer 404 until its file was saved a second time.** Fixed in 1.7.10. The
+  services built from the configuration (endpoints, gateway routes, API keys, OIDC providers, static
+  files, OpenAPI, the configuration path monitor) were woken by the same reload signal as
+  `SettingsEncryptionService`, whose merged copy they read. That signal wakes its newest subscriber
+  first, and the order flips on every reload, so on every other save they rebuilt from the previous
+  configuration: the route table (endpoints added, removed or re-routed) and the other services' lists
+  lagged one save behind. The service now gives them its own signal, sent once its copy holds the new
+  configuration.
+- **Without settings encryption, nothing reloaded.** Fixed in 1.7.10. On Linux and macOS without
+  `settings_encryption:data_protection_key_path`, `SettingsEncryptionService` built its copy once and
+  never subscribed to changes, so every edit to a configuration file needed a restart there. It
+  follows the files in every mode now.
+- **The reload gates could close each other.** Changed in 1.7.10. Each service guarded its reload with
+  a gate that skipped a second caller, and six of the seven opened it inside the `try` whose `finally`
+  closed it, so a skipped call would also have closed the gate of the one still running. It never
+  happened: `ChangeToken.OnChange` never runs one subscription's reload twice at once. The services use
+  a lock now, which waits instead of skipping.
+- **Removing the last gateway route left it matching.** Fixed in 1.7.10. With no `<routes>` left, the
+  gateway's resolver kept its previous routes, so a request to the removed route answered `500`
+  (``Improper route settings (missing `url`)``) instead of `404`. The endpoint resolver kept its routes
+  in the same way, but nothing reached them: with no `<queries>` left, the engine answers before it asks
+  the resolver (a static file, or `404`). Both resolvers now clear their routes.
+- **A `404` from a file download named the stored `relative_path`.** Fixed in 1.7.10. The message showed
+  the caller the path the query returned, which tells how the store is laid out. It names the route
+  only; each case that resolves the path already logged it.
+- **A status raised from SQL was logged as an error with a stack trace.** Fixed in 1.7.10. A `THROW
+  50400` that rejects a caller's input is the query's answer, not a failure of the engine, but it
+  wrote an `Error` entry with the full stack on every request, and a second one from the upload step
+  when it was raised after a streamed result's rows on an upload route. It is now one line with the
+  route, the status and the message, at
+  `Information` for a 4xx and at `Warning` for any other status. A raised
+  status that can't reach the caller, because the response has started, is still an `Error`.
 - **The sample `settings.xml` set a global `db_command_timeout` of 30 seconds.** Changed in 1.7.9.
   Because it was always set, every query got a command timeout of 30 seconds, which overrode any
   timeout in a connection string (`Command Timeout=120` for SQL Server). It is now a commented-out

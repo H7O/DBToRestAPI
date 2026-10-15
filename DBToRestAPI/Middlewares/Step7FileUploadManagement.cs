@@ -455,9 +455,14 @@ namespace DBToRestAPI.Middlewares
             }
             catch (Exception ex)
             {
-                this._logger.LogError(ex, "{errorCode}: An exception occurred in Step6FileManagement middleware: {message}",
-                    _errorCode,
-                    ex.Message);
+                // A status the query raised on purpose is logged by Step6MandatoryFieldsCheck, which
+                // answers it (at Error when it can no longer reach the client).
+                if (!Controllers.ApiController.TryGetCustomDbError(ex, out _, out _))
+                {
+                    this._logger.LogError(ex, "{errorCode}: An exception occurred in Step6FileManagement middleware: {message}",
+                        _errorCode,
+                        ex.Message);
+                }
 
                 await RollbackUploadedFilesAsync(ex.Message);
 

@@ -186,14 +186,6 @@ namespace DBToRestAPI.Middlewares
                 var hasResponseStarted = context.Response.HasStarted;
                 var currentStatusCode = context.Response.StatusCode;
 
-                _logger.LogError(ex,
-                    "{Time}: Exception in Step6MandatoryFieldsCheck pipeline. " +
-                    "Route: {Route}, ServiceType: {ServiceType}, " +
-                    "ResponseHasStarted: {HasStarted}, CurrentStatusCode: {StatusCode}, " +
-                    "ExceptionType: {ExceptionType}, Message: {Message}",
-                    timestamp, route, serviceType, hasResponseStarted, currentStatusCode,
-                    ex.GetType().Name, ex.Message);
-
                 // Only attempt to write error response if nothing of the response exists yet. Not
                 // started isn't enough: MVC's JSON writer hands its buffer to the server before the
                 // first flush, so HasStarted can still be false with part of a streamed result in
@@ -202,7 +194,26 @@ namespace DBToRestAPI.Middlewares
                 // response.
                 var bodyWriter = context.Response.BodyWriter;
                 var hasBufferedBody = bodyWriter.CanGetUnflushedBytes && bodyWriter.UnflushedBytes > 0;
-                if (!context.Response.HasStarted && !hasBufferedBody)
+                var canWriteError = !hasResponseStarted && !hasBufferedBody;
+
+                // A status the query raised on purpose, which the client is about to receive, is its
+                // answer rather than a failure. Any other exception is logged in full.
+                if (canWriteError && Controllers.ApiController.TryGetCustomDbError(ex, out var raisedNumber, out var raisedMessage))
+                {
+                    Controllers.ApiController.LogRaisedStatus(_logger, route, raisedNumber - 50000, raisedMessage);
+                }
+                else
+                {
+                    _logger.LogError(ex,
+                        "{Time}: Exception in Step6MandatoryFieldsCheck pipeline. " +
+                        "Route: {Route}, ServiceType: {ServiceType}, " +
+                        "ResponseHasStarted: {HasStarted}, CurrentStatusCode: {StatusCode}, " +
+                        "ExceptionType: {ExceptionType}, Message: {Message}",
+                        timestamp, route, serviceType, hasResponseStarted, currentStatusCode,
+                        ex.GetType().Name, ex.Message);
+                }
+
+                if (canWriteError)
                 {
                     try
                     {

@@ -30,6 +30,8 @@ The engine maps a database error numbered `n`, with `50000 <= n < 51000`, to HTT
 
 `error_number` is the HTTP status, not the database number. `message` is the database driver's error text, so it reaches the caller. Keep it user-facing and keep internals out of it.
 
+The engine logs a raised status as one line with the route, the status and the message, and no stack trace: at `Information` for a 4xx and at `Warning` for any other status ([Log level](../topics/02-configuration.md#log-level)). A status raised once the response has started, which can't reach the caller, is logged at `Error` with its stack trace, like any database error you didn't raise yourself.
+
 | Database | How to raise | Caller gets | Notes |
 |---|---|---|---|
 | SQL Server | `THROW 50404, 'Not found', 1;` | 404, `"Not found"` | End the previous statement with `;`. `IF <condition> THROW ...;` works. Don't use `RAISERROR('text', 16, 1)`: it reports 50000, which becomes an invalid status line (`0`), so clients see a network error and uploads are kept. |

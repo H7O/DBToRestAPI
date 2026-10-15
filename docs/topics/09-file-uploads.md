@@ -394,7 +394,7 @@ An `optional` store that fails is skipped, with a warning in the log. A non-opti
 | `{{guid}}` | The file's `id` |
 | `{file{name}}` | The checked file name |
 
-Default result, on an English server: `2026/Oct/06/6f1c2d1e-.../invoice.pdf`. `MMM` is a localized month name, so for paths that don't depend on the server's language use numbers: `{date{yyyy}}/{date{MM}}/{date{dd}}`. The structure is plain text substitution, so a flat layout such as `{date{yyyy}}/{{guid}}_{file{name}}` works too. Nothing is ever written outside the store's `base_path`, and rollback leaves the folders it created.
+Default result, on an English server: `2026/Oct/06/6f1c2d1e-.../invoice.pdf`. The date is UTC, not the server's local date: on a server ahead of UTC, a file uploaded in the first hours after local midnight lands in the previous day's folder, and on a server behind UTC, one uploaded in the last hours before local midnight lands in the next day's, for as many hours as the offset. `MMM` is a localized month name, so for paths that don't depend on the server's language use numbers: `{date{yyyy}}/{date{MM}}/{date{dd}}`. The structure is plain text substitution, so a flat layout such as `{date{yyyy}}/{{guid}}_{file{name}}` works too. Nothing is ever written outside the store's `base_path`, and rollback leaves the folders it created.
 
 ## Errors
 

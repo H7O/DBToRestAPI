@@ -1,4 +1,3 @@
-using Com.H.Threading;
 using DBToRestAPI.Settings;
 using DBToRestAPI.Services;
 using Microsoft.Extensions.Configuration;
@@ -30,7 +29,8 @@ using System.Text.RegularExpressions;
 /// - Parameterized route: "api/users/{id}" matches "api/users/123", "api/users/abc", etc.
 /// - Verb-agnostic route: "api/data" with no verb matches any HTTP method
 /// 
-/// Thread-safe reloading is ensured using an AtomicGate to prevent concurrent reload operations.
+/// Reloads run one at a time: a reload that arrives while another runs waits for it, so none
+/// is dropped.
 /// </summary>
 public class QueryRouteResolver
 {
@@ -40,7 +40,7 @@ public class QueryRouteResolver
     private readonly IEncryptedConfiguration _configuration;
 
 
-    private readonly AtomicGate _reloadingGate = new();
+    private readonly Lock _reloadLock = new();
     private readonly InertApiKeysWarning _inertApiKeysWarning;
     private readonly ResponseStructureWarning _responseStructureWarning;
 
@@ -62,13 +62,17 @@ public class QueryRouteResolver
 
     private void LoadRoutes()
     {
+        _reloadLock.Enter();
         try
         {
-            if (!_reloadingGate.TryOpen()) return;
-
             var querySections = _configuration.GetSection("queries");
             if (querySections == null || !querySections.Exists())
+            {
+                // The last endpoint was removed: none answers any more.
+                _exactRoutes = new();
+                _routesWithVariables = new();
                 return;
+            }
 
             var newExactRoutes = new List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>();
             var newRoutesWithVariables = new List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>();
@@ -151,7 +155,7 @@ public class QueryRouteResolver
         }
         finally
         {
-            _reloadingGate.TryClose();
+            _reloadLock.Exit();
         }
     }
 

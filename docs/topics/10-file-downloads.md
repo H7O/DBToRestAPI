@@ -130,7 +130,7 @@ SELECT 'report.pdf' AS file_name, url AS http FROM reports WHERE id = {{id}};
 | Status | When | Body `message` |
 |---|---|---|
 | `404` | Query returned no row | ``No file record found to download for route `...` `` |
-| `404` | `relative_path` outside the store, file missing or not readable by the app's account, local store without `base_path` | ``File not found at relative path `...` for route `...` `` |
+| `404` | `relative_path` outside the store, file missing or not readable by the app's account, local store without `base_path` | ``File not found for route `...` `` |
 | `404` | No `<store>` on the route, an unknown store name, or no source column | ``No valid file content source found to download for route `...` `` |
 | `404` | SFTP store without `host` or `username` | `SFTP host not defined ...` / `SFTP username not defined ...` |
 | `404` | `http` is empty or not a well-formed absolute URL | ``Invalid HTTP URL for route `...` `` |

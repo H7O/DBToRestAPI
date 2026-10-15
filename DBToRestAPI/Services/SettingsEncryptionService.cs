@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
-using Com.H.Threading;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Primitives;
 
@@ -80,7 +79,9 @@ public class SettingsEncryptionService : IEncryptedConfiguration
 
     private readonly IConfiguration _originalConfiguration;
     private readonly ILogger<SettingsEncryptionService> _logger;
-    private readonly AtomicGate _reloadingGate = new();
+
+    // One rebuild at a time, so a reload and a value set through the indexer can't interleave.
+    private readonly Lock _reloadLock = new();
 
     // Complete merged IConfiguration (all original values + decrypted values overlaid)
     private IConfiguration _mergedConfiguration;
@@ -97,6 +98,12 @@ public class SettingsEncryptionService : IEncryptedConfiguration
 
     // Pre-built list of root-level children (for GetChildren() on the service itself)
     private List<ConfigurationSectionWrapper> _rootChildren = new();
+
+    // The token GetReloadToken() hands out. It fires once the caches above hold the new
+    // configuration. The underlying configuration's token fires before this service has rebuilt,
+    // and its callbacks run newest first, so a service subscribed to it after this one would
+    // rebuild from the previous configuration: a new endpoint would answer 404 until the next save.
+    private ConfigurationReloadToken _reloadToken = new();
 
     // Dictionary of decrypted values only (used for overlay during merge and public API)
     private Dictionary<string, string?> _decryptedValues = new(StringComparer.OrdinalIgnoreCase);
@@ -140,17 +147,17 @@ public class SettingsEncryptionService : IEncryptedConfiguration
             _logger.LogInformation(
                 "Settings encryption service is disabled. " +
                 "Configure data_protection_key_path for cross-platform encryption, or run on Windows for DPAPI.");
-            // Just copy the original configuration
-            RebuildMergedConfiguration();
-            return;
+        }
+        else
+        {
+            _logger.LogInformation("Settings encryption initialized using {Method}", _encryptionMethod);
         }
 
-        _logger.LogInformation("Settings encryption initialized using {Method}", _encryptionMethod);
-
-        // Initial load - process encryption and build merged config
+        // Initial load - process encryption (when active) and build merged config
         LoadAndProcessEncryption();
 
-        // Monitor for ANY configuration changes (not just settings_encryption)
+        // Monitor for ANY configuration changes (not just settings_encryption), with or without
+        // encryption: every service reads the merged copy, so it must follow the files.
         ChangeToken.OnChange(
             () => _originalConfiguration.GetReloadToken(),
             LoadAndProcessEncryption);
@@ -246,10 +253,9 @@ public class SettingsEncryptionService : IEncryptedConfiguration
     /// </summary>
     private void LoadAndProcessEncryption()
     {
+        _reloadLock.Enter();
         try
         {
-            if (!_reloadingGate.TryOpen()) return;
-
             // Read encryption configuration
             var encryptionSection = _originalConfiguration.GetSection("settings_encryption");
             if (!encryptionSection.Exists() || !_isActive)
@@ -329,7 +335,7 @@ public class SettingsEncryptionService : IEncryptedConfiguration
         }
         finally
         {
-            _reloadingGate.TryClose();
+            _reloadLock.Exit();
         }
     }
 
@@ -371,6 +377,18 @@ public class SettingsEncryptionService : IEncryptedConfiguration
         // Clear the miss cache since configuration has changed
         // Non-existent paths might now exist (or vice versa)
         _missCache = new ConcurrentDictionary<string, ConfigurationSectionWrapper>(StringComparer.OrdinalIgnoreCase);
+
+        // Everything a service reads is current now, so tell them. The new token is in place before
+        // the old one fires, so a service that asks for the token while it reloads gets the next one.
+        // A service that fails to reload is logged here, and the others still reload.
+        try
+        {
+            Interlocked.Exchange(ref _reloadToken, new ConfigurationReloadToken()).OnReload();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "A service failed to reload the configuration");
+        }
     }
 
     /// <summary>
@@ -385,7 +403,6 @@ public class SettingsEncryptionService : IEncryptedConfiguration
         // Build cache recursively starting from root
         BuildSectionCacheRecursive(
             _mergedConfiguration,
-            _originalConfiguration,
             parentPath: "",
             parentChildrenList: newRootChildren,
             cache: newCache);
@@ -399,13 +416,11 @@ public class SettingsEncryptionService : IEncryptedConfiguration
     /// </summary>
     private void BuildSectionCacheRecursive(
         IConfiguration mergedConfig,
-        IConfiguration originalConfig,
         string parentPath,
         List<ConfigurationSectionWrapper> parentChildrenList,
         Dictionary<string, ConfigurationSectionWrapper> cache)
     {
         var mergedChildren = mergedConfig.GetChildren().ToList();
-        var originalChildren = originalConfig.GetChildren().ToDictionary(c => c.Key, StringComparer.OrdinalIgnoreCase);
 
         foreach (var mergedChild in mergedChildren)
         {
@@ -413,18 +428,10 @@ public class SettingsEncryptionService : IEncryptedConfiguration
                 ? mergedChild.Key
                 : $"{parentPath}:{mergedChild.Key}";
 
-            // Find matching original section (for reload token)
-            if (!originalChildren.TryGetValue(mergedChild.Key, out var originalChild))
-            {
-                // Fallback: use merged section for both (reload token won't work, but data will)
-                originalChild = mergedChild;
-            }
-
             // Create wrapper with empty children list (we'll populate it recursively)
             var childrenList = new List<ConfigurationSectionWrapper>();
             var wrapper = new ConfigurationSectionWrapper(
                 mergedChild,
-                originalChild,
                 childrenList,
                 this);
 
@@ -433,7 +440,7 @@ public class SettingsEncryptionService : IEncryptedConfiguration
             parentChildrenList.Add(wrapper);
 
             // Recurse into children
-            BuildSectionCacheRecursive(mergedChild, originalChild, path, childrenList, cache);
+            BuildSectionCacheRecursive(mergedChild, path, childrenList, cache);
         }
     }
 
@@ -462,7 +469,6 @@ public class SettingsEncryptionService : IEncryptedConfiguration
         return _missCache.GetOrAdd(path, key =>
             new ConfigurationSectionWrapper(
                 _mergedConfiguration.GetSection(key),
-                _originalConfiguration.GetSection(key),
                 new List<ConfigurationSectionWrapper>(),
                 this));
     }
@@ -789,9 +795,12 @@ public class SettingsEncryptionService : IEncryptedConfiguration
             // This maintains IConfiguration contract but changes won't survive restart
             if (!string.IsNullOrWhiteSpace(key))
             {
-                _decryptedValues[key] = value;
-                _keysSetInCode.Add(key);
-                RebuildMergedConfiguration();
+                lock (_reloadLock)
+                {
+                    _decryptedValues[key] = value;
+                    _keysSetInCode.Add(key);
+                    RebuildMergedConfiguration();
+                }
             }
         }
     }
@@ -810,8 +819,9 @@ public class SettingsEncryptionService : IEncryptedConfiguration
     /// </summary>
     public IChangeToken GetReloadToken()
     {
-        // Return the original configuration's reload token since that's what triggers our reload
-        return _originalConfiguration.GetReloadToken();
+        // Not the underlying configuration's token: this one fires after the merged configuration
+        // and the section caches are rebuilt, so a service woken by it reads the new configuration.
+        return _reloadToken;
     }
 
     /// <summary>
@@ -949,7 +959,7 @@ public class SettingsEncryptionService : IEncryptedConfiguration
 
 /// <summary>
 /// A pre-built wrapper around IConfigurationSection that delegates data operations to a merged configuration
-/// but returns reload tokens from the original configuration.
+/// and returns the parent service's reload token.
 /// 
 /// Unlike the previous implementation, these wrappers are created once during RebuildMergedConfiguration()
 /// and cached. GetSection() and GetChildren() are O(1) operations that return pre-built instances.
@@ -957,7 +967,8 @@ public class SettingsEncryptionService : IEncryptedConfiguration
 /// This is necessary because the merged configuration is an in-memory IConfiguration
 /// whose sections don't have proper reload tokens. By wrapping sections, we can:
 /// - Read data from the merged config (which has decrypted values)
-/// - Return reload tokens from the original config (which fires when XML files change)
+/// - Return the parent service's reload token (which fires once a changed file has been read and
+///   the parent's section caches rebuilt, so a subscriber never reads the previous configuration)
 /// 
 /// This allows code like:
 ///   ChangeToken.OnChange(() => config.GetSection("api_keys").GetReloadToken(), LoadKeys);
@@ -966,18 +977,15 @@ public class SettingsEncryptionService : IEncryptedConfiguration
 internal class ConfigurationSectionWrapper : IConfigurationSection
 {
     private readonly IConfigurationSection _mergedSection;
-    private readonly IConfigurationSection _originalSection;
     private readonly List<ConfigurationSectionWrapper> _children;
     private readonly SettingsEncryptionService _parent;
 
     public ConfigurationSectionWrapper(
         IConfigurationSection mergedSection,
-        IConfigurationSection originalSection,
         List<ConfigurationSectionWrapper> children,
         SettingsEncryptionService parent)
     {
         _mergedSection = mergedSection;
-        _originalSection = originalSection;
         _children = children;
         _parent = parent;
     }
@@ -1011,13 +1019,14 @@ internal class ConfigurationSectionWrapper : IConfigurationSection
     }
 
     /// <summary>
-    /// Returns a change token from the ORIGINAL configuration.
+    /// Returns the parent service's change token, which fires after its caches are rebuilt.
     /// This is the key method - it ensures ChangeToken.OnChange works correctly.
     /// </summary>
     public IChangeToken GetReloadToken()
     {
-        // Return the original config's token so changes are detected
-        return _originalSection.GetReloadToken();
+        // A section's own token is the configuration root's anyway, so nothing section-specific
+        // is lost. Only the timing changes: this one fires after the rebuild, not before it.
+        return _parent.GetReloadToken();
     }
 
     /// <summary>

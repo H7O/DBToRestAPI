@@ -341,7 +341,40 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
     [InlineData("pl/count_raise")]  // the count query itself raises after its row
     public async Task ErrorRaisedAfterTheRows_GetsItsStatus(string path)
     {
+        var before = engine.Logs.Entries.Count;
+
         AssertMapped404(await GetAsync(path));
+
+        // The query's answer, not a failure of the engine: one line with its message, no stack trace.
+        var entries = engine.Logs.Entries.Skip(before).ToList();
+        var entry = Assert.Single(entries, e => e.Message.Contains("raised by its query"));
+        Assert.Equal(LogLevel.Information, entry.Level);
+        Assert.Null(entry.Exception);
+        Assert.Contains($"Route {path} answered 404, raised by its query: ", entry.Message);
+        Assert.Contains("Category not found", entry.Message);
+        // The engine's own entries only: the framework logs a warning on the engine's first request.
+        Assert.DoesNotContain(entries, e => e.Level >= LogLevel.Warning && e.Category.StartsWith("DBToRestAPI", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ErrorRaisedAfterRowsWereSent_IsLoggedAsAnError()
+    {
+        // Part of the result has been written, so the status can't reach the caller and the engine
+        // cuts the connection: that is a failure, logged at Error with the exception, not as the
+        // query's answer.
+        var before = engine.Logs.Entries.Count;
+        try
+        {
+            using var response = await Client.GetAsync("pl/window/2000");
+            await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
+        {
+        }
+
+        var entries = engine.Logs.Entries.Skip(before).ToList();
+        Assert.Contains(entries, e => e.Level == LogLevel.Error && e.Exception != null && e.Message.Contains("pl/window/2000"));
+        Assert.DoesNotContain(entries, e => e.Message.Contains("raised by its query"));
     }
 
     [Fact]

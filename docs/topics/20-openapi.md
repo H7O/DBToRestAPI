@@ -194,4 +194,4 @@ Security schemes are added to `components/securitySchemes` only when actually us
 - **Hot-reload** — the spec rebuilds automatically when any config file changes
 - **Short-circuit** — `/openapi.json`, `/swagger.json`, `/swagger`, `/swagger/index.html`, and `/api-docs` are all handled by early middleware before the main pipeline, so there's zero overhead on normal API requests
 - **No external dependencies** — built with `System.Text.Json`, no NuGet packages added
-- **Thread-safe** — uses the same `AtomicGate` pattern as the route resolver
+- **Thread-safe** — a rebuild runs under a lock, as the route resolver's does, so two never overlap

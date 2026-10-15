@@ -205,6 +205,17 @@ namespace DBToRestAPI.Controllers
             return false;
         }
 
+        /// <summary>
+        /// Logs a status the query raised on purpose (50000 + status), which the client receives. It is
+        /// the query's answer, not a failure of the engine, so the log gets its message without the stack
+        /// trace: at Information for a 4xx, which a caller's input causes, and at Warning for any other.
+        /// </summary>
+        internal static void LogRaisedStatus(ILogger logger, object? route, int status, string message) =>
+            logger.Log(
+                status is >= 400 and < 500 ? LogLevel.Information : LogLevel.Warning,
+                "{Time}: Route {Route} answered {Status}, raised by its query: {Message}",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, status, LogText.Escape(message));
+
 
 
         ///// <summary>
@@ -322,6 +333,26 @@ namespace DBToRestAPI.Controllers
             }
             catch (Exception ex)
             {
+                // Check for custom database errors (50000-51000 range) from any supported database vendor
+                // This handles SQL Server, PostgreSQL, MySQL, Oracle, SQLite, and DB2. Once the response has
+                // started, the status can't reach the client, so that case is logged in full below.
+                if (!Response.HasStarted && TryGetCustomDbError(ex, out int dbErrorNumber, out string dbErrorMessage))
+                {
+                    int httpStatusCode = dbErrorNumber - 50000;
+                    LogRaisedStatus(_logger, HttpContext.Items.TryGetValue("route", out var raisedRoute) ? raisedRoute : "unknown",
+                        httpStatusCode, dbErrorMessage);
+                    return new ObjectResult(dbErrorMessage)
+                    {
+                        StatusCode = httpStatusCode,
+                        Value = new
+                        {
+                            success = false,
+                            message = dbErrorMessage,
+                            error_number = httpStatusCode
+                        }
+                    };
+                }
+
                 // Log the exception with timestamp for easier debugging
                 _logger.LogError(ex,
                     "{Time}: Exception in ApiController.Index. Route: {Route}, ResponseHasStarted: {HasStarted}",
@@ -338,23 +369,6 @@ namespace DBToRestAPI.Controllers
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
                         HttpContext.Items.TryGetValue("route", out var route) ? route : "unknown");
                     return new EmptyResult();
-                }
-
-                // Check for custom database errors (50000-51000 range) from any supported database vendor
-                // This handles SQL Server, PostgreSQL, MySQL, Oracle, SQLite, and DB2
-                if (TryGetCustomDbError(ex, out int dbErrorNumber, out string dbErrorMessage))
-                {
-                    int httpStatusCode = dbErrorNumber - 50000;
-                    return new ObjectResult(dbErrorMessage)
-                    {
-                        StatusCode = httpStatusCode,
-                        Value = new
-                        {
-                            success = false,
-                            message = dbErrorMessage,
-                            error_number = httpStatusCode
-                        }
-                    };
                 }
 
                 // check if user passed `debug-mode` header in 
@@ -1269,12 +1283,12 @@ namespace DBToRestAPI.Controllers
                 }
 
                 // One 404 for every way a store can fail to produce the file (outside the store, missing, not
-                // readable), so a caller who controls relative_path can't tell them apart.
-                var requestedPath = relativePath;
+                // readable), so a caller who controls relative_path can't tell them apart. It names the route
+                // only: the stored path shows how the store is laid out, so each case logs it instead.
                 IActionResult FileNotFound() => NotFound(new
                 {
                     success = false,
-                    message = $"File not found at relative path `{requestedPath}` for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
+                    message = $"File not found for route `{HttpContext.Items["route"]}` (Contact your service provider support and provide them with error code `{_errorCode}`)"
                 });
                 // relative_path may come from the caller, so a line break in it must not start a new log line.
                 static string ForLog(string value) => value.ReplaceLineEndings(@"\n");
@@ -1320,7 +1334,7 @@ namespace DBToRestAPI.Controllers
                         if (fileStream == null)
                         {
                             // The full path names the server or share behind the store, so it goes to the
-                            // log only. The caller sees the relative path its own query returned.
+                            // log only.
                             _logger.LogWarning(
                                 "{Time}: File for route `{Route}` not found, or not readable by the app's account, at `{FullPath}`",
                                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), HttpContext.Items["route"], ForLog(fullPath));
@@ -1396,7 +1410,7 @@ namespace DBToRestAPI.Controllers
                         if (stream == null)
                         {
                             // The remote path names the folder layout behind the store, so it goes to the
-                            // log only. The caller sees the relative path its own query returned.
+                            // log only.
                             _logger.LogWarning(
                                 "{Time}: File for route `{Route}` not found, or not readable by the SFTP account, on SFTP file store `{Store}` at `{RemotePath}`",
                                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), HttpContext.Items["route"], sftpStoreSection.Key, ForLog(remotePath));

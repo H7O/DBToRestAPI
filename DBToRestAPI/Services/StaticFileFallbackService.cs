@@ -1,4 +1,3 @@
-using Com.H.Threading;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
@@ -57,7 +56,7 @@ public sealed class StaticFileFallbackService
     private readonly IWebHostEnvironment _env;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<StaticFileFallbackService> _logger;
-    private readonly AtomicGate _reloadingGate = new();
+    private readonly Lock _reloadLock = new();
 
     private volatile StaticState _state = Disabled;
 
@@ -160,7 +159,7 @@ public sealed class StaticFileFallbackService
 
     private void Rebuild()
     {
-        if (!_reloadingGate.TryOpen()) return;
+        _reloadLock.Enter();
 
         var previousProvider = _state.Provider;
         try
@@ -265,7 +264,7 @@ public sealed class StaticFileFallbackService
             {
                 try { previousProvider.Dispose(); } catch { /* best effort */ }
             }
-            _reloadingGate.TryClose();
+            _reloadLock.Exit();
         }
     }
 

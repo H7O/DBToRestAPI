@@ -1,4 +1,3 @@
-using Com.H.Threading;
 using Microsoft.Extensions.Primitives;
 using DBToRestAPI.Services;
 
@@ -20,7 +19,8 @@ using DBToRestAPI.Services;
 /// - Exact route: "api/users" matches only "api/users"
 /// - Wildcard route: "api/users/*" matches "api/users/123", "api/users/profile", etc.
 /// 
-/// Thread-safe reloading is ensured using an AtomicGate to prevent concurrent reload operations.
+/// Reloads run one at a time: a reload that arrives while another runs waits for it, so none
+/// is dropped.
 /// </summary>
 public class RouteConfigResolver
 {
@@ -28,7 +28,7 @@ public class RouteConfigResolver
     private List<(string Prefix, IConfigurationSection Config)> _wildcardRoutes = new();
     private readonly IEncryptedConfiguration _configuration;
 
-    private readonly AtomicGate _reloadingGate = new();
+    private readonly Lock _reloadLock = new();
     private readonly InertApiKeysWarning _inertApiKeysWarning;
 
     public RouteConfigResolver(IEncryptedConfiguration configuration, ILogger<RouteConfigResolver>? logger = null)
@@ -43,12 +43,17 @@ public class RouteConfigResolver
 
     private void LoadRoutes()
     {
+        _reloadLock.Enter();
         try
         {
-            if (!_reloadingGate.TryOpen()) return;
             var routesSection = _configuration.GetSection("routes");
             if (routesSection == null || !routesSection.Exists())
+            {
+                // The last route was removed: none answers any more.
+                _exactRoutes = new();
+                _wildcardRoutes = new();
                 return;
+            }
 
             var newExactRoutes = new Dictionary<string, IConfigurationSection>();
             var newWildcardRoutes = new List<(string Prefix, IConfigurationSection Config)>();
@@ -84,7 +89,7 @@ public class RouteConfigResolver
         }
         finally
         {
-            _reloadingGate.TryClose();
+            _reloadLock.Exit();
         }
 
     }

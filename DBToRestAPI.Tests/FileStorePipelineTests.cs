@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace DBToRestAPI.Tests;
 
@@ -36,11 +37,28 @@ public class FileStorePipelineTests(FileStorePipelineTests.StoreEngine engine) :
             ["queries:store_upload_raise:file_management:stores"] = "pl_store",
             ["queries:store_upload_raise:query"] = Record + " INSERT INTO raise_after VALUES (1);",
 
+            // Three short rows are streamed, so the error raised after them leaves the controller.
+            ["queries:store_upload_raise_rows:route"] = "store/upload_raise_rows",
+            ["queries:store_upload_raise_rows:verb"] = "POST",
+            ["queries:store_upload_raise_rows:response_structure"] = "array",
+            ["queries:store_upload_raise_rows:file_management:files_json_field_or_form_field_name"] = "attachments",
+            ["queries:store_upload_raise_rows:file_management:stores"] = "pl_store",
+            ["queries:store_upload_raise_rows:query"] = Record.Replace(
+                "WHERE id = last_insert_rowid();", "WHERE id = last_insert_rowid() UNION ALL SELECT 0, 'x' UNION ALL SELECT 0, 'y';")
+                + " INSERT INTO raise_after VALUES (1);",
+
             ["queries:store_download:route"] = "store/download/{{id}}",
             ["queries:store_download:verb"] = "GET",
             ["queries:store_download:response_structure"] = "file",
             ["queries:store_download:file_management:store"] = "pl_store",
             ["queries:store_download:query"] = "SELECT path AS relative_path, 'note.txt' AS file_name FROM uploads WHERE id = {{id}};",
+
+            // The path comes from the query string here, standing in for one stored in a table.
+            ["queries:store_download_path:route"] = "store/download_path",
+            ["queries:store_download_path:verb"] = "GET",
+            ["queries:store_download_path:response_structure"] = "file",
+            ["queries:store_download_path:file_management:store"] = "pl_store",
+            ["queries:store_download_path:query"] = "SELECT {{path}} AS relative_path, 'x.txt' AS file_name;",
         };
     })
     {
@@ -74,6 +92,23 @@ public class FileStorePipelineTests(FileStorePipelineTests.StoreEngine engine) :
         Assert.Equal("note.txt", download.Content.Headers.ContentDisposition?.FileNameStar);
     }
 
+    [Theory]
+    [InlineData("../outside-the-store.txt")]    // refused: outside the store
+    [InlineData("2026/missing-from-store.txt")]  // inside the store, but no such file
+    public async Task FileNotFound_NamesTheRouteOnly_AndLogsThePath(string storedPath)
+    {
+        var before = engine.Logs.Entries.Count;
+
+        using var response = await engine.Client.GetAsync("store/download_path?path=" + Uri.EscapeDataString(storedPath));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var message = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("message").GetString();
+        Assert.StartsWith("File not found for route `store/download_path`", message);
+        Assert.DoesNotContain(Path.GetFileName(storedPath), message);
+        Assert.Contains(engine.Logs.Entries.Skip(before),
+            e => e.Level == LogLevel.Warning && e.Message.Contains(Path.GetFileName(storedPath)));
+    }
+
     [Fact]
     public async Task MultipartUpload_PairsThePartWithItsEntry_AndIsStored()
     {
@@ -91,12 +126,15 @@ public class FileStorePipelineTests(FileStorePipelineTests.StoreEngine engine) :
         Assert.Equal("from a part", File.ReadAllText(Path.Combine(engine.Store, path)));
     }
 
-    [Fact]
-    public async Task ErrorAfterTheRows_RemovesTheStoredFile()
+    [Theory]
+    [InlineData("store/upload_raise")]       // one row: read to the end inside the controller
+    [InlineData("store/upload_raise_rows")]  // streamed: the error passes through the upload step
+    public async Task ErrorAfterTheRows_RemovesTheStoredFile(string route)
     {
         var before = StoredFiles().Length;
+        var logged = engine.Logs.Entries.Count;
 
-        using var response = await engine.Client.PostAsync("store/upload_raise", new StringContent(
+        using var response = await engine.Client.PostAsync(route, new StringContent(
             """{"attachments": [{"name": "late.txt", "content_base64": "aGVsbG8="}]}""", Encoding.UTF8, "application/json"));
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
 
@@ -104,5 +142,10 @@ public class FileStorePipelineTests(FileStorePipelineTests.StoreEngine engine) :
         Assert.Equal(404, body.GetProperty("error_number").GetInt32());
         Assert.Equal(before, StoredFiles().Length);
         Assert.DoesNotContain(StoredFiles(), f => f.EndsWith("late.txt", StringComparison.Ordinal));
+
+        // A status the query raised on purpose is logged once, without a stack trace.
+        var entries = engine.Logs.Entries.Skip(logged).ToList();
+        Assert.Single(entries, e => e.Level == LogLevel.Information && e.Message.Contains("answered 404, raised by its query"));
+        Assert.DoesNotContain(entries, e => e.Level >= LogLevel.Error);
     }
 }

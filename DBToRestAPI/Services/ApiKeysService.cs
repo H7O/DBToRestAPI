@@ -1,4 +1,3 @@
-using Com.H.Threading;
 using Microsoft.Extensions.Primitives;
 
 namespace DBToRestAPI.Services;
@@ -12,7 +11,8 @@ namespace DBToRestAPI.Services;
 /// 
 /// The service automatically reloads when the "api_keys_collections" configuration section changes.
 /// 
-/// Thread-safe reloading is ensured using an AtomicGate to prevent concurrent reload operations.
+/// Reloads run one at a time: a reload that arrives while another runs waits for it, so none
+/// is dropped.
 /// 
 /// Example configuration structure (api_keys.xml):
 /// <settings>
@@ -32,7 +32,7 @@ public class ApiKeysService
     private Dictionary<string, HashSet<string>> _apiKeysCollections = new();
     private readonly IEncryptedConfiguration _configuration;
     private readonly ILogger<ApiKeysService> _logger;
-    private readonly AtomicGate _reloadingGate = new();
+    private readonly Lock _reloadLock = new();
 
     public ApiKeysService(
         IEncryptedConfiguration settingsEncryptionService,
@@ -49,10 +49,9 @@ public class ApiKeysService
 
     private void LoadApiKeys()
     {
+        _reloadLock.Enter();
         try
         {
-            if (!_reloadingGate.TryOpen()) return;
-
             var apiKeysSection = _configuration.GetSection("api_keys_collections");
             if (apiKeysSection == null || !apiKeysSection.Exists())
             {
@@ -129,7 +128,7 @@ public class ApiKeysService
         }
         finally
         {
-            _reloadingGate.TryClose();
+            _reloadLock.Exit();
         }
     }
 

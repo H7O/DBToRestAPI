@@ -1,4 +1,3 @@
-using Com.H.Threading;
 using Microsoft.Extensions.Primitives;
 
 namespace DBToRestAPI.Services;
@@ -11,7 +10,7 @@ namespace DBToRestAPI.Services;
 /// <para>
 /// This mirrors the resolver pattern used elsewhere in the codebase
 /// (see <see cref="QueryRouteResolver"/> / <see cref="RouteConfigResolver"/>):
-/// an immutable snapshot swapped atomically, an <see cref="AtomicGate"/> guarding reloads,
+/// an immutable snapshot swapped atomically, a lock that runs reloads one at a time,
 /// and a <see cref="ChangeToken"/> subscription that rebuilds the snapshot on hot-reload.
 /// </para>
 ///
@@ -25,7 +24,7 @@ namespace DBToRestAPI.Services;
 public sealed class OidcProviderIndex
 {
     private readonly IEncryptedConfiguration _configuration;
-    private readonly AtomicGate _reloadingGate = new();
+    private readonly Lock _reloadLock = new();
 
     // Immutable snapshot; reference-swapped on reload (reference assignment is atomic).
     private OidcProviderResolution.ProviderSnapshot _snapshot = OidcProviderResolution.EmptySnapshot;
@@ -41,14 +40,14 @@ public sealed class OidcProviderIndex
 
     private void Load()
     {
+        _reloadLock.Enter();
         try
         {
-            if (!_reloadingGate.TryOpen()) return;
             _snapshot = OidcProviderResolution.BuildSnapshot(_configuration.GetSection("authorize:providers"));
         }
         finally
         {
-            _reloadingGate.TryClose();
+            _reloadLock.Exit();
         }
     }
 
