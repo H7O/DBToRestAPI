@@ -39,12 +39,8 @@
           if not defined anywhere, there is no per-file limit; only max_payload_size_in_bytes
           in settings.xml caps the whole request
           override precedence is: API node > global setting here
-          max_payload_size_in_bytes applies only when the engine runs on Kestrel. Under IIS's
-          default in-process hosting, IIS's maxAllowedContentLength (web.config) and
-          ASP.NET Core's IISServerOptions.MaxRequestBodySize (both about 30 MB) apply instead,
-          and the engine cannot raise the second. For larger uploads behind IIS, host
-          out-of-process (hostingModel="outofprocess" in web.config) and raise
-          maxAllowedContentLength.
+          Behind IIS, IIS's own maxAllowedContentLength (web.config, about 30 MB) applies before
+          max_payload_size_in_bytes: raise it for larger uploads.
           -->
 
 
@@ -96,8 +92,9 @@
       </site2>
       <!-- A Windows file share works as a base path too. Write it as a UNC path, either
         \\fileserver\share\uploads\ or //fileserver/share/uploads/.
-        The account the app runs as needs Modify on the share folder: write for uploads, delete to
-        roll back a failed upload, read for downloads. Under IIS's default app pool identity, or a
+        The account the app runs as needs Modify on the share folder: write and rename for uploads
+        (each is written under a hidden name, then renamed into place), delete to roll back a failed
+        upload, read for downloads. Under IIS's default app pool identity, or a
         service running as a built-in account, the app reaches the share as the server's computer
         account (DOMAIN\SERVER$), so grant that account, or run the pool or service as a domain
         account and grant that one instead.

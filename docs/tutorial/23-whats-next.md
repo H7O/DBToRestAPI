@@ -16,9 +16,9 @@ feature.  Use them when you need quick lookups:
 
 | Topic | File |
 |-------|------|
-| Quick Start | [docs/topics/01-quick-start.md](../topics/01-quick-start.md) |
+| Overview | [docs/topics/01-overview.md](../topics/01-overview.md) |
 | Configuration | [docs/topics/02-configuration.md](../topics/02-configuration.md) |
-| Endpoints & Routing | [docs/topics/03-endpoints.md](../topics/03-endpoints.md) |
+| CRUD Operations | [docs/topics/03-crud-operations.md](../topics/03-crud-operations.md) |
 | Parameters | [docs/topics/04-parameters.md](../topics/04-parameters.md) |
 | Response Formats | [docs/topics/05-response-formats.md](../topics/05-response-formats.md) |
 | API Keys | [docs/topics/06-api-keys.md](../topics/06-api-keys.md) |
@@ -26,16 +26,19 @@ feature.  Use them when you need quick lookups:
 | API Gateway | [docs/topics/08-api-gateway.md](../topics/08-api-gateway.md) |
 | File Uploads | [docs/topics/09-file-uploads.md](../topics/09-file-uploads.md) |
 | File Downloads | [docs/topics/10-file-downloads.md](../topics/10-file-downloads.md) |
-| Encryption | [docs/topics/11-encryption.md](../topics/11-encryption.md) |
+| CORS | [docs/topics/11-cors.md](../topics/11-cors.md) |
 | Authentication | [docs/topics/12-authentication.md](../topics/12-authentication.md) |
 | Multi-Database | [docs/topics/13-databases.md](../topics/13-databases.md) |
 | Query Chaining | [docs/topics/14-query-chaining.md](../topics/14-query-chaining.md) |
-| Error Handling | [docs/topics/15-error-handling.md](../topics/15-error-handling.md) |
-| Debug Mode | [docs/topics/16-debug-mode.md](../topics/16-debug-mode.md) |
+| Encryption | [docs/topics/15-encryption.md](../topics/15-encryption.md) |
+| TLS Certificates | [docs/topics/16-tls-certificates.md](../topics/16-tls-certificates.md) |
 | Embedded HTTP Calls | [docs/topics/17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) |
 | Rate Limiting | [docs/topics/18-rate-limiting.md](../topics/18-rate-limiting.md) |
+| Webhooks | [docs/topics/19-webhooks.md](../topics/19-webhooks.md) |
 | OpenAPI / Swagger | [docs/topics/20-openapi.md](../topics/20-openapi.md) |
 | Settings Variables | [docs/topics/21-settings-vars.md](../topics/21-settings-vars.md) |
+| Static Files | [docs/topics/22-static-files.md](../topics/22-static-files.md) |
+| Errors, status codes and debug mode | [docs/reference/errors.md](../reference/errors.md) |
 
 ---
 

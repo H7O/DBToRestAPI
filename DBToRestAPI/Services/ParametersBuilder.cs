@@ -34,11 +34,11 @@ public class ParametersBuilder
     private readonly ILogger<ParametersBuilder> _logger;
     // private readonly string _errorCode = "Payload Extractor Error";
     private static readonly JsonWriterOptions _jsonWriterOptions = new() { Indented = false };
-    private static readonly JsonDocumentOptions _jsonDocumentOptions = new()
-    {
-        AllowTrailingCommas = true,
-        CommentHandling = JsonCommentHandling.Skip
-    };
+    // Strict JSON nested at most 64 levels deep, the rules Com.H.Data.Common reads the body's text with:
+    // a body only a more lenient parser accepts (a comment, a trailing comma) could reach the query with
+    // no body parameters.
+    private const int MaxJsonDepth = 64;
+    private static readonly JsonDocumentOptions _jsonDocumentOptions = new() { MaxDepth = MaxJsonDepth };
 
 
 
@@ -441,6 +441,15 @@ public class ParametersBuilder
             // Validate and normalize JSON
             using (JsonDocument document = await JsonDocument.ParseAsync(context.Request.Body, _jsonDocumentOptions, context.RequestAborted))
             {
+                // The parser doesn't check that the body is UTF-8, as JSON between systems must be: one that
+                // isn't would fail later (a 500) or have its text changed. A gateway route forwards it as sent.
+                context.Request.Body.Position = 0;
+                if (!await IsUtf8Async(context.Request.Body, context.RequestAborted))
+                {
+                    if (context.Items["service_type"] as string == "api_gateway")
+                        return nullProtectionParams();
+                    throw new RequestValidationException("The request body is not valid UTF-8.");
+                }
 
                 // check if there is a files field to extract
                 // if not then return DbQueryParams with the whole JSON payload as is
@@ -501,14 +510,93 @@ public class ParametersBuilder
         }
         catch (JsonException ex)
         {
-            _logger?.LogDebug(ex, "Invalid JSON in request body");
-            return nullProtectionParams();
+            // A gateway route forwards the body as sent, so it needn't be JSON. Elsewhere, a body of nothing
+            // but white space has no parameters, as an absent one has. Anything else that doesn't parse is
+            // the caller's mistake: refused, rather than run with every body parameter NULL.
+            if (context.Items["service_type"] as string == "api_gateway")
+                return nullProtectionParams();
+            context.Request.Body.Position = 0;
+            var (blank, depth, byteOrderMark) = await ScanAsync(context.Request.Body, context.RequestAborted);
+            if (blank)
+                return nullProtectionParams();
+            if (depth > MaxJsonDepth)
+                throw new RequestValidationException($"The request body is nested more than {MaxJsonDepth} levels deep.");
+            // The parser leaves a byte order mark out of the first line's bytes; the caller counts it in.
+            throw new RequestValidationException(ex.LineNumber is long line && ex.BytePositionInLine is long position
+                ? $"The request body is not valid JSON (line {line + 1}, byte {position + 1 + (byteOrderMark && line == 0 ? 3 : 0)})."
+                : "The request body is not valid JSON.");
         }
         finally
         {
             // Reset stream position for next middleware
             context.Request.Body.Position = 0;
         }
+    }
+
+    /// <summary>True when the stream holds nothing but whole UTF-8 characters.</summary>
+    private static async Task<bool> IsUtf8Async(Stream body, CancellationToken cancellationToken)
+    {
+        var bytes = new byte[4096];
+        // As many characters as bytes, so a block always fits.
+        var chars = new char[bytes.Length];
+        var carried = 0;
+        int read;
+        while ((read = await body.ReadAsync(bytes.AsMemory(carried), cancellationToken)) > 0)
+        {
+            var length = carried + read;
+            if (System.Text.Unicode.Utf8.ToUtf16(bytes.AsSpan(0, length), chars, out var used, out _,
+                    replaceInvalidSequences: false, isFinalBlock: false) == OperationStatus.InvalidData)
+                return false;
+            // The start of a character the next read completes.
+            carried = length - used;
+            bytes.AsSpan(used, carried).CopyTo(bytes);
+        }
+        // A character cut off at the end isn't whole.
+        return carried == 0;
+    }
+
+    /// <summary>
+    /// Reads a body that didn't parse: whether it holds nothing but JSON white space (after a UTF-8 byte
+    /// order mark, which the parser skips too), how deeply its arrays and objects nest (brackets inside
+    /// strings don't count), and whether it starts with a byte order mark.
+    /// </summary>
+    private static async Task<(bool Blank, int Depth, bool ByteOrderMark)> ScanAsync(Stream body, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[4096];
+        var head = new byte[3];
+        long offset = 0;
+        bool content = false, contentAfterHead = false, inString = false, escaped = false;
+        int depth = 0, deepest = 0, read;
+        while ((read = await body.ReadAsync(buffer, cancellationToken)) > 0)
+            for (var i = 0; i < read; i++, offset++)
+            {
+                var b = buffer[i];
+                if (offset < head.Length)
+                    head[offset] = b;
+                if (b is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'))
+                {
+                    content = true;
+                    if (offset >= head.Length)
+                        contentAfterHead = true;
+                }
+                if (inString)
+                {
+                    if (escaped)
+                        escaped = false;
+                    else if (b == (byte)'\\')
+                        escaped = true;
+                    else if (b == (byte)'"')
+                        inString = false;
+                }
+                else if (b == (byte)'"')
+                    inString = true;
+                else if (b is (byte)'[' or (byte)'{')
+                    deepest = Math.Max(deepest, ++depth);
+                else if (b is (byte)']' or (byte)'}')
+                    depth--;
+            }
+        var byteOrderMark = offset >= head.Length && head is [0xEF, 0xBB, 0xBF];
+        return (!content || (byteOrderMark && !contentAfterHead), deepest, byteOrderMark);
     }
 
 

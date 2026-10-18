@@ -239,6 +239,9 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
 
         public CapturedLogs Logs { get; } = new();
 
+        /// <summary>The engine's services, such as its configuration, for a test that changes a setting.</summary>
+        public IServiceProvider Services => _factory.Services;
+
         /// <summary>
         /// The in-memory server, for a request HttpClient refuses to build (a control character in a
         /// header). Not for an engine on Kestrel.

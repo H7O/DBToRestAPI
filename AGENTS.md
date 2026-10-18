@@ -24,9 +24,8 @@ DbToRestAPI turns SQL queries into REST endpoints. You don't write application c
 - `settings.xml`: connection strings and global settings. A connection's `provider` attribute decides the SQL dialect you must write. Without it, the engine guesses from the connection string and defaults to SQL Server.
 - `file_management.xml`: file stores and upload defaults. `api_keys.xml`: key collections. `auth_providers.xml`: OIDC providers. `api_gateway.xml`: proxy routes.
 - Edits to the files the running engine reads are picked up without a restart, with these exceptions, which need one:
-  - `max_payload_size_in_bytes`;
   - Kestrel and TLS settings;
-  - a connection's provider, whether set by the attribute or inferred from the connection string;
+  - `data_protection_key_path` under `<settings_encryption>`: the engine chooses how it encrypts once, as it starts;
   - adding or removing a file under `<additional_configurations>`.
   A file saved with invalid XML is ignored and the previous version kept, with only a log line. A route with `<cache>` keeps serving its cached response until the entry expires. If a change doesn't take effect, save the file again or restart.
 - **The shipped demo database is SQLite**, but most examples in the docs are SQL Server. Write the dialect of the connection your endpoint uses.
@@ -47,7 +46,7 @@ Each rule prevents a mistake that fails silently or looks like it works. These r
 10. On an `<authorize>` route, the user's id is `{auth{user_id}}`: the token's subject, or its `oid` when it has none. Prefer it to `{auth{sub}}`, which is empty for a token without a subject.
 11. In `{http{ ... }http}` calls, put caller values in `"query"`, never inside the `"url"` string. ([17](docs/topics/17-embedded-http-calls.md))
 12. Within one XML file, add to the existing container element. Never write a second `<local_file_store>`, `<sftp_file_store>` or `<queries>` beside the first: repeated siblings are numbered by the configuration reader, and everything inside them stops matching.
-13. Before deploying, delete `debug_mode_header_value` from `settings.xml` (or set it to a long random secret). With the sample's value, anyone can request stack traces. An empty value also turns debug mode off.
+13. Debug mode is off as shipped: `debug_mode_header_value` is commented out in `settings.xml`. If you uncomment it to see database errors, comment it out again before deploying, or set it to a long random secret: anyone who sends that value in a `debug-mode` header gets stack traces.
 14. A cached route (`<cache>`) is keyed by the endpoint, the verb, the route values and the values named in `<invalidators>`, not by the query string, the body or the caller. Only GET and HEAD use the cache. A cache hit runs no SQL, so any authorization written in SQL is skipped. Cache only routes whose answer is the same for every caller, and list in `<invalidators>` every query-string or body input that changes the answer. ([07](docs/topics/07-caching.md))
 15. Every `{http{ ... }http}` in a query's text is called before the query runs, even inside an `IF` branch or a comment. Never write the marker in a comment. To call conditionally, decide in an earlier chained query and pass `"skip": "{pq{skip_it}}"`. ([17](docs/topics/17-embedded-http-calls.md))
 16. Endpoint element names must be unique across all loaded files, and so must each verb + route pair (per `<host>`, if you use it). Files merge element by element: the same name in two files becomes one endpoint mixing both, and nothing is logged.

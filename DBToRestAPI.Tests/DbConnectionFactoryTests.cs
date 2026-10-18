@@ -1,9 +1,52 @@
 using DBToRestAPI.Services;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DBToRestAPI.Tests;
 
 public class DbConnectionFactoryTests
 {
+    private static (IConfigurationRoot Configuration, DbConnectionFactory Factory) FactoryFor(Dictionary<string, string?> settings)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        return (configuration, new DbConnectionFactory(new TestEncryptedConfiguration(configuration), NullLogger<DbConnectionFactory>.Instance));
+    }
+
+    private static string ProviderConnectionType(DbConnectionFactory factory, string name)
+    {
+        using var connection = factory.Create(name);
+        return ((TrackedDbConnection)connection).Inner.GetType().Name;
+    }
+
+    [Fact]
+    public void AnEditedProviderAttribute_TakesEffectWithoutARestart()
+    {
+        var (configuration, factory) = FactoryFor(new()
+        {
+            ["ConnectionStrings:main"] = "Data Source=:memory:",
+            ["ConnectionStrings:main:provider"] = "Microsoft.Data.Sqlite",
+        });
+        Assert.Equal("SqliteConnection", ProviderConnectionType(factory, "main"));
+
+        configuration["ConnectionStrings:main:provider"] = "Microsoft.Data.SqlClient";
+
+        Assert.Equal("SqlConnection", ProviderConnectionType(factory, "main"));
+    }
+
+    [Fact]
+    public void AnEditedConnectionString_IsInferredAfresh()
+    {
+        var (configuration, factory) = FactoryFor(new()
+        {
+            ["ConnectionStrings:main"] = "Host=localhost;Database=shop;Username=app",
+        });
+        Assert.Equal("NpgsqlConnection", ProviderConnectionType(factory, "main"));
+
+        configuration["ConnectionStrings:main"] = "Server=.;Database=shop;Trusted_Connection=True;";
+
+        Assert.Equal("SqlConnection", ProviderConnectionType(factory, "main"));
+    }
+
     [Fact]
     public void Sqlite_RelativePath_BecomesAbsolute()
     {

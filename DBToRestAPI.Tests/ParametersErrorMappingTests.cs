@@ -28,6 +28,117 @@ public class ParametersErrorMappingTests
         AssertRefused(await RunAsync(JsonRequest(json)), 400, expectedInMessage);
     }
 
+    [Theory]
+    [InlineData("{ not json", "not valid JSON (line 1, byte 3)")]
+    [InlineData("{\"a\": 1", "not valid JSON")]
+    [InlineData("x", "not valid JSON")]
+    [InlineData("{\"a\": 1,}", "not valid JSON")]
+    [InlineData("{\"a\": 1 /* note */}", "not valid JSON")]
+    [InlineData("﻿{ not json", "not valid JSON (line 1, byte 6)")]
+    public async Task BodyThatIsNotJson_Is400_NotNullParameters(string body, string expectedInMessage)
+    {
+        AssertRefused(await RunAsync(JsonRequest(body)), 400, expectedInMessage);
+    }
+
+    [Theory]
+    [InlineData("{\"a\": 1,}")]
+    [InlineData("{\"a\": 1 /* note */}")]
+    public async Task BodyThatIsNotStrictJson_Is400_OnARouteWithoutFiles(string body)
+    {
+        // There, the body's text reaches Com.H.Data.Common as sent, which reads it with strict rules: a
+        // comment or a trailing comma would leave the query with no body parameters.
+        var withoutFiles = new Dictionary<string, string?> { ["queries:upload:file_management:files_json_field_or_form_field_name"] = null };
+
+        AssertRefused(await RunAsync(JsonRequest(body), extraConfig: withoutFiles), 400, "not valid JSON");
+    }
+
+    [Theory]
+    [InlineData(64, false)]
+    [InlineData(65, true)]
+    public async Task BodyNestedMoreThan64LevelsDeep_Is400_SayingSo(int depth, bool refused)
+    {
+        // An object holding nested arrays: valid JSON either way, refused only for its depth, which
+        // Com.H.Data.Common limits to 64 too.
+        var body = "{\"a\":" + new string('[', depth - 1) + new string(']', depth - 1) + "}";
+
+        var result = await RunAsync(JsonRequest(body));
+
+        if (refused)
+            AssertRefused(result, 400, "nested more than 64 levels deep");
+        else
+            Assert.Null(result.Error);
+    }
+
+    [Theory]
+    [InlineData("{\"a\": \"")]
+    [InlineData("{\"a\": \"\\\"")]
+    public async Task BracketsInAString_DontCountAsNesting(string start)
+    {
+        // An object never closed, whose string holds 70 braces: a syntax error, not a body nested too
+        // deeply. In the second, the string starts with an escaped quote, which doesn't end it.
+        AssertRefused(await RunAsync(JsonRequest(start + new string('{', 70) + "\"")), 400, "not valid JSON");
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task BodyThatIsNotUtf8_Is400_ExceptOnAGatewayRoute(bool gateway, bool filesField)
+    {
+        // José in Latin-1: the é is one byte, 0xE9. The parser doesn't check the encoding, and then a
+        // route without a files field failed to read the body's text, a 500, while one with a files field
+        // turned the byte into U+FFFD.
+        var context = JsonRequest("");
+        context.Request.Body = new MemoryStream([.. "{\"name\":\"Jos"u8, 0xE9, .. "\"}"u8]);
+        if (gateway)
+            context.Items["service_type"] = "api_gateway";
+        var withoutFiles = new Dictionary<string, string?> { ["queries:upload:file_management:files_json_field_or_form_field_name"] = null };
+
+        var result = await RunAsync(context, extraConfig: filesField ? null : withoutFiles);
+
+        if (gateway)
+            Assert.Null(result.Error);
+        else
+            AssertRefused(result, 400, "not valid UTF-8");
+    }
+
+    [Fact]
+    public async Task ACharacterAcrossTheUtf8ChecksReads_IsValid()
+    {
+        // The check reads 4096 bytes at a time: this é starts in the first read and ends in the second.
+        var body = "{\"a\":\"" + new string('x', 4089) + "é\"}";
+        Assert.Equal(0xC3, System.Text.Encoding.UTF8.GetBytes(body)[4095]);
+
+        Assert.Null((await RunAsync(JsonRequest(body))).Error);
+    }
+
+    [Fact]
+    public async Task BodyThatIsNotJson_OnAGatewayRoute_IsNotRefused()
+    {
+        // A gateway route forwards the body as sent.
+        var context = JsonRequest("{\"a\":1}\n{\"b\":2}");
+        context.Items["service_type"] = "api_gateway";
+
+        var (parameters, error) = await RunAsync(context);
+
+        Assert.Null(error);
+        Assert.NotNull(parameters);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \r\n\t ")]
+    [InlineData("﻿")]
+    [InlineData("﻿ \r\n")]
+    public async Task EmptyJsonBody_IsReadAsNoParameters(string body)
+    {
+        var (parameters, error) = await RunAsync(JsonRequest(body));
+
+        Assert.Null(error);
+        Assert.NotNull(parameters);
+    }
+
     [Fact]
     public async Task ValidJsonUpload_HasNoError()
     {

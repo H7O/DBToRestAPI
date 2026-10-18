@@ -291,6 +291,26 @@ public class OutgoingHttpPipelineTests(OutgoingHttpPipelineTests.OutgoingEngine 
         Assert.Equal(HttpMethod.Post, Http.Requests.Last(r => r.Uri.AbsolutePath == "/items").Method);
     }
 
+    [Theory]
+    [InlineData("application/json")]
+    [InlineData(null)]
+    public async Task Gateway_ABodyThatIsntJson_IsForwardedAsSent(string? contentType)
+    {
+        // A request sent as JSON, or with no Content-Type, has its body read for parameters; on a
+        // gateway route one that doesn't parse is still forwarded, never refused.
+        const string body = "{\"a\":1}\n{\"b\":2}";
+        Http.Map("https://upstream.test/raw", _ => FakeHttpServer.Text("ok"));
+        using var content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
+        if (contentType != null)
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        var before = Http.Requests.Count;
+
+        using var response = await engine.Client.PostAsync("gw/raw", content);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(body, Assert.Single(Http.Requests.Skip(before), r => r.Uri.AbsolutePath == "/raw").Body);
+    }
+
     private async Task<FakeHttpServer.Request> CallGatewayAsync(string path)
     {
         Http.Map("https://upstream.test/headers", _ => FakeHttpServer.Text("ok"));

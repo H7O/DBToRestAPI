@@ -41,6 +41,10 @@ namespace DBToRestAPI.Middlewares
         private readonly ILogger<Step7FileUploadManagement> _logger = logger;
         private static readonly string _errorCode = "Step 7 - File Upload Management Error";
 
+        /// <summary>Copies an upload into a local store. A test swaps it for one that fails part-way.</summary>
+        internal Func<Stream, Stream, CancellationToken, Task> CopyAsync { get; init; } =
+            (source, destination, cancellationToken) => source.CopyToAsync(destination, cancellationToken);
+
         public async Task InvokeAsync(HttpContext context)
         {
             #region log the time and the middleware name
@@ -194,6 +198,18 @@ namespace DBToRestAPI.Middlewares
                 return;
             }
 
+            // With overwrite_existing_files on, each file a local store held at a path this request writes,
+            // moved aside in its folder until the request ends: a failed request gets it back, a successful
+            // one deletes it. In the order they were moved.
+            var setAside = new List<(string Path, string AsidePath, string StoreName)>();
+
+            // The files this request put in place in local stores, by full path (ignoring case where the file
+            // system does), so a later write to the same path knows the file there is its own: the same path
+            // twice in one request, or two stores sharing a folder.
+            var placedPaths = new HashSet<string>(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
+
             async Task RollbackUploadedFilesAsync(string rollbackReason)
             {
                 // Expected when the caller left (a 499 included), so not a warning then.
@@ -240,6 +256,11 @@ namespace DBToRestAPI.Middlewares
                     }
                 }
 
+                // Newest first, the reverse of the order they were moved.
+                for (var i = setAside.Count - 1; i >= 0; i--)
+                    PutBack(setAside[i].Path, setAside[i].AsidePath, setAside[i].StoreName);
+                setAside.Clear();
+
                 foreach (var group in groupedSftpStores)
                 {
                     using Com.H.Net.Ssh.SFtpClient sftpClient = new SFtpClient(
@@ -285,6 +306,61 @@ namespace DBToRestAPI.Middlewares
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
             }
 
+            // The request succeeded, so the files its uploads replaced are no longer needed.
+            void DeleteSetAsideFiles()
+            {
+                foreach (var (path, asidePath, storeName) in setAside)
+                {
+                    try
+                    {
+                        File.Delete(asidePath);
+                    }
+                    catch (Exception ex2)
+                    {
+                        this._logger.LogWarning("{time}: Failed to delete '{asideFile}', the previous content of '{file}' in local store ({local_store_name}), in Step6FileManagement middleware"
+                            + Environment.NewLine
+                            + " error: {errorMessage}"
+                            ,
+                            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                            asidePath,
+                            path,
+                            storeName,
+                            ex2.Message
+                            );
+                    }
+                }
+                setAside.Clear();
+            }
+
+            // Moves a file that was set aside back to its path, replacing whatever this request put there
+            // unless told not to. One that can't be moved back stays where it is, named in the log, rather
+            // than being lost.
+            void PutBack(string path, string asidePath, string storeName, bool replace = true)
+            {
+                try
+                {
+                    File.Move(asidePath, path, overwrite: replace);
+                    this._logger.LogDebug("{time}: Restored file '{file}' in local store ({local_store_name}) in Step6FileManagement middleware",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                        path,
+                        storeName);
+                }
+                catch (Exception ex2)
+                {
+                    this._logger.LogWarning("{time}: Failed to restore file '{file}' in local store ({local_store_name}) in Step6FileManagement middleware;"
+                        + " its previous content is in '{asideFile}'"
+                        + Environment.NewLine
+                        + " error: {errorMessage}"
+                        ,
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                        path,
+                        storeName,
+                        asidePath,
+                        ex2.Message
+                        );
+                }
+            }
+
             try
             {
 
@@ -319,13 +395,81 @@ namespace DBToRestAPI.Middlewares
                                     "Set 'overwrite_existing_files' to true to allow overwriting.");
                             }
 
-                            using (var sourceStream = new FileStream(file.Key, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true))
-                            using (var destStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: true))
+                            // The copy is written under a hidden name beside its destination and takes the
+                            // destination's name only once complete: a write that fails part-way leaves nothing
+                            // at the path, and a file already there stays readable meanwhile.
+                            var writingPath = Path.Combine(parentDir!, $".{Guid.NewGuid():N}.uploading");
+                            try
                             {
-                                // Tracked once the file is created (or an existing one emptied), so a rollback also
-                                // deletes a file the copy left half written, and never one it failed to open.
+                                using (var sourceStream = new FileStream(file.Key, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true))
+                                using (var destStream = new FileStream(writingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: true))
+                                {
+                                    await CopyAsync(sourceStream, destStream, context.RequestAborted);
+                                }
+
+                                // With overwrite on, the file already there is moved aside rather than replaced,
+                                // so a rollback can put it back. One this request put there itself is simply
+                                // replaced: it isn't a file to put back.
+                                string? asidePath = null;
+                                if (overwriteExistingFiles && File.Exists(destinationPath) && !placedPaths.Contains(destinationPath))
+                                {
+                                    asidePath = Path.Combine(parentDir!, $".{Guid.NewGuid():N}.replaced");
+                                    try
+                                    {
+                                        File.Move(destinationPath, asidePath);
+                                    }
+                                    catch (FileNotFoundException)
+                                    {
+                                        // Moved away since, by another request replacing it too: nothing to set aside.
+                                        asidePath = null;
+                                    }
+                                }
+
+                                try
+                                {
+                                    File.Move(writingPath, destinationPath, overwrite: overwriteExistingFiles);
+                                }
+                                catch (IOException) when (!overwriteExistingFiles && Path.Exists(destinationPath))
+                                {
+                                    // Something took the path while the file was copied, another request's upload
+                                    // say: the same answer as for a file that was there from the start.
+                                    throw new FileAlreadyExistsException(
+                                        $"File '{file.Value.RelativePath}' already exists in store '{entry.Config.Key}'. " +
+                                        "Set 'overwrite_existing_files' to true to allow overwriting.");
+                                }
+                                catch when (asidePath is not null)
+                                {
+                                    // At once, as an optional store's request goes on without this file, and without
+                                    // replacing a file another request put there since.
+                                    PutBack(destinationPath, asidePath, entry.Config.Key, replace: false);
+                                    throw;
+                                }
+                                if (asidePath is not null)
+                                    setAside.Add((destinationPath, asidePath, entry.Config.Key));
+                                placedPaths.Add(destinationPath);
+
+                                // Tracked once in place, so a rollback deletes only files this request put there.
                                 entry.StoredRelativePaths.Add(file.Value.RelativePath);
-                                await sourceStream.CopyToAsync(destStream, context.RequestAborted);
+                            }
+                            finally
+                            {
+                                // What a copy that failed left, or one whose destination couldn't take it.
+                                try
+                                {
+                                    File.Delete(writingPath);
+                                }
+                                catch (Exception ex2)
+                                {
+                                    this._logger.LogWarning("{time}: Failed to delete the unfinished copy '{file}' in local store ({local_store_name}) in Step6FileManagement middleware"
+                                        + Environment.NewLine
+                                        + " error: {errorMessage}"
+                                        ,
+                                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                        writingPath,
+                                        entry.Config.Key,
+                                        ex2.Message
+                                        );
+                                }
                             }
 
                             this._logger.LogDebug("{time}: Copied temp file '{tempFile}' to local store ({local_store_name})  at '{destinationPath}' in Step6FileManagement middleware",
@@ -471,6 +615,10 @@ namespace DBToRestAPI.Middlewares
                 if (context.Response.StatusCode >= StatusCodes.Status400BadRequest)
                 {
                     await RollbackUploadedFilesAsync($"HTTP {context.Response.StatusCode}");
+                }
+                else
+                {
+                    DeleteSetAsideFiles();
                 }
             }
             catch (Exception ex)

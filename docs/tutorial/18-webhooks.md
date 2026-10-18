@@ -138,9 +138,9 @@ Key details:
 - **The callback URL comes from your `partners` table.** The caller sends
   only its key, so it can't choose where your server sends requests.
 
-> **Never call a URL the caller sent you.** The engine has no host
-> allow-list for `{http{ ... }http}` calls. If the callback URL comes from the
-> request, any caller can make your server send requests to any host,
+> **Never call a URL the caller sent you.** The engine calls whatever URL
+> your configuration builds: choosing the hosts is your configuration's job. If
+> the callback URL comes from the request, any caller can make your server send requests to any host,
 > including internal ones the internet can't reach. Register each partner's
 > callback URL yourself and look it up in SQL, as above. If partners must send
 > a URL, reject it before you store it unless it matches a URL registered for
@@ -669,8 +669,8 @@ callbacks from sending stale progress.
 - Protecting internal endpoints with API keys keeps the processing endpoint
   private.
 - The callback URL comes from a partner registry in your database, never
-  from the request.  The engine has no host allow-list for embedded HTTP
-  calls, so a URL from the caller could point your server at any host.
+  from the request.  The engine calls whatever URL the configuration builds,
+  so a URL from the caller could point your server at any host.
 - Multi-query chaining passes request data between the Accept and Process
   stages.  Chained queries read earlier results with `{pq{name}}`.
 - Because embedded HTTP calls are pre-processed per query, placing them in a

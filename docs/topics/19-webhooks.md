@@ -80,7 +80,7 @@ Key properties:
 - The callback URL is read from your `partners` table, so the caller can't choose where your server sends requests
 - `{pq{request_id}}` reads the `request_id` column of Query 1 ([reading earlier results](14-query-chaining.md#reading-earlier-results-pqname))
 
-> **Never call a URL the caller sent you.** The engine has no host allow-list for `{http{ ... }http}` calls. If the callback URL comes from the request, any caller can make your server send requests to any host, including internal ones the internet can't reach. Register each partner's callback URL yourself and look it up in SQL, as above. If partners must send a URL, reject it before you store it unless it matches a URL registered for that partner.
+> **Never call a URL the caller sent you.** The engine calls whatever URL your configuration builds: choosing the hosts is your configuration's job. If the callback URL comes from the request, any caller can make your server send requests to any host, including internal ones the internet can't reach. Register each partner's callback URL yourself and look it up in SQL, as above. If partners must send a URL, reject it before you store it unless it matches a URL registered for that partner.
 
 ## Process & Notify Endpoint
 

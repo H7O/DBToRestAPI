@@ -148,8 +148,8 @@ builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions
 builder.Services.AddControllers();
 
 
-var maxFileSize = builder.Configuration.GetValue<long?>("max_payload_size_in_bytes")
-    ?? (300 * 1024 * 1024); // Default to 300MB if not found
+// The limit as the engine starts; PayloadLimit applies the current one to each request.
+var maxFileSize = PayloadLimit.Read(builder.Configuration);
 
 
 // Gracefully skip HTTPS endpoint if the configured certificate file is missing
@@ -200,6 +200,12 @@ builder.Services.AddHostedService<ConfigurationPathMonitor>();
 
 var app = builder.Build();
 
+// Before anything reads a body: max_payload_size_in_bytes as the configuration has it now.
+app.Use((context, next) =>
+{
+    PayloadLimit.Apply(context, app.Configuration);
+    return next(context);
+});
 
 app.UseHttpsRedirection();
 

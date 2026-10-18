@@ -24,7 +24,7 @@ Multiple database providers are supported out of the box: SQL Server, PostgreSQL
 
 - **Pure SQL, zero code** — Define endpoints entirely in XML + SQL. No controllers, no ORM, no compilation step. Call stored procedures, functions, CTEs — anything your database supports.
 - **8+ database engines** — SQL Server, PostgreSQL, MySQL/MariaDB, SQLite, Oracle, IBM DB2, plus any ODBC or OleDb data source — with automatic provider detection. Named `{{parameter}}` syntax works even on positional-parameter databases (ODBC/OleDb).
-- **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed (except `max_payload_size_in_bytes`, Kestrel/TLS settings, a connection's provider and the list of configuration files; see [AGENTS.md](AGENTS.md)).
+- **Hot-reload** — Edit your XML config files and changes take effect immediately, no restart needed (except Kestrel/TLS settings, the encryption key folder and the list of configuration files; see [AGENTS.md](AGENTS.md)).
 - **Built-in security** — API key collections, JWT/OIDC authentication (Azure B2C, Google, Auth0, etc. — with **multiple providers per endpoint** for "Log in with X" apps), and SQL injection protection via parameterised queries.
 - **API gateway** — Proxy, cache, and protect external APIs alongside your own endpoints.
 - **Rate limiting** — Per-endpoint request limits with a global default, counted per user, API key or client IP, answered with `429` + `Retry-After` before any database work. Hot-reloads, fails open, and a config typo can never turn into a 500. See [Rate Limiting](docs/topics/18-rate-limiting.md).

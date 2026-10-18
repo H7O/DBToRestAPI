@@ -7,13 +7,33 @@ public class AddDynamicConfigurationFilesTests : IDisposable
 {
     private readonly List<string> _tempFiles = new();
     private readonly List<string> _tempDirs = new();
+    private readonly List<IConfigurationRoot> _built = new();
+
+    // Each test's files in a folder of their own: a configuration that reloads on change watches the
+    // folder and every folder below it, and a watcher on the whole temp folder sees the files other
+    // tests rename there (Windows can report such a rename in halves, which crashed the test host).
+    private readonly string _folder = Path.Combine(Path.GetTempPath(), "dbtorest-dynamic-config-" + Guid.NewGuid().ToString("N"));
+
+    public AddDynamicConfigurationFilesTests()
+    {
+        Directory.CreateDirectory(_folder);
+        _tempDirs.Add(_folder);
+    }
 
     private string CreateTempFile(string extension, string content)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}{extension}");
+        var path = Path.Combine(_folder, $"test_{Guid.NewGuid()}{extension}");
         File.WriteAllText(path, content);
         _tempFiles.Add(path);
         return path;
+    }
+
+    /// <summary>Builds the configuration and disposes it with the test, so its file watchers stop.</summary>
+    private IConfigurationRoot Built(IConfigurationBuilder builder)
+    {
+        var root = builder.Build();
+        _built.Add(root);
+        return root;
     }
 
     private static IConfiguration BuildConfigWithPaths(params string[] paths)
@@ -100,7 +120,7 @@ public class AddDynamicConfigurationFilesTests : IDisposable
         var builder = new ConfigurationBuilder();
 
         builder.AddDynamicConfigurationFiles(config);
-        var builtConfig = builder.Build();
+        var builtConfig = Built(builder);
 
         Assert.Equal("myvalue", builtConfig["mykey"]);
     }
@@ -113,7 +133,7 @@ public class AddDynamicConfigurationFilesTests : IDisposable
         var builder = new ConfigurationBuilder();
 
         builder.AddDynamicConfigurationFiles(config);
-        var builtConfig = builder.Build();
+        var builtConfig = Built(builder);
 
         Assert.Equal("myvalue", builtConfig["settings:mykey"]);
     }
@@ -130,7 +150,7 @@ public class AddDynamicConfigurationFilesTests : IDisposable
         builder.AddDynamicConfigurationFiles(config);
 
         Assert.Equal(initialSourceCount + 2, builder.Sources.Count);
-        var builtConfig = builder.Build();
+        var builtConfig = Built(builder);
         Assert.Equal("yes", builtConfig["fromxml"]);
         Assert.Equal("yes", builtConfig["fromjson"]);
     }
@@ -228,7 +248,7 @@ public class AddDynamicConfigurationFilesTests : IDisposable
             .SetBasePath(appRoot);
 
         builder.AddDynamicConfigurationFiles(config);
-        var builtConfig = builder.Build();
+        var builtConfig = Built(builder);
 
         // Should resolve relative to appRoot, not the test's working directory
         Assert.Equal("yes", builtConfig["from_relative"]);
@@ -260,6 +280,8 @@ public class AddDynamicConfigurationFilesTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var root in _built)
+            (root as IDisposable)?.Dispose();
         foreach (var path in _tempFiles)
         {
             try { File.Delete(path); } catch { }

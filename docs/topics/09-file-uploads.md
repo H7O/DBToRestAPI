@@ -50,7 +50,7 @@ In `config/file_management.xml`, add the store **inside the existing `<local_fil
 </settings>
 ```
 
-Don't add a second `<local_file_store>` (or `<sftp_file_store>`) element. Repeated sibling elements are numbered by the configuration reader, so every store inside them stops matching its name, and uploads succeed without storing anything. The engine creates `base_path` and the folders below it on the first write, as long as its account may create folders there.
+Don't add a second `<local_file_store>` (or `<sftp_file_store>`) element. Repeated sibling elements are numbered by the configuration reader, so every store inside them stops matching its name, and uploads succeed without storing anything. The engine creates `base_path` and the folders below it on the first write, as long as its account may create folders there. The account must also be able to rename and delete files there (Modify on Windows): each upload is written under a hidden name and renamed into place, so without that right every upload to the store fails.
 
 ### Tables
 
@@ -368,10 +368,10 @@ Route settings go inside the route's `<file_management>`. Global defaults go in 
 | `permitted_file_extensions` | route, global | all allowed | Comma-separated, with dots: `.pdf,.png`. Compared ignoring case. When set, a file must have an extension. |
 | `max_file_size_in_bytes` | route, global | unlimited | Per file. |
 | `max_number_of_files` | route, global | unlimited | Per request, existing entries included. |
-| `overwrite_existing_files` | route, global | `false` | `false`: a file already at the target path in a non-optional store is a `409`. In an optional store, the engine logs a warning and stops writing to that store at the first existing file, so that file and the request's later files are missing from it. Keep `{{guid}}` in the path structure to avoid clashes (with `accept_caller_defined_file_ids` on, callers choose it). |
+| `overwrite_existing_files` | route, global | `false` | `false`: a file already at the target path in a non-optional store is a `409`. In an optional store, the engine logs a warning and stops writing to that store at the first existing file, so that file and the request's later files are missing from it. `true`: the upload replaces it. If the request then fails, a local store gets the previous file back, and an SFTP store loses it ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)). Keep `{{guid}}` in the path structure to avoid clashes (with `accept_caller_defined_file_ids` on, callers choose it). |
 | `accept_caller_defined_file_ids` | route, global | `false` | `true`: a new entry's own `id` (a valid GUID) is used, and fills `{{guid}}`. |
 | `pass_files_content_to_query` | route, global | `false` | `true`: nothing is stored and there is no `backend_temp_file_path`. The query gets the base64 content under the content field. Entries still carry `is_new_upload` and a `relative_path`, but no file exists there: store the content yourself. In a JSON body, `size` is estimated from the text length, so whitespace inflates it. The content is not checked: invalid base64 or a `data:` URI reaches the query as sent. |
-| `max_payload_size_in_bytes` | `settings.xml` root | `314572800` (300 MiB); the shipped sample sets `367001600` (350 MiB) | The only limit on bytes received, for every route. Over it: `413`. Size it to at least `max_number_of_files` × `max_file_size_in_bytes` plus the form fields for multipart, and about 4/3 of that for base64. Read at start-up: restart after changing it. It applies only when the engine runs on Kestrel. Under IIS's default in-process hosting it has no effect, and two IIS limits of about 30 MB apply instead ([details](../reference/errors.md#settings)). |
+| `max_payload_size_in_bytes` | `settings.xml` root | `314572800` (300 MiB); the shipped sample sets `367001600` (350 MiB) | The only limit on bytes received, for every route. Over it: `413`. Size it to at least `max_number_of_files` × `max_file_size_in_bytes` plus the form fields for multipart, and about 4/3 of that for base64. Read for each request, so a change takes effect without a restart. Behind IIS, IIS's own limit of about 30 MB applies first ([details](../reference/errors.md#settings)). |
 
 The shipped `file_management.xml` also sets global `permitted_file_extensions`, `max_number_of_files` (5) and `max_file_size_in_bytes`. Every route inherits them unless it sets its own.
 
@@ -412,6 +412,9 @@ Upload refusals are `400` with `{"success":false,"message":"..."}`, sent before 
 | `Invalid JSON format: Property must be an array` | The files field is valid JSON but not an array |
 | ``The `f` form field must be a JSON array of file entries.`` | The form's files field is not valid JSON |
 | `The request body must be a JSON object.` | JSON body is not an object |
+| `The request body is not valid JSON (line L, byte B).` | A JSON body that doesn't parse, or has a comment or a trailing comma |
+| `The request body is nested more than 64 levels deep.` | A JSON body nested deeper than that |
+| `The request body is not valid UTF-8.` | A JSON body whose bytes aren't UTF-8, such as Latin-1 text |
 | ``` `f` appears more than once in the request body.``` / ``` `f` can only be sent in the request body.``` | The files field twice, or in the query string or a header |
 | `The form data could not be read.` | Malformed or cut-off form body, or a form over an ASP.NET Core limit (a field value over 4 MiB, more than 1024 fields) |
 | File name rules | Empty; not valid Unicode; longer than 150 characters; `..`, `/`, `\` or `:`; control characters or invisible ones (U+200B-U+200F, U+FEFF); characters invalid on the server's OS (on Windows `<` `>` `"` `|` `?` `*`; on Linux only NUL); Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`); only dots; starting or ending with a dot or space; starting with `-` |
@@ -426,7 +429,6 @@ Each of these returns success, and the request stores nothing:
 - **No `stores` (on the route or globally), or only unknown names.** Files are validated but never written, yet the query still gets `is_new_upload` entries with a `relative_path`, so it records files that don't exist. An unknown name logs a warning. A local store without `base_path` and an SFTP store missing credentials are skipped without one.
 - **A second `<local_file_store>` or `<sftp_file_store>` element.** Every store in either element becomes unknown ([store](#store)).
 - **A content field name that doesn't match the config, in a JSON body.** Every entry looks like an existing file.
-- **A body that isn't valid JSON** (with `application/json`). It is read as having no parameters, so they are all `NULL`. With `mandatory_parameters` set, this becomes a `400` "Missing mandatory parameters" instead.
 - **A Content-Type other than `application/json`, `multipart/form-data` or `application/x-www-form-urlencoded`.** For example `text/plain`, which `fetch` sends for a string body when no `Content-Type` header is set. The body is ignored, so every body parameter is `NULL` and no file is processed.
 
 ## Do and don't
@@ -473,8 +475,8 @@ IF NOT EXISTS (
 
 Tracked in [TODO.md](../../TODO.md):
 
-- With `overwrite_existing_files` on, a failed request deletes the file it overwrote.
-- A write that failed part-way can leave a partial file in an optional store, or in an SFTP store with `overwrite_existing_files` on ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
+- In an SFTP store with `overwrite_existing_files` on, a failed request deletes the file it overwrote instead of putting it back.
+- A write that failed part-way can leave a partial file in an SFTP store that is optional or has `overwrite_existing_files` on ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
 - The OpenAPI document has no request schema for upload endpoints.
 
 ## Related

@@ -100,6 +100,7 @@ All bodies are JSON. "Rolled back" means files this request stored are deleted.
 | success code | Route without `array`, `file` or a count query, no row, a GET to a route with `<cache>` | `null` | Kept |
 | `400` | A name in `mandatory_parameters` is missing | `{"success":false,"message":"Missing mandatory parameters: email,category"}` | None were stored |
 | `400` | Upload refused: file name, extension, size, count, base64, or files-field shape ([uploads](../topics/09-file-uploads.md#errors)) | ``{"success":false,"message":"File extension `.exe` is not permitted."}`` | None were stored |
+| `400` | A body sent as JSON (or without a `Content-Type`) that isn't valid JSON, comments and trailing commas included, or that is nested more than 64 levels deep (`The request body is nested more than 64 levels deep.`), or whose bytes aren't UTF-8 (`The request body is not valid UTF-8.`). A blank body has no parameters instead, and a gateway route forwards such a body as sent. | `{"success":false,"message":"The request body is not valid JSON (line 1, byte 3)."}` | None were stored |
 | `400` | Malformed form body, or a form over an ASP.NET Core limit (a field over 4 MiB, more than 1024 fields) | `{"success":false,"message":"The form data could not be read."}` | None were stored |
 | `400`-`599` | SQL raised `50400`-`50599` | `{"success":false,"message":"...","error_number":404}` | Rolled back |
 | `400` | Any other database error: constraint violation, timeout, deadlock, syntax error, unreachable database | `{"success":false,"message":"An error occurred while processing your request."}`, from `generic_error_message` | Rolled back |
@@ -137,8 +138,11 @@ Rollback has limits. Know them before relying on it:
 
 - **It covers files, not rows.** Statements that ran before the error, and earlier queries in a chain, stay committed unless your SQL used a transaction. An error after your `COMMIT` (for example in a final `SELECT`) still deletes the files while the rows stay.
 - **Deleting a row never deletes its file.** The engine deletes stored files only during rollback. When an update query removes an attachment's row, the file stays in the store.
-- **With `overwrite_existing_files` on,** a failed request deletes the file it overwrote. The previous content is lost, not restored.
-- **A write that failed part-way** (disk full, connection lost mid-upload) is deleted with the rest, with two exceptions. In an optional store, the failure doesn't fail the request, so when the request succeeds no rollback runs and the partial file stays. In an SFTP store with `overwrite_existing_files` on, a partial file stays, whether or not it replaced an existing one.
+- **With `overwrite_existing_files` on,** a failed request puts back the file it overwrote in a local store. In an SFTP store it deletes it, and the previous content is lost.
+- **On Windows, a file a download has open** when the request fails can't be deleted or put back: the request's file stays at the path, the previous one stays beside it as `.<id>.replaced`, and a warning names it.
+- **Give each local store its own folder.** Two stores that reach one folder by different paths (through a link, or a share and its local path) look like two folders to the engine, so with `overwrite_existing_files` on, a failed request can leave its own file there.
+- **A write that failed part-way** (disk full, connection lost mid-upload) leaves nothing in a local store, which writes each file under a hidden name beside its destination and renames it once complete. In an SFTP store, the partial file is deleted with the rest, with two exceptions. In an optional store, the failure doesn't fail the request, so when the request succeeds no rollback runs and the partial file stays. With `overwrite_existing_files` on, a partial file stays, whether or not it replaced an existing one.
+- **Hidden files can stay** beside a local store's files: an unfinished copy (`.<id>.uploading`) or, with `overwrite_existing_files` on, the previous version of a file being replaced (`.<id>.replaced`). That happens when the engine stopped mid-request, or when one couldn't be deleted or put back, which a warning reports.
 - **A client that disconnects after the SQL committed** still gets the files deleted, so committed rows can point at missing files.
 
 ## Client pattern
@@ -212,8 +216,8 @@ END CATCH
 |---|---|---|---|
 | `success_status_code` | route, then `settings.xml` | `200` | Status of a successful response. Doesn't apply to file downloads. Don't set it to 400 or higher: every request would roll back its uploads. |
 | `generic_error_message` | `settings.xml` | `An error occurred while processing your request.` | Message for unmapped database errors. |
-| `debug_mode_header_value` | `settings.xml` | none; the shipped sample sets `54321` | A request whose `debug-mode` header equals it gets exception messages and stack traces. **To turn debug mode off, delete the element.** An empty value also turns it off. If you keep it, use a long random secret. |
-| `max_payload_size_in_bytes` | `settings.xml` root | `314572800` (300 MiB); the shipped sample sets `367001600` (350 MiB) | Body size limit (413). Read at start-up: restart after changing it. It applies only when the engine runs on Kestrel (on its own, in a container, or behind a reverse proxy). Under IIS's default in-process hosting it has no effect: IIS's `maxAllowedContentLength` and ASP.NET Core's `IISServerOptions.MaxRequestBodySize` (both about 30 MB) apply, and the engine can't raise the second. For larger uploads behind IIS, host out-of-process (`hostingModel="outofprocess"` in `web.config`) and raise `maxAllowedContentLength`. |
+| `debug_mode_header_value` | `settings.xml` | none; commented out in the shipped sample | A request whose `debug-mode` header equals it gets exception messages and stack traces. Debug mode is off while the element is absent or empty. If you set it outside development, use a long random secret. |
+| `max_payload_size_in_bytes` | `settings.xml` root | `314572800` (300 MiB); the shipped sample sets `367001600` (350 MiB) | Body size limit (413), read for each request, so a change takes effect without a restart. A value that isn't a positive whole number counts as not set. Behind IIS, IIS's own `maxAllowedContentLength` (about 30 MB) applies first: raise it in `web.config` for larger uploads. |
 
 ## API gateway routes
 
@@ -228,9 +232,7 @@ These are tracked in [TODO.md](../../TODO.md):
 - Oracle and DB2 custom errors are not mapped. ODBC and OleDb have no mapping.
 - SQLite can raise a custom status only from a trigger.
 - An error raised after part of a streamed result (two or more rows, other than a file download's or a count query's count) has been handed to the server cuts the connection instead of returning its status.
-- An `application/json` body that isn't valid JSON is read as having no parameters, so they are all `NULL`. With `mandatory_parameters`, that becomes a `400` "Missing mandatory parameters".
 - The OpenAPI error schema (`error_message`) doesn't match the runtime body (`message`).
-- Under IIS in-process hosting, `max_payload_size_in_bytes` has no effect (see [settings](#settings)).
 
 ## Related
 

@@ -73,6 +73,8 @@ DATA_PROTECTION_KEY_PATH=./keys/
 
 > **Linux / macOS / Docker**: `data_protection_key_path` is **required** — there is no DPAPI fallback on non-Windows platforms.
 
+The engine chooses the method once, as it starts: after adding, changing or removing `data_protection_key_path`, restart it.
+
 ## What to Encrypt
 
 Specify paths in `sections_to_encrypt`:

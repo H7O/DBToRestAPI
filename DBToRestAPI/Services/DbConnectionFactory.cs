@@ -9,7 +9,9 @@ public class DbConnectionFactory
 {
     private readonly IEncryptedConfiguration _configuration;
     private readonly ILogger<DbConnectionFactory> _logger;
-    private readonly ConcurrentDictionary<string, string> _providerCache = new();
+    // The provider inferred from each connection string. Keyed by the string itself, so an edited
+    // connection string is inferred afresh without a restart.
+    private readonly ConcurrentDictionary<string, string> _inferredProviders = new();
 
     // Track active connections for diagnostics
     private static int _activeConnectionCount = 0;
@@ -48,17 +50,13 @@ public class DbConnectionFactory
         var connectionString = _configuration.GetConnectionString(connectionStringName)
             ?? throw new InvalidOperationException($"Connection string '{connectionStringName}' not found");
 
-        var provider = _providerCache.GetOrAdd(connectionStringName, name =>
-        {
-            // 1. Check explicit provider attribute
-            var explicitProvider = _configuration[$"ConnectionStrings:{name}:provider"];
-            if (!string.IsNullOrEmpty(explicitProvider))
-                return explicitProvider;
-
-            // 2. Auto-detect from connection string
-            return InferProviderFromConnectionString(connectionString)
-                ?? "Microsoft.Data.SqlClient";
-        });
+        // The provider attribute, else one inferred from the connection string. Both are read from the
+        // current configuration, so a change to either takes effect without a restart.
+        var explicitProvider = _configuration[$"ConnectionStrings:{connectionStringName}:provider"];
+        var provider = !string.IsNullOrEmpty(explicitProvider)
+            ? explicitProvider
+            : _inferredProviders.GetOrAdd(connectionString,
+                cs => InferProviderFromConnectionString(cs) ?? "Microsoft.Data.SqlClient");
 
         DbProviderFactory factory;
         try
@@ -189,6 +187,9 @@ public class DbConnectionFactory
 internal class TrackedDbConnection : DbConnection
 {
     private readonly DbConnection _inner;
+
+    /// <summary>The provider's own connection.</summary>
+    internal DbConnection Inner => _inner;
     private readonly ILogger _logger;
     private readonly string _connectionStringName;
     private readonly DateTime _createdAt;

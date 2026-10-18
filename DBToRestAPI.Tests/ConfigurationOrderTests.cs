@@ -35,7 +35,7 @@ public class ConfigurationOrderTests : IDisposable
         File.WriteAllText(Path.Combine(_contentRoot, $"appsettings.{EnvironmentName}.json"), """
             {
               "Logging": { "LogLevel": { "Default": "Warning" } },
-              "debug_mode_header_value": "from-the-environment-file",
+              "generic_error_message": "from-the-environment-file",
               "order_test_key": "from-the-environment-file"
             }
             """);
@@ -73,7 +73,7 @@ public class ConfigurationOrderTests : IDisposable
         Assert.Equal("Warning", config["Logging:LogLevel:Default"]);                       // the environment's file over appsettings.json
         Assert.Equal("Warning", config["Logging:LogLevel:System.Net.Http.HttpClient"]);    // appsettings.json, from the executable's folder
         Assert.Equal("from-the-working-directory", config["AllowedHosts"]);                // the working directory's over the executable's
-        Assert.Equal("54321", config["debug_mode_header_value"]);                          // settings.xml over the environment's file
+        Assert.Equal("An error occurred while processing your request.", config["generic_error_message"]); // settings.xml over the environment's file
         Assert.Equal("from-the-environment-file", config["order_test_key"]);
         Assert.Null(config["order_test_beside_the_executable"]);                         // only the working directory's
         Assert.Equal("5", config["file_management:max_number_of_files"]);                 // an additional file's
@@ -82,10 +82,10 @@ public class ConfigurationOrderTests : IDisposable
     [Fact]
     public void CommandLine_OverridesEveryFile()
     {
-        var config = Configuration(("debug_mode_header_value", "from-the-command-line"), ("order_test_key", "from-the-command-line"),
+        var config = Configuration(("generic_error_message", "from-the-command-line"), ("order_test_key", "from-the-command-line"),
             ("file_management:max_number_of_files", "7"));
 
-        Assert.Equal("from-the-command-line", config["debug_mode_header_value"]);          // over settings.xml
+        Assert.Equal("from-the-command-line", config["generic_error_message"]);            // over settings.xml
         Assert.Equal("7", config["file_management:max_number_of_files"]);                 // over an additional file
         Assert.Equal("from-the-command-line", config["order_test_key"]);                   // over the environment's file
     }

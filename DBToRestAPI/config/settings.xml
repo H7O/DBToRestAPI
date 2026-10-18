@@ -75,18 +75,13 @@
   </settings_encryption>  
   
   
-  <!-- passing the value in the below `debug_mode_header_value`
-  as a value to header `debug-mode` in your HTTP request will enable debug mode
-  allowing you to see the SQL query errors returned by the database server
-  in your HTTP response.
-
-  This default (`54321`) is intentionally trivial — it is meant to be replaced. A real-looking
-  secret (e.g. a GUID) makes a worse default: it is public in this repo, so attackers check known
-  defaults, and "it looks complex" tempts developers to leave it in place (false confidence). A
-  silly value instead signals "placeholder — change me." In production, set a long secret you keep
-  private, or remove this tag entirely (debug mode is then fully off).
-  -->
+  <!-- Debug mode, off as shipped. A request whose `debug-mode` header equals
+  `debug_mode_header_value` gets the database's error message and stack trace in its error
+  response instead of the generic message. To debug, uncomment the tag below and send the header
+  with its value. Comment it out again before deploying, or set a long secret you keep private.
+  An absent or empty value keeps debug mode off.
   <debug_mode_header_value>54321</debug_mode_header_value>
+  -->
   
   <generic_error_message><![CDATA[An error occurred while processing your request.]]></generic_error_message>
 

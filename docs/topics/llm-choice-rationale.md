@@ -103,8 +103,8 @@ custom errors are not mapped yet and arrive as a generic 400. See
 An agent writing a DbToRestAPI endpoint produces a secure API by default. There is
 no way to "forget" to add security middleware or misconfigure an error handler.
 Stack traces go only to a request whose `debug-mode` header matches
-`debug_mode_header_value` in `settings.xml`. The shipped sample sets one, so delete
-it before deploying.
+`debug_mode_header_value` in `settings.xml`, which the shipped sample leaves
+commented out.
 
 ---
 
@@ -320,9 +320,9 @@ No compilation. No restart. No deployment. The feedback loop is: edit a text fil
 make an HTTP request. This is exactly what agents are optimized to do, and it eliminates
 the build/deploy latency that slows down iterative development with compiled backends.
 
-Two exceptions. A few settings (the payload size limit, Kestrel and TLS, a connection's
-`provider`) are read only at start-up. And in a clone, `dotnet run` serves copies of the
-config files from its build output, so restart it after editing `DBToRestAPI/config/`.
+Two exceptions. A few settings (Kestrel and TLS, the encryption key folder) are read only at
+start-up. And in a clone, `dotnet run` serves copies of the config files from its build output,
+so restart it after editing `DBToRestAPI/config/`.
 [AGENTS.md](../../AGENTS.md) lists both.
 
 ---

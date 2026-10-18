@@ -17,7 +17,7 @@ internal sealed class TestEncryptedConfiguration : IEncryptedConfiguration
         get => _inner[key];
         set => _inner[key] = value;
     }
-    public string? GetConnectionString(string name) => null;
+    public string? GetConnectionString(string name) => _inner.GetConnectionString(name);
     public bool HasDecryptedValue(string key) => false;
     public IReadOnlyCollection<string> GetDecryptedPaths() => [];
     public bool IsActive => false;

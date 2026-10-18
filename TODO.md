@@ -5,11 +5,11 @@ names the note that explains the background.
 
 ## Open
 
-- **Opt-in `<allowed_hosts>` for embedded HTTP calls.** The 1.6.0 escaping fix stops a *caller*
-  from steering an `{http{ … }http}` block to another host, but a configuration author is still
-  trusted to pick any host and there is no private-range block. An opt-in allow-list of
-  destination hosts (global, overridable per endpoint) would close that. Background:
-  [SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1, "Not done, and why".
+- **Idea: an opt-in `<allowed_hosts>` for outbound calls** (`{http{ … }http}` and the download
+  `http` source). The configuration author chooses the hosts a route calls, and a caller can't
+  change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
+  (global, overridable per endpoint) would let a deployment have the engine enforce that choice
+  too. A convenience, not a fix.
 
 The items below were found on 2026-10-06 while testing the docs with docs-only agents graded
 against the code. Each was read in the code; none has a test yet.
@@ -21,42 +21,33 @@ against the code. Each was read in the code; none has a test yet.
   - ODBC and OleDb have no branch.
   - SQLite can raise only inside a trigger: consider registering a function such as `throw_http(404, 'msg')`.
   - SQL Server `RAISERROR('text', 16, 1)` reports 50000, which becomes status 0.
-- **Unmapped database errors return 400** (ApiController.cs, `BadRequest` with the generic
-  message). A timeout or an unreachable database looks like a client error. Consider 500.
-- **`<cache>` on a file download route breaks the download.** `CachableQueryResult` only
-  handles `ObjectResult`, so the file result is replaced and its stream leaks.
-- **Rollback with `overwrite_existing_files` deletes the overwritten file**, so a failed request
-  destroys the previous content instead of restoring it.
-- **A write that fails part-way can leave a partial file** in an optional store, whose failure
-  doesn't fail the request, and in an SFTP store with `overwrite_existing_files` on, where the path
-  is tracked for rollback only after its upload (so a failure before the upload writes never deletes
-  the file it would have replaced). Delete the destination in the catch when the write had started.
+- **Unmapped database errors are a `400` with the generic message** (ApiController.cs,
+  `BadRequest`), so a caller learns nothing about the database (AGENTS rule 4). The cost: a timeout
+  or an unreachable database looks like a client error. A 5xx for those two would help monitoring.
+- **`<cache>` on a file download route breaks the download**, which the docs rule out (AGENTS
+  rule 8). `CachableQueryResult` only handles `ObjectResult`, so the file result is replaced and its
+  stream leaks. The engine could ignore `<cache>` on a file route instead.
+- **In an SFTP store, rollback with `overwrite_existing_files` deletes the file it overwrote**
+  instead of putting it back. A local store moves the previous file aside and renames it back; SFTP
+  could do the same once `Com.H.Net.Ssh` can rename a remote file.
+- **A write that fails part-way can leave a partial file in an SFTP store**: an optional one, whose
+  failure doesn't fail the request, or one with `overwrite_existing_files` on, where the path is
+  tracked for rollback only after its upload. A local store writes each file under a hidden name and
+  renames it into place once complete; SFTP could do the same with a rename in `Com.H.Net.Ssh`.
 - **A caller waiting on a slow cache fill waits for all of it.** Callers that join a running fill
   wait until it ends, however long that takes (a 3-second query made every joined caller wait about
   3.5 s). A maximum join wait, after which a waiting caller runs its own query, would bound it. Not
   requested; recorded from the downstream's measurement of the 1.7.11 fix.
-- **An `application/json` body that isn't valid JSON is read as no parameters** (every
-  parameter NULL) instead of being refused with 400.
 - **Step8 small bugs:** the `response_type` fallback reads `file_management:file_management:response_type`,
   and the `regex:file_variables_pattern` lookup discards its result.
 - **OpenAPI:** upload endpoints have no request schema, and the default error schema
   (`error_message`) doesn't match the runtime body (`success`, `message`, `error_number`).
-- **The shipped `settings.xml` sets `debug_mode_header_value` to 54321.** Anyone sending that header
-  gets stack traces. Ship the sample without the element (an empty value is "off" from 1.7.6).
-- **A connection's provider is cached for the life of the process** (`DbConnectionFactory`), so
-  changing it needs a restart.
-- **`max_payload_size_in_bytes` configures Kestrel only.** Under IIS in-process hosting (the
-  default), ASP.NET Core's `IISServerOptions.MaxRequestBodySize` (30,000,000 bytes) applies
-  instead, and IIS's `maxAllowedContentLength` before it. The engine could set
-  `IISServerOptions.MaxRequestBodySize` from the same setting. `maxAllowedContentLength` still
-  needs a `web.config`.
 - **A constant subject gives every user the same `user_id`.** An Azure AD B2C user flow with the
   subject claim turned off sends `Not supported`. Ignore that value and fall back to `oid` (the
   fallback to the renamed `oid` itself works from 1.7.6).
 - **Only the config files listed in `DBToRestAPI.csproj` are copied to the build output.** A new
   `config/*.xml` file named in `<additional_configurations>` makes `dotnet run` fail at start-up
   until it gets its own csproj entry. Consider a `config\*.xml` glob.
-- **Download `http` source:** no host allow-list.
 - **A cookie set on a redirect is dropped.** The engine's clients are pooled and keep no cookies, so
   that callers never share them, and they follow redirects themselves. So a cookie the remote sets on
   a `3xx` never reaches the next hop: an `http` download that needs it fails (until 1.7.8 each
@@ -67,7 +58,7 @@ against the code. Each was read in the code; none has a test yet.
   would follow it straight to the target.
 - **CORS:** the engine sends no `Access-Control-Expose-Headers`, so cross-origin pages can't read
   `Content-Disposition` on downloads.
-- **A URL-shaped `Origin` the server can't send back is a 500 on every request.** When the CORS
+- **A request whose `Origin` the server can't send back gets a 500.** When the CORS
   pattern matches the host of an `Origin` such as `http://localhost/café`, the engine echoes the
   header as sent in `Access-Control-Allow-Origin`, and Kestrel refuses the non-ASCII value: an
   unhandled exception, an Error entry, a 500. Echo only the serialized origin (scheme, host, port).
@@ -77,29 +68,27 @@ against the code. Each was read in the code; none has a test yet.
   Step6 log the exception at Error, and some drivers repeat a caller's value in the message (SQLite's
   bad JSON path, a SQL Server conversion error), so a caller can put control characters into the log.
   Escape the message, or log the exception type and number only.
+
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
-- **An error after part of a streamed result has been written cuts the connection.** Results
-  of two or more rows (other than a file download's or a count query's count) stream their rows, so an error raised after the rows (from 1.7.7
-  it surfaces) can't change a status that MVC has already handed to the server: Step6 aborts the
-  connection. That happens after about 4 KB of short values, or much sooner with long text. To
-  keep the status for small and medium results, buffer a streamed result up to a configurable
-  size before writing it, and stream only beyond that. Found by review on 2026-10-07.
+- **An error after part of a streamed result has been written cuts the connection**, the cost of
+  streaming (AGENTS rule 2). Results of two or more rows (other than a file download's or a count
+  query's count) are written as they are read, so memory stays flat whatever their size, and an
+  error raised after the rows (from 1.7.7 it surfaces) can't change a status that MVC has already
+  handed to the server: Step6 aborts the connection. That happens after about 4 KB of short values,
+  or much sooner with long text. To keep the status for small and medium results, buffer a streamed
+  result up to a configurable size before writing it, and stream only beyond that. Found by review
+  on 2026-10-07.
 - **OpenAPI doesn't show a `root_node` wrapper,** and documents a file route that also has a
   `count_query` as a download, though it answers the count wrapper. Found by review on 2026-10-07.
 - **Cache invalidators are read from every parameter source** (CacheService.cs), so one named like
-  a `<vars>` key or a JWT claim takes that value. Also consider a start-up warning for a cached
-  route whose answer looks caller-specific (it uses `{auth{...}}` without naming the caller in
-  `<invalidators>`).
-- **`{http{}}` matching ignores SQL comments.** A complete marker in a comment makes a real call.
-  An unclosed one pairs with the next block's `}http}`, and the SQL in between is deleted.
+  a `<vars>` key or a JWT claim takes that value.
+- **`{http{}}` matching ignores SQL comments**, so AGENTS rule 15 says never to write the marker in
+  one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
+  `}http}`, and the SQL in between is deleted.
 - **JSON numbers are bound as `double`** (Com.H.Data.Common `DataExtensions`). On SQL Server, a
-  number declared `NVARCHAR` becomes text with 6 significant digits. Consider binding integral and
-  exact numbers as `decimal`.
-- **No configuration validation at load:**
-  - an element name repeated across files merges both endpoints silently;
-  - a repeated verb + route resolves to the first match silently;
-  - unknown tags (for example `<cache_duration_seconds>`) are ignored.
+  number declared `NVARCHAR` becomes text with 6 significant digits, so AGENTS rule 18 says to
+  declare numbers as numbers. Consider binding integral and exact numbers as `decimal`.
 - **Regex override keys are read inconsistently.** The shipped `regex.xml` sets
   `regex:query_string_variables_pattern`, `regex:route_variables_pattern` and
   `regex:form_variables_pattern`, which the code never reads. Its comments and tutorials 06 and 07
@@ -118,7 +107,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   - 02-configuration, which shows endpoints without `<queries>`;
   - tutorials 02, 05, 07, 08 and 09, which show error bodies as `{"error": ...}`;
   - 03-crud's `204` example with `OUTPUT`, which can't write a body;
-  - tutorial 23's broken links;
   - `MULTI_QUERY_CHAINING.md` (a root design note that README and tutorial 23 link as a deep dive),
     which reads earlier queries' columns with `{{column}}` instead of `{pq{column}}`;
   - tutorial 19, which puts a caller's value inside an `{http{}}` `"url"` string (AGENTS rule 11) and
@@ -138,6 +126,36 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **A failed request deleted the file its upload had overwritten.** Fixed in 1.7.13 for local
+  stores. With `overwrite_existing_files` on, the file already at the path is moved aside in its
+  folder (`.<id>.replaced`): a failed request renames it back, and a successful one deletes it. A
+  local store also writes each upload under a hidden name (`.<id>.uploading`) and renames it into
+  place once complete, so a write that fails part-way leaves nothing at the path, in an optional
+  store too, and a file being replaced stays readable until its replacement is complete. SFTP stores
+  are unchanged (Open).
+- **A JSON body that didn't parse ran the query with every body parameter `NULL`.** Fixed in 1.7.13.
+  It is now a `400` that says where the JSON broke (`The request body is not valid JSON (line 1,
+  byte 3).`), or that it is nested more than 64 levels deep. JSON is read strictly, so a comment or
+  a trailing comma is refused too: the parser used to skip them, and depending on where they sat,
+  the query then got the body's parameters or none. So are bytes that aren't UTF-8, which could be a
+  `500`. A blank body (a UTF-8 byte order mark included) still has no parameters, and a gateway
+  route forwards such a body as sent.
+- **A connection's provider and `max_payload_size_in_bytes` needed a restart.** Fixed in 1.7.13.
+  The `provider` attribute is read for each connection, and a provider inferred from a connection
+  string is cached by the string itself, so editing either takes effect on the next connection. The
+  body size limit is applied to each request from the current configuration. A value that isn't a
+  positive whole number counts as not set: one that didn't parse, or a negative one, used to stop the
+  engine at start-up, and 0 refused every body. AGENTS.md lists the few settings that still need a
+  restart.
+- **The shipped `settings.xml` turned debug mode on with a sample value.** Changed in 1.7.13:
+  `debug_mode_header_value` is commented out, with a note on uncommenting it to see database errors
+  while developing. Anyone who knew the sample value got stack traces from an engine that kept it.
+- **Some pages and TODO entries described choices as risks.** Reworded in 1.7.13. Outbound calls go
+  to the hosts the configuration builds, which is the author's choice: an opt-in `<allowed_hosts>`
+  stays in Open as an idea. The Open item asking for configuration validation at load was dropped,
+  as 1.7.12 decided against such warnings, and entries for documented trade-offs now name the rule
+  that covers them. Tutorial 23's topic table had five broken links and missed six topics; it now
+  lists every topic.
 - **Warnings about configuration the engine doesn't read are gone.** Removed in 1.7.12. The engine
   warned about a few such mistakes (an `<api_keys>` block in a route, an `<api_keys_collections>`
   that names no collection, a `response_structure` of

@@ -115,7 +115,7 @@ SELECT 'report.pdf' AS file_name, url AS http FROM reports WHERE id = {{id}};
 - Each fetch sends no cookies, not even to the next hop of a redirect it follows. So a remote that sets a cookie on a redirect and needs it on the next hop answers that hop with an error, usually `401` or `403`: return the final URL instead.
 - The remote Content-Type is used, or `application/octet-stream` when the remote sends none. `mime_type` is ignored. Return `file_name`, or the download is named `downloaded_file`.
 - An empty or malformed URL is a `404`. A non-http scheme, or a host that can't be reached, is the generic `400`.
-- Never build the URL from caller input. There is no host allow-list, so a caller-chosen URL makes the server fetch anything it can reach.
+- Never build the URL from caller input. The engine fetches whatever URL the query returns: your configuration decides which hosts are called, so a URL the caller chose would let any caller make the server fetch anything it can reach.
 
 ## Response
 
@@ -160,7 +160,6 @@ WHERE f.id = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}}) AND r.owner_id = {auth{user_i
 Tracked in [TODO.md](../../TODO.md):
 
 - `<cache>` on a file route breaks the download.
-- The `http` source has no host allow-list.
 
 ## Related
 

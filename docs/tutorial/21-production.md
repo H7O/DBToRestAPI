@@ -9,14 +9,15 @@ environment.
 ## 1. Disable Debug Mode
 
 During development the `debug_mode_header_value` setting lets you pass a header
-to see raw SQL errors in the response:
+to see raw SQL errors in the response. The shipped `settings.xml` has it commented
+out; uncomment it while you debug:
 
 ```xml
 <!-- settings.xml -->
 <debug_mode_header_value>54321</debug_mode_header_value>
 ```
 
-In production, **remove this tag entirely** or set it to a long, secret value
+In production, **comment it out again** or set it to a long, secret value
 that only your operations team knows.  If the tag is absent, no debug header is
 accepted and all database errors are replaced with the generic message:
 
@@ -473,11 +474,11 @@ discloses if you forget to turn it off* — so the bar for "ship it on" matches 
 |---|---|---|---|
 | Static page at `/` (`<static_files>`) | **On** — serves the demo dashboard | A stray welcome page; **no API surface revealed** | Low / informational |
 | OpenAPI / Swagger (`<openapi>`) | **Off** (opt-in) | A **machine-readable map** of every endpoint, parameter, and response shape — reconnaissance for an attacker | Medium |
-| Debug mode (`debug_mode_header_value`) | Set to a **demo value** (`54321`) | **Raw SQL and stack traces** in error responses to anyone who sends the header | High |
+| Debug mode (`debug_mode_header_value`) | **Off** (commented out) | If uncommented with the sample value: **raw SQL and stack traces** in error responses to anyone who sends the header | High |
 
 Rule of thumb: **the more a feature reveals, the more deliberate enabling it should be.** Replace or
-remove the demo `web/` folder, leave OpenAPI off unless you intend to publish an API spec, and change
-`debug_mode_header_value` to a long secret (or remove the tag) so debug output is never reachable.
+remove the demo `web/` folder, leave OpenAPI off unless you intend to publish an API spec, and leave
+`debug_mode_header_value` commented out (or set a long secret) so debug output is never reachable.
 
 ---
 
