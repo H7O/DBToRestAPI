@@ -202,7 +202,7 @@ spec builder reads your existing tags automatically:
 | `<api_keys_collections>` | API key security scheme |
 | `<authorize>` | Bearer JWT security scheme |
 | `<count_query>` | Pagination envelope (`{ success, count, data }`) |
-| `<host>` / `<cache>` | Noted in operation description |
+| `<host>` / `<cache>` | Noted in operation description (`<cache>` not on a download route, which is never cached) |
 
 ---
 

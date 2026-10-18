@@ -650,6 +650,52 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         Assert.DoesNotContain('\r', entry.Message);
     }
 
+    [Theory]
+    [InlineData("http://localhost:5173")]
+    [InlineData("http://localhost")]
+    [InlineData("https://app.example.com")]
+    [InlineData("http://LOCALHOST:5173")]
+    [InlineData("http://localhost:80")]
+    public async Task Cors_AMatchingBrowserOrigin_IsSentBackAsSent(string origin)
+    {
+        // The shipped settings.xml's pattern matches localhost and *.example.com. A browser compares
+        // Access-Control-Allow-Origin with the Origin it sent, character for character.
+        var context = await engine.Server.SendAsync(c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/pl/ok";
+            c.Request.Headers.Origin = origin;
+        });
+
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.Equal(origin, context.Response.Headers.AccessControlAllowOrigin.ToString());
+    }
+
+    [Theory]
+    [InlineData("http://localhost/caf\u00e9")]
+    [InlineData("http://caf\u00e9.example.com")]
+    [InlineData("http://-\u00e9-.example.com")]
+    [InlineData("http://a\u200d.example.com")]
+    [InlineData("https://user@app.example.com")]
+    [InlineData("http://localhost/")]
+    [InlineData("http://localhost?x=1")]
+    public async Task Cors_AnOriginNoBrowserSends_GetsTheFallback(string origin)
+    {
+        // A browser sends scheme://host[:port] in ASCII. Anything else matches no pattern, so it gets the
+        // fallback, * as shipped: sent back, it could hold what a response header can't, a 500 on Kestrel.
+        // It is the caller's text, so it is no warning or error either.
+        var context = await engine.Server.SendAsync(c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/pl/ok";
+            c.Request.Headers.Origin = origin;
+        });
+
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.Equal("*", context.Response.Headers.AccessControlAllowOrigin.ToString());
+        Assert.DoesNotContain(engine.Logs.Entries, e => e.Level >= LogLevel.Warning && e.Message.Contains("CORS"));
+    }
+
     [Fact]
     public async Task Cors_AnOriginThatIsNotAUrl_IsLoggedEscaped_AndIsNoError()
     {

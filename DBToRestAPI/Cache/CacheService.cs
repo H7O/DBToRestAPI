@@ -212,7 +212,11 @@ namespace DBToRestAPI.Cache
                 CancellationToken cancellationToken = default
             )
         {
-            var cacheInfo = GetCacheInfo(serviceSection, context, qParams);
+            // A file download is never cached: the cache stores JSON results, and a file's stream can't be
+            // stored, so `<cache>` on the route is ignored.
+            var cacheInfo = Controllers.ApiController.ResolveResponseStructure(serviceSection.GetValue<string>("response_structure")) == "file"
+                ? null
+                : GetCacheInfo(serviceSection, context, qParams);
             if (cacheInfo == null)
             {
                 // No cache configured - return streaming IActionResult directly

@@ -88,6 +88,8 @@ Pattern: ^.*\.example\.com$
 Result: Access-Control-Allow-Origin: https://app.example.com
 ```
 
+A matching origin is sent back exactly as the browser sent it. An `Origin` that isn't in the form a browser sends, `scheme://host[:port]` in ASCII with no path, user info or query, matches no pattern and gets the fallback.
+
 ### Origin Doesn't Match
 
 ```

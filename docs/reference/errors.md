@@ -138,11 +138,10 @@ Rollback has limits. Know them before relying on it:
 
 - **It covers files, not rows.** Statements that ran before the error, and earlier queries in a chain, stay committed unless your SQL used a transaction. An error after your `COMMIT` (for example in a final `SELECT`) still deletes the files while the rows stay.
 - **Deleting a row never deletes its file.** The engine deletes stored files only during rollback. When an update query removes an attachment's row, the file stays in the store.
-- **With `overwrite_existing_files` on,** a failed request puts back the file it overwrote in a local store. In an SFTP store it deletes it, and the previous content is lost.
+- **With `overwrite_existing_files` on,** a failed request puts back the file it overwrote.
 - **On Windows, a file a download has open** when the request fails can't be deleted or put back: the request's file stays at the path, the previous one stays beside it as `.<id>.replaced`, and a warning names it.
-- **Give each local store its own folder.** Two stores that reach one folder by different paths (through a link, or a share and its local path) look like two folders to the engine, so with `overwrite_existing_files` on, a failed request can leave its own file there.
-- **A write that failed part-way** (disk full, connection lost mid-upload) leaves nothing in a local store, which writes each file under a hidden name beside its destination and renames it once complete. In an SFTP store, the partial file is deleted with the rest, with two exceptions. In an optional store, the failure doesn't fail the request, so when the request succeeds no rollback runs and the partial file stays. With `overwrite_existing_files` on, a partial file stays, whether or not it replaced an existing one.
-- **Hidden files can stay** beside a local store's files: an unfinished copy (`.<id>.uploading`) or, with `overwrite_existing_files` on, the previous version of a file being replaced (`.<id>.replaced`). That happens when the engine stopped mid-request, or when one couldn't be deleted or put back, which a warning reports.
+- **A write that failed part-way** (disk full, connection lost mid-upload) leaves nothing: each file is written under a hidden name beside its destination and renamed once complete.
+- **Hidden files can stay** beside a store's files: an unfinished copy (`.<id>.uploading`) or, with `overwrite_existing_files` on, the previous version of a file being replaced (`.<id>.replaced`). That happens when the engine stopped mid-request, or when one couldn't be deleted or put back, which a warning reports.
 - **A client that disconnects after the SQL committed** still gets the files deleted, so committed rows can point at missing files.
 
 ## Client pattern
@@ -232,7 +231,6 @@ These are tracked in [TODO.md](../../TODO.md):
 - Oracle and DB2 custom errors are not mapped. ODBC and OleDb have no mapping.
 - SQLite can raise a custom status only from a trigger.
 - An error raised after part of a streamed result (two or more rows, other than a file download's or a count query's count) has been handed to the server cuts the connection instead of returning its status.
-- The OpenAPI error schema (`error_message`) doesn't match the runtime body (`message`).
 
 ## Related
 

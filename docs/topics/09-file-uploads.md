@@ -50,7 +50,7 @@ In `config/file_management.xml`, add the store **inside the existing `<local_fil
 </settings>
 ```
 
-Don't add a second `<local_file_store>` (or `<sftp_file_store>`) element. Repeated sibling elements are numbered by the configuration reader, so every store inside them stops matching its name, and uploads succeed without storing anything. The engine creates `base_path` and the folders below it on the first write, as long as its account may create folders there. The account must also be able to rename and delete files there (Modify on Windows): each upload is written under a hidden name and renamed into place, so without that right every upload to the store fails.
+Don't add a second `<local_file_store>` (or `<sftp_file_store>`) element. Repeated sibling elements are numbered by the configuration reader, so every store inside them stops matching its name, and uploads succeed without storing anything. The engine creates `base_path` and the folders below it on the first write, as long as the store's account (the app's for a local store, the SFTP user for an SFTP store) may create folders there. That account must also be able to rename and delete files there (Modify on Windows): each upload is written under a hidden name and renamed into place, so without that right every upload to the store fails.
 
 ### Tables
 
@@ -194,7 +194,7 @@ curl -X POST http://localhost:5000/support-requests \
 | Body over `max_payload_size_in_bytes` | `413` | `{"success":false,"message":"The request body could not be read."}` |
 | Any other database error | `400` | `{"success":false,"message":"An error occurred while processing your request."}` |
 
-In each of these cases the engine deletes every file the request stored. The exceptions are rare, such as an upload to an SFTP store with `overwrite_existing_files` on that failed part-way ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
+In each of these cases the engine deletes every file the request stored. The exceptions are rare, such as a file a download has open on Windows ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
 
 ## Request formats
 
@@ -368,7 +368,7 @@ Route settings go inside the route's `<file_management>`. Global defaults go in 
 | `permitted_file_extensions` | route, global | all allowed | Comma-separated, with dots: `.pdf,.png`. Compared ignoring case. When set, a file must have an extension. |
 | `max_file_size_in_bytes` | route, global | unlimited | Per file. |
 | `max_number_of_files` | route, global | unlimited | Per request, existing entries included. |
-| `overwrite_existing_files` | route, global | `false` | `false`: a file already at the target path in a non-optional store is a `409`. In an optional store, the engine logs a warning and stops writing to that store at the first existing file, so that file and the request's later files are missing from it. `true`: the upload replaces it. If the request then fails, a local store gets the previous file back, and an SFTP store loses it ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)). Keep `{{guid}}` in the path structure to avoid clashes (with `accept_caller_defined_file_ids` on, callers choose it). |
+| `overwrite_existing_files` | route, global | `false` | `false`: a file already at the target path in a non-optional store is a `409`. In an optional store, the engine logs a warning and stops writing to that store at the first existing file, so that file and the request's later files are missing from it. `true`: the upload replaces it. If the request then fails, the store gets the previous file back ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)). Keep `{{guid}}` in the path structure to avoid clashes (with `accept_caller_defined_file_ids` on, callers choose it). |
 | `accept_caller_defined_file_ids` | route, global | `false` | `true`: a new entry's own `id` (a valid GUID) is used, and fills `{{guid}}`. |
 | `pass_files_content_to_query` | route, global | `false` | `true`: nothing is stored and there is no `backend_temp_file_path`. The query gets the base64 content under the content field. Entries still carry `is_new_upload` and a `relative_path`, but no file exists there: store the content yourself. In a JSON body, `size` is estimated from the text length, so whitespace inflates it. The content is not checked: invalid base64 or a `data:` URI reaches the query as sent. |
 | `max_payload_size_in_bytes` | `settings.xml` root | `314572800` (300 MiB); the shipped sample sets `367001600` (350 MiB) | The only limit on bytes received, for every route. Over it: `413`. Size it to at least `max_number_of_files` × `max_file_size_in_bytes` plus the form fields for multipart, and about 4/3 of that for base64. Read for each request, so a change takes effect without a restart. Behind IIS, IIS's own limit of about 30 MB applies first ([details](../reference/errors.md#settings)). |
@@ -475,8 +475,6 @@ IF NOT EXISTS (
 
 Tracked in [TODO.md](../../TODO.md):
 
-- In an SFTP store with `overwrite_existing_files` on, a failed request deletes the file it overwrote instead of putting it back.
-- A write that failed part-way can leave a partial file in an SFTP store that is optional or has `overwrite_existing_files` on ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
 - The OpenAPI document has no request schema for upload endpoints.
 
 ## Related

@@ -106,6 +106,9 @@
     </local_file_store>
 
     <sftp_file_store>
+      <!-- The SFTP account needs write, rename and delete rights under base_path: each upload is
+        written under a hidden name, then renamed into place, and a failed request's files are
+        deleted, or put back where an upload replaced one. -->
       <site3>
         <host><![CDATA[test_sftp]]></host>
         <port>3333</port>

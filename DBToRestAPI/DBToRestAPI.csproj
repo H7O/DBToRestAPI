@@ -4,10 +4,10 @@
   <TargetFramework>net10.0</TargetFramework>
   <Nullable>enable</Nullable>
   <ImplicitUsings>enable</ImplicitUsings>
-  <Version>1.7.13</Version>
-  <AssemblyVersion>1.7.13.0</AssemblyVersion>
-  <FileVersion>1.7.13.0</FileVersion>
-  <InformationalVersion>1.7.13</InformationalVersion>
+  <Version>1.7.14</Version>
+  <AssemblyVersion>1.7.14.0</AssemblyVersion>
+  <FileVersion>1.7.14.0</FileVersion>
+  <InformationalVersion>1.7.14</InformationalVersion>
 </PropertyGroup>
 
 <!--
@@ -40,7 +40,7 @@
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Com.H" Version="10.3.3" />
     <PackageReference Include="Com.H.Data.Common" Version="10.1.0.12" />
-    <PackageReference Include="Com.H.Net.Ssh" Version="10.1.1" />
+    <PackageReference Include="Com.H.Net.Ssh" Version="10.2.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />

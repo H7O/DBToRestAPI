@@ -24,24 +24,13 @@ against the code. Each was read in the code; none has a test yet.
 - **Unmapped database errors are a `400` with the generic message** (ApiController.cs,
   `BadRequest`), so a caller learns nothing about the database (AGENTS rule 4). The cost: a timeout
   or an unreachable database looks like a client error. A 5xx for those two would help monitoring.
-- **`<cache>` on a file download route breaks the download**, which the docs rule out (AGENTS
-  rule 8). `CachableQueryResult` only handles `ObjectResult`, so the file result is replaced and its
-  stream leaks. The engine could ignore `<cache>` on a file route instead.
-- **In an SFTP store, rollback with `overwrite_existing_files` deletes the file it overwrote**
-  instead of putting it back. A local store moves the previous file aside and renames it back; SFTP
-  could do the same once `Com.H.Net.Ssh` can rename a remote file.
-- **A write that fails part-way can leave a partial file in an SFTP store**: an optional one, whose
-  failure doesn't fail the request, or one with `overwrite_existing_files` on, where the path is
-  tracked for rollback only after its upload. A local store writes each file under a hidden name and
-  renames it into place once complete; SFTP could do the same with a rename in `Com.H.Net.Ssh`.
 - **A caller waiting on a slow cache fill waits for all of it.** Callers that join a running fill
   wait until it ends, however long that takes (a 3-second query made every joined caller wait about
   3.5 s). A maximum join wait, after which a waiting caller runs its own query, would bound it. Not
   requested; recorded from the downstream's measurement of the 1.7.11 fix.
 - **Step8 small bugs:** the `response_type` fallback reads `file_management:file_management:response_type`,
   and the `regex:file_variables_pattern` lookup discards its result.
-- **OpenAPI:** upload endpoints have no request schema, and the default error schema
-  (`error_message`) doesn't match the runtime body (`success`, `message`, `error_number`).
+- **OpenAPI:** upload endpoints have no request schema.
 - **A constant subject gives every user the same `user_id`.** An Azure AD B2C user flow with the
   subject claim turned off sends `Not supported`. Ignore that value and fall back to `oid` (the
   fallback to the renamed `oid` itself works from 1.7.6).
@@ -58,10 +47,6 @@ against the code. Each was read in the code; none has a test yet.
   would follow it straight to the target.
 - **CORS:** the engine sends no `Access-Control-Expose-Headers`, so cross-origin pages can't read
   `Content-Disposition` on downloads.
-- **A request whose `Origin` the server can't send back gets a 500.** When the CORS
-  pattern matches the host of an `Origin` such as `http://localhost/café`, the engine echoes the
-  header as sent in `Access-Control-Allow-Origin`, and Kestrel refuses the non-ASCII value: an
-  unhandled exception, an Error entry, a 500. Echo only the serialized origin (scheme, host, port).
 - **An upload's file name can reach the log with U+2028 or U+2029.** The upload rejection line
   (Debug) and Step7's path lines replace control characters only. Use `LogText.Escape`.
 - **Database error messages are logged as the driver wrote them.** The controller's catch-all and
@@ -126,13 +111,38 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **In an SFTP store, a failed request deleted the file its upload had overwritten,** and a write
+  that failed part-way could leave a partial file. Fixed in 1.7.14, as 1.7.13 did for local stores,
+  with the rename `Com.H.Net.Ssh` 10.2.0 adds. An SFTP upload is written under a hidden name beside
+  its destination (`.<id>.uploading`) and renamed into place once complete. With
+  `overwrite_existing_files` on, the file at the path is first renamed aside (`.<id>.replaced`): a
+  failed request renames it back, and a successful one deletes it. A path taken during the upload is
+  a `409`, as for a file there from the start, and an upload now stops when the caller leaves. The
+  SFTP account needs rename and delete rights under `base_path`: without the rename right, every
+  upload to the store fails.
+  In every store, a failed request now undoes its writes newest first, each file deleted and the
+  one it replaced put back, so stores that reach one folder by different paths (a link, another SFTP
+  account) end as they were. In 1.7.13, such a request could leave its own file at the path.
+- **Two uploads that created the same new SFTP folder at once could make one fail**, as on the
+  first uploads of a day with the default path structure. Fixed in `Com.H.Net.Ssh` 10.2.1, which
+  1.7.14 references: an upload accepts a folder another client created meanwhile.
+- **`<cache>` on a file download route broke the download.** Fixed in 1.7.14: a download is never
+  cached, and `<cache>` on it is ignored. The cache keeps JSON results only, so a cached download
+  lost its file.
+- **A request whose `Origin` the server couldn't send back got a `500`.** Fixed in 1.7.14. A
+  matching `Origin` was echoed as sent, so one such as `http://localhost/café` put a value in
+  `Access-Control-Allow-Origin` that Kestrel refused. An `Origin` that isn't in the form a browser
+  sends (`scheme://host[:port]` in ASCII) now matches no pattern and gets the fallback. A browser's
+  origin is still sent back exactly as sent.
+- **The OpenAPI document's default error schema didn't match the body.** Fixed in 1.7.14: it
+  described an `error_message` property, and now lists `success`, `message` and `error_number`.
 - **A failed request deleted the file its upload had overwritten.** Fixed in 1.7.13 for local
   stores. With `overwrite_existing_files` on, the file already at the path is moved aside in its
   folder (`.<id>.replaced`): a failed request renames it back, and a successful one deletes it. A
   local store also writes each upload under a hidden name (`.<id>.uploading`) and renames it into
   place once complete, so a write that fails part-way leaves nothing at the path, in an optional
   store too, and a file being replaced stays readable until its replacement is complete. SFTP stores
-  are unchanged (Open).
+  followed in 1.7.14.
 - **A JSON body that didn't parse ran the query with every body parameter `NULL`.** Fixed in 1.7.13.
   It is now a `400` that says where the JSON broke (`The request body is not valid JSON (line 1,
   byte 3).`), or that it is nested more than 64 levels deep. JSON is read strictly, so a comment or

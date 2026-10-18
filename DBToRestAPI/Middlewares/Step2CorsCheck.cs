@@ -224,6 +224,17 @@ public class Step2CorsCheck(
             return null;
         }
 
+        // A browser sends its origin as scheme://host[:port] in ASCII, and compares the response's header with it
+        // character for character, so a matching one is sent back as it came. Anything else isn't a browser's
+        // origin and matches no pattern: sent back, a non-ASCII one would make the response header invalid, and
+        // the server would answer 500.
+        if (!IsBrowserOrigin(origin))
+        {
+            this._logger.LogDebug("CORS: Origin '{origin}' is not in the form a browser sends, so it matches no pattern",
+                LogText.Escape(origin));
+            return null;
+        }
+
         // Pattern configured - check if origin matches
         try
         {
@@ -245,6 +256,18 @@ public class Step2CorsCheck(
             // On error, return null (will use fallback)
             return null;
         }
+    }
+
+    /// <summary>
+    /// Whether an Origin header has the form a browser sends: scheme://host[:port] in printable ASCII, with no
+    /// user info, path, query or fragment.
+    /// </summary>
+    private static bool IsBrowserOrigin(string origin)
+    {
+        var authority = origin.IndexOf("://", StringComparison.Ordinal);
+        return authority > 0
+            && origin.All(c => c is > ' ' and < '\u007f')
+            && origin.IndexOfAny(['/', '?', '#', '@', '\\'], authority + 3) < 0;
     }
 
     private static string NormalizeFallbackOrigin(string fallbackOrigin)

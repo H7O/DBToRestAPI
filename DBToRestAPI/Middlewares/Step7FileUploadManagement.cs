@@ -2,8 +2,8 @@
 using DBToRestAPI.Settings;
 using DBToRestAPI.Settings.Extensinos;
 using Microsoft.AspNetCore.Mvc;
-using Com.H.Net.Ssh;
 using Com.H.IO;
+using SftpServer = (string Host, int Port, string Username, string Password);
 
 namespace DBToRestAPI.Middlewares
 {
@@ -20,7 +20,6 @@ namespace DBToRestAPI.Middlewares
     {
         public IConfigurationSection Config { get; }
         public bool? WasSuccessful { get; set; }
-        public List<string> StoredRelativePaths { get; } = [];
         public StoreOperationTracker(IConfigurationSection config)
         {
             Config = config;
@@ -44,6 +43,17 @@ namespace DBToRestAPI.Middlewares
         /// <summary>Copies an upload into a local store. A test swaps it for one that fails part-way.</summary>
         internal Func<Stream, Stream, CancellationToken, Task> CopyAsync { get; init; } =
             (source, destination, cancellationToken) => source.CopyToAsync(destination, cancellationToken);
+
+        /// <summary>Connects to an SFTP store's server. A test swaps in one that keeps its files in memory.</summary>
+        internal Func<SftpServer, ISftpStoreClient> ConnectSftp { get; init; } =
+            server => new SftpStoreClient(server.Host, server.Port, server.Username, server.Password);
+
+        /// <summary>A file named <paramref name="name"/> in the folder of the remote <paramref name="path"/>.</summary>
+        private static string BesideRemote(string path, string name)
+        {
+            var folderEnd = path.LastIndexOf('/');
+            return folderEnd < 0 ? name : path[..(folderEnd + 1)] + name;
+        }
 
         public async Task InvokeAsync(HttpContext context)
         {
@@ -182,13 +192,11 @@ namespace DBToRestAPI.Middlewares
                         && !string.IsNullOrWhiteSpace(s.Config.GetValue<string>("username"))
                         && !string.IsNullOrWhiteSpace(s.Config.GetValue<string>("password"));
                 })
-                .GroupBy(s => new
-                {
-                    Host = s.Config.GetValue<string>("host"),
-                    Port = s.Config.GetValue<int>("port", 22),
-                    Username = s.Config.GetValue<string>("username"),
-                    Password = s.Config.GetValue<string>("password")
-                })
+                .GroupBy(s => (SftpServer)(
+                    s.Config.GetValue<string>("host")!,
+                    s.Config.GetValue<int>("port", 22),
+                    s.Config.GetValue<string>("username")!,
+                    s.Config.GetValue<string>("password")!))
                 .ToList();
 
             if (!localStores.Any() && !groupedSftpStores.Any())
@@ -198,10 +206,13 @@ namespace DBToRestAPI.Middlewares
                 return;
             }
 
-            // With overwrite_existing_files on, each file a local store held at a path this request writes,
-            // moved aside in its folder until the request ends: a failed request gets it back, a successful
-            // one deletes it. In the order they were moved.
-            var setAside = new List<(string Path, string AsidePath, string StoreName)>();
+            // Every file this request put in place, in order, with the file it replaced there when
+            // overwrite_existing_files is on, moved aside in its folder until the request ends. A failed request
+            // undoes them newest first, deleting each file and putting back the one it replaced, so a store ends
+            // as it was, even where two stores reach one folder by different paths (a link, a share and its local
+            // path, another SFTP account). A successful one deletes the replaced files. Server is null for a
+            // local store.
+            var placed = new List<(SftpServer? Server, string Path, string? AsidePath, string StoreName)>();
 
             // The files this request put in place in local stores, by full path (ignoring case where the file
             // system does), so a later write to the same path knows the file there is its own: the same path
@@ -209,6 +220,14 @@ namespace DBToRestAPI.Middlewares
             var placedPaths = new HashSet<string>(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal);
+
+            // One client per SFTP server, for a rollback or for deleting the replaced files.
+            ISftpStoreClient ClientFor(Dictionary<SftpServer, ISftpStoreClient> clients, SftpServer server)
+            {
+                if (!clients.TryGetValue(server, out var sftpClient))
+                    clients[server] = sftpClient = ConnectSftp(server);
+                return sftpClient;
+            }
 
             async Task RollbackUploadedFilesAsync(string rollbackReason)
             {
@@ -218,88 +237,84 @@ namespace DBToRestAPI.Middlewares
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
                     rollbackReason);
 
-                foreach (var entry in localStores.Where(x => x.StoredRelativePaths.Count > 0))
+                // Rollback removes files written by this request, but intentionally
+                // does not prune parent directories. Folder trees may be shared by
+                // concurrent uploads, and GUID segments can be caller-defined or omitted.
+                var sftpClients = new Dictionary<SftpServer, ISftpStoreClient>();
+                try
                 {
-                    var localPath = entry.Config.GetValue<string>("base_path");
-                    if (string.IsNullOrWhiteSpace(localPath))
-                        continue;
-
-                    // Rollback removes files written by this request, but intentionally
-                    // does not prune parent directories. Folder trees may be shared by
-                    // concurrent uploads, and GUID segments can be caller-defined or omitted.
-                    foreach (var relativePath in entry.StoredRelativePaths)
+                    for (var i = placed.Count - 1; i >= 0; i--)
                     {
-                        try
+                        var (server, path, asidePath, storeName) = placed[i];
+                        if (server is { } sftpServer)
                         {
-                            var destinationPath = Path.Combine(localPath, relativePath);
-                            if (File.Exists(destinationPath))
-                            {
-                                File.Delete(destinationPath);
-                                this._logger.LogDebug("{time}: Deleted file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware",
-                                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                    destinationPath,
-                                    entry.Config.Key);
-                            }
-                        }
-                        catch (Exception ex2)
-                        {
-                            this._logger.LogWarning("{time}: Failed to delete file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware"
-                                + Environment.NewLine
-                                + " error: {errorMessage}"
-                                ,
-                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                relativePath,
-                                entry.Config.Key,
-                                ex2.Message
-                                );
-                        }
-                    }
-                }
-
-                // Newest first, the reverse of the order they were moved.
-                for (var i = setAside.Count - 1; i >= 0; i--)
-                    PutBack(setAside[i].Path, setAside[i].AsidePath, setAside[i].StoreName);
-                setAside.Clear();
-
-                foreach (var group in groupedSftpStores)
-                {
-                    using Com.H.Net.Ssh.SFtpClient sftpClient = new SFtpClient(
-                        group.Key.Host!,
-                        group.Key.Port!,
-                        group.Key.Username!,
-                        group.Key.Password!
-                        );
-
-                    foreach (var entry in group.Where(x => x.StoredRelativePaths.Count > 0))
-                    {
-                        var remotePath = entry.Config.GetValue<string>("base_path", string.Empty);
-                        foreach (var relativePath in entry.StoredRelativePaths)
-                        {
+                            var sftpClient = ClientFor(sftpClients, sftpServer);
                             try
                             {
-                                // Resolved the same way as the upload above, so the delete hits the same file.
-                                if (!FileStorePath.TryResolveSftp(remotePath, relativePath, out var destinationPath))
-                                    continue;
-                                await sftpClient.DeleteAsync(destinationPath);
+                                await sftpClient.DeleteAsync(path);
                                 this._logger.LogDebug("{time}: Deleted file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware",
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                    destinationPath,
-                                    entry.Config.Key);
+                                    path,
+                                    storeName);
+                            }
+                            catch (FileNotFoundException)
+                            {
+                                // Gone already: nothing to delete.
                             }
                             catch (Exception ex2)
                             {
-                                this._logger.LogWarning("{time}: Failed to delete file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware"
+                                // Deleted all the same when only the reply was lost.
+                                if (!await WasDeletedAsync(sftpClient, path))
+                                {
+                                    this._logger.LogWarning("{time}: Failed to delete file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware"
+                                        + Environment.NewLine
+                                        + " error: {errorMessage}"
+                                        ,
+                                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                        path,
+                                        storeName,
+                                        ex2.Message
+                                        );
+                                }
+                            }
+                            if (asidePath is not null)
+                                await PutBackRemoteAsync(sftpClient, path, asidePath, storeName);
+                        }
+                        else
+                        {
+                            try
+                            {
+                                if (File.Exists(path))
+                                {
+                                    File.Delete(path);
+                                    this._logger.LogDebug("{time}: Deleted file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware",
+                                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                        path,
+                                        storeName);
+                                }
+                            }
+                            catch (Exception ex2)
+                            {
+                                this._logger.LogWarning("{time}: Failed to delete file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware"
                                     + Environment.NewLine
                                     + " error: {errorMessage}"
                                     ,
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                    relativePath,
-                                    entry.Config.Key,
+                                    path,
+                                    storeName,
                                     ex2.Message
                                     );
                             }
+                            if (asidePath is not null)
+                                PutBack(path, asidePath, storeName);
                         }
                     }
+                    placed.Clear();
+                }
+                finally
+                {
+                    foreach (var sftpClient in sftpClients.Values)
+                        sftpClient.Dispose();
                 }
 
                 this._logger.LogDebug("{time}: files rolled back in Step6FileManagement middleware",
@@ -307,29 +322,46 @@ namespace DBToRestAPI.Middlewares
             }
 
             // The request succeeded, so the files its uploads replaced are no longer needed.
-            void DeleteSetAsideFiles()
+            async Task DeleteSetAsideFilesAsync()
             {
-                foreach (var (path, asidePath, storeName) in setAside)
+                var sftpClients = new Dictionary<SftpServer, ISftpStoreClient>();
+                try
                 {
-                    try
+                    foreach (var (server, path, asidePath, storeName) in placed)
                     {
-                        File.Delete(asidePath);
+                        if (asidePath is null)
+                            continue;
+                        try
+                        {
+                            if (server is { } sftpServer)
+                                await ClientFor(sftpClients, sftpServer).DeleteAsync(asidePath);
+                            else
+                                File.Delete(asidePath);
+                        }
+                        catch (Exception ex2)
+                        {
+                            // Deleted all the same when only the reply was lost.
+                            if (server is { } lostReplyServer && await WasDeletedAsync(ClientFor(sftpClients, lostReplyServer), asidePath))
+                                continue;
+                            this._logger.LogWarning("{time}: Failed to delete '{asideFile}', the previous content of '{file}' in store ({store_name}), in Step6FileManagement middleware"
+                                + Environment.NewLine
+                                + " error: {errorMessage}"
+                                ,
+                                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                asidePath,
+                                path,
+                                storeName,
+                                ex2.Message
+                                );
+                        }
                     }
-                    catch (Exception ex2)
-                    {
-                        this._logger.LogWarning("{time}: Failed to delete '{asideFile}', the previous content of '{file}' in local store ({local_store_name}), in Step6FileManagement middleware"
-                            + Environment.NewLine
-                            + " error: {errorMessage}"
-                            ,
-                            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                            asidePath,
-                            path,
-                            storeName,
-                            ex2.Message
-                            );
-                    }
+                    placed.Clear();
                 }
-                setAside.Clear();
+                finally
+                {
+                    foreach (var sftpClient in sftpClients.Values)
+                        sftpClient.Dispose();
+                }
             }
 
             // Moves a file that was set aside back to its path, replacing whatever this request put there
@@ -358,6 +390,106 @@ namespace DBToRestAPI.Middlewares
                         asidePath,
                         ex2.Message
                         );
+                }
+            }
+
+            // The same for an SFTP store, whose rename never replaces a file: the path must be free.
+            async Task PutBackRemoteAsync(ISftpStoreClient sftpClient, string path, string asidePath, string storeName)
+            {
+                try
+                {
+                    await sftpClient.RenameAsync(asidePath, path);
+                    this._logger.LogDebug("{time}: Restored file '{file}' in SFTP store ({sftp_store_name}) in Step6FileManagement middleware",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                        path,
+                        storeName);
+                }
+                catch (Exception ex2)
+                {
+                    // Put back all the same when only the reply was lost.
+                    if (await WasRenamedAsync(sftpClient, asidePath, path) == true)
+                        return;
+                    this._logger.LogWarning("{time}: Failed to restore file '{file}' in SFTP store ({sftp_store_name}) in Step6FileManagement middleware;"
+                        + " its previous content is in '{asideFile}'"
+                        + Environment.NewLine
+                        + " error: {errorMessage}"
+                        ,
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                        path,
+                        storeName,
+                        asidePath,
+                        ex2.Message
+                        );
+                }
+            }
+
+            // Deletes what an SFTP upload left under its hidden name, when it never got its destination's name.
+            async Task DeleteUnfinishedUploadAsync(ISftpStoreClient sftpClient, string writingPath, string storeName)
+            {
+                try
+                {
+                    await sftpClient.DeleteAsync(writingPath);
+                }
+                catch (FileNotFoundException)
+                {
+                    // The upload failed before it created the file.
+                }
+                catch (Exception ex2)
+                {
+                    // Deleted all the same when only the reply was lost.
+                    if (await WasDeletedAsync(sftpClient, writingPath))
+                        return;
+                    this._logger.LogWarning("{time}: Failed to delete the unfinished upload '{file}' in SFTP store ({sftp_store_name}) in Step6FileManagement middleware"
+                        + Environment.NewLine
+                        + " error: {errorMessage}"
+                        ,
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                        writingPath,
+                        storeName,
+                        ex2.Message
+                        );
+                }
+            }
+
+            // Whether a rename that failed was carried out all the same, its reply lost when the connection dropped
+            // say: the old path gone and the new one there. Null when the server can't say.
+            static async Task<bool?> WasRenamedAsync(ISftpStoreClient sftpClient, string oldPath, string newPath)
+            {
+                try
+                {
+                    return !await sftpClient.ExistsAsync(oldPath, CancellationToken.None)
+                        && await sftpClient.ExistsAsync(newPath, CancellationToken.None);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            // Whether a delete that failed was carried out all the same, its reply lost: nothing at the path now.
+            // False when the server can't say.
+            static async Task<bool> WasDeletedAsync(ISftpStoreClient sftpClient, string path)
+            {
+                try
+                {
+                    return !await sftpClient.ExistsAsync(path, CancellationToken.None);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            // Whether something is at a remote path, to tell why a rename failed; false when the server can't say.
+            static async Task<bool> IsTakenAsync(ISftpStoreClient sftpClient, string path)
+            {
+                try
+                {
+                    return await sftpClient.ExistsAsync(path, CancellationToken.None);
+                }
+                catch
+                {
+                    return false;
                 }
             }
 
@@ -444,12 +576,10 @@ namespace DBToRestAPI.Middlewares
                                     PutBack(destinationPath, asidePath, entry.Config.Key, replace: false);
                                     throw;
                                 }
-                                if (asidePath is not null)
-                                    setAside.Add((destinationPath, asidePath, entry.Config.Key));
                                 placedPaths.Add(destinationPath);
 
-                                // Tracked once in place, so a rollback deletes only files this request put there.
-                                entry.StoredRelativePaths.Add(file.Value.RelativePath);
+                                // Recorded once in place, so a rollback deletes only files this request put there.
+                                placed.Add((null, destinationPath, asidePath, entry.Config.Key));
                             }
                             finally
                             {
@@ -516,13 +646,7 @@ namespace DBToRestAPI.Middlewares
 
                 foreach (var group in groupedSftpStores)
                 {
-                    using Com.H.Net.Ssh.SFtpClient sftpClient = new SFtpClient(
-                        group.Key.Host!,
-                        group.Key.Port!,
-                        group.Key.Username!,
-                        group.Key.Password!
-                        );
-                    // sftpClient.Connect();
+                    using var sftpClient = ConnectSftp(group.Key);
                     foreach (var entry in group)
                     {
                         // remote path can be empty, in which case files are uploaded to the user's home directory
@@ -530,6 +654,10 @@ namespace DBToRestAPI.Middlewares
 
                         try
                         {
+                            // Before any file, so a server that can't be reached, or refuses the login, fails the
+                            // store at once, with nothing to clean up.
+                            await sftpClient.ConnectAsync(context.RequestAborted);
+
                             foreach (var file in tempFilesTracker.GetLocalFiles())
                             {
                                 // Same containment rule as downloads: nothing is written outside the store.
@@ -538,29 +666,101 @@ namespace DBToRestAPI.Middlewares
                                         $"File path '{file.Value.RelativePath}' points outside SFTP store '{entry.Config.Key}'.");
 
                                 // Check if file already exists on SFTP (unless overwrite is enabled)
-                                if (!overwriteExistingFiles)
+                                if (!overwriteExistingFiles && await sftpClient.ExistsAsync(destinationPath, context.RequestAborted))
                                 {
-                                    bool fileExists = await sftpClient.ExistsAsync(destinationPath, context.RequestAborted);
-                                    if (fileExists)
-                                    {
-                                        throw new FileAlreadyExistsException(
-                                            $"File '{file.Value.RelativePath}' already exists in SFTP store '{entry.Config.Key}'. " +
-                                            "Set 'overwrite_existing_files' to true to allow overwriting.");
-                                    }
+                                    throw new FileAlreadyExistsException(
+                                        $"File '{file.Value.RelativePath}' already exists in SFTP store '{entry.Config.Key}'. " +
+                                        "Set 'overwrite_existing_files' to true to allow overwriting.");
                                 }
 
-                                // The upload doesn't say when it has created the file. Without overwrite, nothing
-                                // was there before, so the path is tracked first and a rollback also deletes a file
-                                // the upload left half written. With overwrite, only after, so a failure before the
-                                // upload writes never deletes the file it would have replaced.
-                                if (!overwriteExistingFiles)
-                                    entry.StoredRelativePaths.Add(file.Value.RelativePath);
-                                using (var fileStream = new FileStream(file.Key, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true))
+                                // As in a local store, the upload is written under a hidden name beside its
+                                // destination and takes the destination's name only once complete.
+                                var writingPath = BesideRemote(destinationPath, $".{Guid.NewGuid():N}.uploading");
+                                var movedIn = false;
+                                try
                                 {
-                                    await sftpClient.UploadAsync(fileStream, destinationPath);
+                                    using (var fileStream = new FileStream(file.Key, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true))
+                                    {
+                                        await sftpClient.UploadAsync(fileStream, writingPath, context.RequestAborted);
+                                    }
+
+                                    // SFTP's rename doesn't replace a file, so with overwrite on a file at the path is
+                                    // moved aside first, one this request put there included: a rollback puts it back,
+                                    // a success deletes it. A folder there stays, and the move-in then fails, as in a
+                                    // local store. A path another request takes in between fails the store, which loses
+                                    // no file.
+                                    string? asidePath = null;
+                                    if (overwriteExistingFiles && await sftpClient.IsFileAsync(destinationPath))
+                                    {
+                                        asidePath = BesideRemote(destinationPath, $".{Guid.NewGuid():N}.replaced");
+                                        try
+                                        {
+                                            await sftpClient.RenameAsync(destinationPath, asidePath);
+                                        }
+                                        catch (FileNotFoundException)
+                                        {
+                                            // Moved away since, by another request replacing it too: nothing to set aside.
+                                            asidePath = null;
+                                        }
+                                        catch (Exception ex2)
+                                        {
+                                            // Set aside all the same when only the reply was lost.
+                                            var renamed = await WasRenamedAsync(sftpClient, destinationPath, asidePath);
+                                            if (renamed != true)
+                                            {
+                                                if (renamed is null)
+                                                    this._logger.LogWarning("{time}: Failed to set aside file '{file}' in SFTP store ({sftp_store_name}) in Step6FileManagement middleware;"
+                                                        + " its previous content may be in '{asideFile}'"
+                                                        + Environment.NewLine
+                                                        + " error: {errorMessage}"
+                                                        ,
+                                                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
+                                                        destinationPath,
+                                                        entry.Config.Key,
+                                                        asidePath,
+                                                        ex2.Message
+                                                        );
+                                                throw;
+                                            }
+                                        }
+                                    }
+
+                                    try
+                                    {
+                                        await sftpClient.RenameAsync(writingPath, destinationPath);
+                                    }
+                                    catch (Exception)
+                                    {
+                                        // In place all the same when only the reply was lost.
+                                        if (await WasRenamedAsync(sftpClient, writingPath, destinationPath) != true)
+                                        {
+                                            if (asidePath is not null)
+                                            {
+                                                // At once, as an optional store's request goes on without this file.
+                                                await PutBackRemoteAsync(sftpClient, destinationPath, asidePath, entry.Config.Key);
+                                            }
+                                            else if (!overwriteExistingFiles && await IsTakenAsync(sftpClient, destinationPath))
+                                            {
+                                                // Something took the path during the upload, another request's say: the
+                                                // same answer as for a file that was there from the start.
+                                                throw new FileAlreadyExistsException(
+                                                    $"File '{file.Value.RelativePath}' already exists in SFTP store '{entry.Config.Key}'. " +
+                                                    "Set 'overwrite_existing_files' to true to allow overwriting.");
+                                            }
+                                            throw;
+                                        }
+                                    }
+                                    movedIn = true;
+
+                                    // Recorded once in place, so a rollback deletes only files this request put there.
+                                    placed.Add((group.Key, destinationPath, asidePath, entry.Config.Key));
                                 }
-                                if (overwriteExistingFiles)
-                                    entry.StoredRelativePaths.Add(file.Value.RelativePath);
+                                finally
+                                {
+                                    // What an upload that failed left, or one whose destination couldn't take it.
+                                    if (!movedIn)
+                                        await DeleteUnfinishedUploadAsync(sftpClient, writingPath, entry.Config.Key);
+                                }
 
                                 this._logger.LogDebug("{time}: Uploaded temp file '{tempFile}' to SFTP store ({sftp_store_name}) at '{destinationPath}' in Step6FileManagement middleware",
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
@@ -604,9 +804,8 @@ namespace DBToRestAPI.Middlewares
                     }
                 }
 
-                // A caller who left while its files were stored, during an SFTP upload say, which doesn't
-                // take the request's token (cut off part-way with overwrite on, its partial file would
-                // stay): the catch below rolls back, and Step6MandatoryFieldsCheck logs it as one line.
+                // A caller who left once its files were stored, as the last one was put in place say: the
+                // catch below rolls back, and Step6MandatoryFieldsCheck logs it as one line.
                 context.RequestAborted.ThrowIfCancellationRequested();
 
                 // Proceed to the next middleware
@@ -618,7 +817,7 @@ namespace DBToRestAPI.Middlewares
                 }
                 else
                 {
-                    DeleteSetAsideFiles();
+                    await DeleteSetAsideFilesAsync();
                 }
             }
             catch (Exception ex)

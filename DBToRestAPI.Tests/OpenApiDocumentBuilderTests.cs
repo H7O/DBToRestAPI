@@ -43,6 +43,30 @@ public class OpenApiDocumentBuilderTests
     }
 
     [Fact]
+    public void CacheNote_IsLeftOffADownloadRoute()
+    {
+        // A download is never cached: <cache> on it is ignored, so the document mustn't say otherwise.
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:list:route"] = "list",
+            ["queries:list:verb"] = "GET",
+            ["queries:list:cache:memory:duration_in_milliseconds"] = "60000",
+            ["queries:list:query"] = "SELECT 1",
+            ["queries:download:route"] = "download",
+            ["queries:download:verb"] = "GET",
+            ["queries:download:response_structure"] = "file",
+            ["queries:download:cache:memory:duration_in_milliseconds"] = "60000",
+            ["queries:download:query"] = "SELECT 1"
+        });
+
+        var paths = ParseDoc(builder).GetProperty("paths");
+        Assert.Contains("Response is cached.", paths.GetProperty("/list").GetProperty("get").GetProperty("description").GetString());
+        var download = paths.GetProperty("/download").GetProperty("get");
+        Assert.DoesNotContain("cached", download.TryGetProperty("description", out var text) ? text.GetString() ?? "" : "");
+    }
+
+    [Fact]
     public void DisabledByDefault_ReturnsEmptyDocument()
     {
         var builder = CreateBuilder(new Dictionary<string, string?>
@@ -491,11 +515,16 @@ public class OpenApiDocumentBuilderTests
             .GetProperty("get")
             .GetProperty("responses");
         Assert.True(responses.TryGetProperty("default", out var def));
-        var errorSchema = def.GetProperty("content")
+        var schema = def.GetProperty("content")
             .GetProperty("application/json")
-            .GetProperty("schema")
-            .GetProperty("properties");
-        Assert.True(errorSchema.TryGetProperty("error_message", out _));
+            .GetProperty("schema");
+        // The body the engine answers errors with: {"success":false,"message":"...","error_number":404}.
+        var properties = schema.GetProperty("properties");
+        Assert.Equal("boolean", properties.GetProperty("success").GetProperty("type").GetString());
+        Assert.Equal("string", properties.GetProperty("message").GetProperty("type").GetString());
+        Assert.Equal("integer", properties.GetProperty("error_number").GetProperty("type").GetString());
+        Assert.False(properties.TryGetProperty("error_message", out _));
+        Assert.Equal(["success", "message"], schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()));
     }
 
     [Fact]

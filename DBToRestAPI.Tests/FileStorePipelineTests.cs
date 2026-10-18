@@ -53,6 +53,13 @@ public class FileStorePipelineTests(FileStorePipelineTests.StoreEngine engine) :
             ["queries:store_download:file_management:store"] = "pl_store",
             ["queries:store_download:query"] = "SELECT path AS relative_path, 'note.txt' AS file_name FROM uploads WHERE id = {{id}};",
 
+            ["queries:store_download_cached:route"] = "store/download_cached/{{id}}",
+            ["queries:store_download_cached:verb"] = "GET",
+            ["queries:store_download_cached:response_structure"] = "file",
+            ["queries:store_download_cached:file_management:store"] = "pl_store",
+            ["queries:store_download_cached:cache:memory:duration_in_milliseconds"] = "60000",
+            ["queries:store_download_cached:query"] = "SELECT path AS relative_path, 'note.txt' AS file_name FROM uploads WHERE id = {{id}};",
+
             // The path comes from the query string here, standing in for one stored in a table.
             ["queries:store_download_path:route"] = "store/download_path",
             ["queries:store_download_path:verb"] = "GET",
@@ -90,6 +97,23 @@ public class FileStorePipelineTests(FileStorePipelineTests.StoreEngine engine) :
         Assert.Equal("hello", await download.Content.ReadAsStringAsync());
         Assert.Equal("text/plain", download.Content.Headers.ContentType?.MediaType);
         Assert.Equal("note.txt", download.Content.Headers.ContentDisposition?.FileNameStar);
+    }
+
+    [Fact]
+    public async Task ADownloadRouteWithCache_StillDeliversTheFile_EveryTime()
+    {
+        // The cache stores JSON results only, so <cache> on a download route is ignored: a cached
+        // route used to answer without the file.
+        var (id, _) = await UploadAsync(new StringContent(
+            """{"attachments": [{"name": "note.txt", "content_base64": "aGVsbG8="}]}""", Encoding.UTF8, "application/json"));
+
+        for (var call = 0; call < 2; call++)
+        {
+            using var download = await engine.Client.GetAsync($"store/download_cached/{id}");
+            Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+            Assert.Equal("hello", await download.Content.ReadAsStringAsync());
+            Assert.Equal("note.txt", download.Content.Headers.ContentDisposition?.FileNameStar);
+        }
     }
 
     [Theory]

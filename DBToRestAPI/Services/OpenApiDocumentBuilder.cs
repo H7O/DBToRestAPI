@@ -342,7 +342,8 @@ $$"""
 
         // Host, cache, count_query hints for description
         var host = section.GetValue<string>("host");
-        var hasCache = section.GetSection("cache").Exists();
+        // A download is never cached: <cache> on it is ignored (CacheService).
+        var hasCache = section.GetSection("cache").Exists() && responseStructure != "file";
         var hasCountQuery = section.GetSection("count_query").Exists()
             || !string.IsNullOrWhiteSpace(section.GetValue<string>("count_query"));
 
@@ -481,12 +482,20 @@ $$"""
                 {
                     ["application/json"] = new Dictionary<string, object>
                     {
+                        // The body every error is answered with (errors.md).
                         ["schema"] = new Dictionary<string, object>
                         {
                             ["type"] = "object",
+                            ["required"] = new List<object> { "success", "message" },
                             ["properties"] = new Dictionary<string, object>
                             {
-                                ["error_message"] = new Dictionary<string, object> { ["type"] = "string" }
+                                ["success"] = new Dictionary<string, object> { ["type"] = "boolean" },
+                                ["message"] = new Dictionary<string, object> { ["type"] = "string" },
+                                ["error_number"] = new Dictionary<string, object>
+                                {
+                                    ["type"] = "integer",
+                                    ["description"] = "The status, when the query raised the error itself (50000 + status)"
+                                }
                             }
                         }
                     }

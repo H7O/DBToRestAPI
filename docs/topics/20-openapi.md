@@ -78,7 +78,7 @@ The following are inferred automatically from your existing endpoint tags — no
 | `<api_keys_collections>vendors</api_keys_collections>` | API key security scheme (`x-api-key` header) |
 | `<authorize>` | Bearer JWT security scheme |
 | `<host>` | Noted in operation description |
-| `<cache>` | "Response is cached" in description |
+| `<cache>` | "Response is cached" in description, except on a download route, which is never cached |
 | `<rate_limit>` | `429` response with the `Retry-After` header and the `{ success, message, retry_after_seconds }` body; the effective limit noted in the description (see [Rate Limiting](18-rate-limiting.md)) |
 | `<count_query>` | Response wrapped in `{ success, count, data }` pagination envelope |
 
@@ -160,15 +160,7 @@ Parameters are placed according to standard REST conventions:
 
 ## Error Responses
 
-Every operation gets a `default` error response whose schema has one string property, `error_message`:
-
-```json
-{
-  "error_message": "Not found"
-}
-```
-
-This schema doesn't match the body the engine sends yet. It is a known issue. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
+Every operation gets a `default` error response whose schema is the body the engine answers every error with: `success` and `message` always, and `error_number` when the query raised the error itself. A query that raises `50404` (for example `THROW 50404, 'Not found', 1;` on SQL Server) returns:
 
 ```json
 {
@@ -178,7 +170,7 @@ This schema doesn't match the body the engine sends yet. It is a known issue. A 
 }
 ```
 
-Clients should read `message`, not `error_message`. See [Errors](../reference/errors.md) for every status and body.
+See [Errors](../reference/errors.md) for every status and body.
 
 ## Security Schemes
 
