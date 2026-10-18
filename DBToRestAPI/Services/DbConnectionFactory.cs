@@ -79,6 +79,10 @@ public class DbConnectionFactory
 
         connection.ConnectionString = NormalizeConnectionStringPaths(provider, connectionString);
 
+        // SQLite accepts RAISE() only in a trigger: raise_error(50404, 'Not found') works anywhere.
+        if (connection is Microsoft.Data.Sqlite.SqliteConnection sqlite)
+            DatabaseErrors.AddSqliteRaiseError(sqlite);
+
         // Wrap connection to track disposal
         var trackedConnection = new TrackedDbConnection(connection, _logger, connectionStringName);
         var count = Interlocked.Increment(ref _activeConnectionCount);
@@ -216,11 +220,20 @@ internal class TrackedDbConnection : DbConnection
 
     public override void ChangeDatabase(string databaseName) => _inner.ChangeDatabase(databaseName);
     public override void Close() => _inner.Close();
-    public override void Open() => _inner.Open();
+
+    /// <summary>True once the connection has been opened: a later Closed state means it was lost or closed.</summary>
+    internal bool WasOpened { get; private set; }
+
+    public override void Open()
+    {
+        _inner.Open();
+        WasOpened = true;
+    }
 
     public override async Task OpenAsync(CancellationToken cancellationToken)
     {
         await _inner.OpenAsync(cancellationToken);
+        WasOpened = true;
     }
 
     protected override DbTransaction BeginDbTransaction(System.Data.IsolationLevel isolationLevel)
@@ -232,10 +245,38 @@ internal class TrackedDbConnection : DbConnection
         return cmd;
     }
 
+    // Microsoft.Data.Sqlite returns a connection to its pool as it is. A transaction that a query's
+    // BEGIN opened and an error left open would keep the database's write lock, and the next request
+    // given that connection would run inside it. Npgsql rolls back as the connection closes; SqlClient
+    // and MySqlConnector reset a pooled connection when it is next used.
+    private void RollBackAnOpenSqliteTransaction()
+    {
+        if (_inner is not Microsoft.Data.Sqlite.SqliteConnection { State: System.Data.ConnectionState.Open } sqlite
+            || sqlite.Handle is null
+            || SQLitePCL.raw.sqlite3_get_autocommit(sqlite.Handle) != 0)
+            return;
+        try
+        {
+            using var rollback = sqlite.CreateCommand();
+            rollback.CommandText = "ROLLBACK;";
+            rollback.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            // The transaction stays: keep the connection out of the pool.
+            _logger.LogWarning(
+                "{Time}: Could not roll back the transaction a query left open on '{ConnectionStringName}': {Message}",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), _connectionStringName, LogText.Escape(ex.Message));
+            Microsoft.Data.Sqlite.SqliteConnection.ClearPool(sqlite);
+        }
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (!_disposed)
         {
+            if (disposing)
+                RollBackAnOpenSqliteTransaction();
             _disposed = true;
             var lifetime = DateTime.Now - _createdAt;
             DbConnectionFactory.DecrementConnectionCount();
@@ -261,6 +302,7 @@ internal class TrackedDbConnection : DbConnection
     {
         if (!_disposed)
         {
+            RollBackAnOpenSqliteTransaction();
             _disposed = true;
             var lifetime = DateTime.Now - _createdAt;
             DbConnectionFactory.DecrementConnectionCount();

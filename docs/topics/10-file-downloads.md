@@ -15,7 +15,7 @@ A download endpoint runs a query that returns one row describing a file, and the
 1. **Set `<response_structure>file</response_structure>`** on the route. For files in a store, also set `<file_management><store>NAME</store></file_management>`, with one store name. Without the store, every store download is a `404`.
 2. **Return exact column names:** `relative_path`, `file_name`, `mime_type`, `base64_content`, `http`. Names are case-sensitive. A `content_type` column is ignored. On Oracle and DB2, quote the aliases (`AS "relative_path"`): unquoted aliases come back in upper case and don't match.
 3. **Take `relative_path` from your table, never from the request.** Look the file up by its id, scoped to the caller.
-4. **Enforce ownership in the query.** Join to the owner and use `{auth{user_id}}` (or an API key collection). For a file that doesn't exist or isn't the caller's, return no row: that is a `404` on every database. Raising `50404` works too on SQL Server, MySQL and PostgreSQL, but not on Oracle, DB2, ODBC or SQLite outside a trigger ([errors.md](../reference/errors.md#raising-an-error-from-sql)).
+4. **Enforce ownership in the query.** Join to the owner and use `{auth{user_id}}` (or an API key collection). For a file that doesn't exist or isn't the caller's, return no row: that is a `404` on every database. Raising `50404` works too ([errors.md](../reference/errors.md#raising-an-error-from-sql)).
 5. **A download is never cached.** `<cache>` on a download route is ignored, so every request runs the query and reads the file.
 6. **Return one row.** The engine uses the first row. When the query returns only that row, the result is read to its end, so an error raised after the row still gets its status. When it returns more, the engine stops at the second row, and an error raised after the rows is lost. Use `TOP 1` or `LIMIT 1` when the query could match several.
 
@@ -136,6 +136,7 @@ SELECT 'report.pdf' AS file_name, url AS http FROM reports WHERE id = {{id}};
 | `404` | `http` is empty or not a well-formed absolute URL | ``Invalid HTTP URL for route `...` `` |
 | remote status | The `http` source returned an error | ``Failed to download file for route `...` `` |
 | `400`-`599` | The query raised `50400`-`50599` (for example `THROW 50404`) | Your message, plus `error_number` (the HTTP status) |
+| `503`, `504` | The database couldn't be reached or closed the connection (`503`), or didn't answer in time (`504`) | The generic message (a `500` with details when the request sends the matching `debug-mode` header) |
 | `400` | Any other failure: a database error, an SFTP connection or login failure, a file locked by another process, an unreachable `http` host, invalid `base64_content`, an invalid `mime_type` | The generic message (a `500` with details when the request sends the matching `debug-mode` header) |
 
 Bodies are JSON with `"success": false` and `message`. Errors raised from SQL add `error_number`. See [errors.md](../reference/errors.md).

@@ -90,122 +90,6 @@ namespace DBToRestAPI.Controllers
         };
 
         /// <summary>
-        /// Attempts to extract custom error information from a database exception.
-        /// Supports multiple database providers (SQL Server, PostgreSQL, MySQL, Oracle, SQLite, DB2).
-        /// Looks for error codes in the range 50000-51000 which map to HTTP status codes 0-1000.
-        /// </summary>
-        /// <param name="exception">The exception to analyze (checks both the exception and its InnerException)</param>
-        /// <param name="errorNumber">The extracted error number (50000-51000 range)</param>
-        /// <param name="errorMessage">The extracted error message</param>
-        /// <returns>True if a custom error was found in the valid range; otherwise false</returns>
-        internal static bool TryGetCustomDbError(Exception exception, out int errorNumber, out string errorMessage)
-        {
-            errorNumber = 0;
-            errorMessage = string.Empty;
-
-            // Check the exception itself first, then its InnerException
-            var exceptionsToCheck = new[] { exception, exception?.InnerException };
-
-            foreach (var ex in exceptionsToCheck)
-            {
-                if (ex == null) continue;
-
-                int? extractedNumber = null;
-                string? extractedMessage = null;
-
-                // SQL Server: Microsoft.Data.SqlClient.SqlException
-                if (ex is Microsoft.Data.SqlClient.SqlException sqlEx)
-                {
-                    extractedNumber = sqlEx.Number;
-                    extractedMessage = sqlEx.Message;
-                }
-                // PostgreSQL: Npgsql.PostgresException - uses SqlState codes (strings like "P0001" for RAISE EXCEPTION)
-                // For PostgreSQL, users should use RAISE EXCEPTION with ERRCODE and we check MessageText
-                // PostgreSQL custom errors: RAISE EXCEPTION 'message' USING ERRCODE = '50404' won't work directly
-                // Instead, we'll check if the exception message contains a pattern like [50xxx]
-                else if (ex.GetType().FullName == "Npgsql.PostgresException")
-                {
-                    // Try to get the error code from the message or use reflection to get properties
-                    extractedMessage = ex.Message;
-                    // PostgresException doesn't have a numeric error code like SQL Server
-                    // Users can embed the error code in the message: RAISE EXCEPTION '[50404] Not found'
-                    var match = System.Text.RegularExpressions.Regex.Match(ex.Message, @"\[(\d{5})\]");
-                    if (match.Success && int.TryParse(match.Groups[1].Value, out int pgCode))
-                    {
-                        extractedNumber = pgCode;
-                        // Remove the error code prefix from the message for cleaner output
-                        extractedMessage = ex.Message.Replace(match.Value, "").Trim();
-                    }
-                }
-                // MySQL: MySqlConnector.MySqlException
-                else if (ex.GetType().FullName == "MySqlConnector.MySqlException")
-                {
-                    // Use reflection to get the Number property to avoid hard dependency
-                    var numberProp = ex.GetType().GetProperty("Number");
-                    if (numberProp?.GetValue(ex) is int mysqlNumber)
-                    {
-                        extractedNumber = mysqlNumber;
-                        extractedMessage = ex.Message;
-                    }
-                }
-                // Oracle: Oracle.ManagedDataAccess.Client.OracleException
-                // Oracle uses RAISE_APPLICATION_ERROR with codes -20000 to -20999
-                // We map these to our 50000-51000 range: -20404 → 50404 (HTTP 404)
-                else if (ex.GetType().FullName == "Oracle.ManagedDataAccess.Client.OracleException")
-                {
-                    var numberProp = ex.GetType().GetProperty("Number");
-                    if (numberProp?.GetValue(ex) is int oracleNumber)
-                    {
-                        // Oracle error codes are negative: -20000 to -20999
-                        // Convert to our range: -20404 → 50404
-                        if (oracleNumber >= -20999 && oracleNumber <= -20000)
-                        {
-                            extractedNumber = 50000 + ((-oracleNumber) - 20000);
-                        }
-                        extractedMessage = ex.Message;
-                    }
-                }
-                // SQLite: Microsoft.Data.Sqlite.SqliteException
-                else if (ex is Microsoft.Data.Sqlite.SqliteException sqliteEx)
-                {
-                    // SQLite uses string error codes; for custom errors, users can use the message pattern
-                    extractedMessage = sqliteEx.Message;
-                    var match = System.Text.RegularExpressions.Regex.Match(ex.Message, @"\[(\d{5})\]");
-                    if (match.Success && int.TryParse(match.Groups[1].Value, out int sqliteCode))
-                    {
-                        extractedNumber = sqliteCode;
-                        extractedMessage = ex.Message.Replace(match.Value, "").Trim();
-                    }
-                }
-                // DB2: IBM.Data.Db2.DB2Exception
-                else if (ex.GetType().FullName == "IBM.Data.Db2.DB2Exception")
-                {
-                    // Try to get error code via reflection
-                    // DB2Exception may have errors collection; check for native error
-                    var messageProp = ex.GetType().GetProperty("Message");
-                    extractedMessage = ex.Message;
-                    // DB2 might embed error codes in message or have separate property
-                    var match = System.Text.RegularExpressions.Regex.Match(ex.Message, @"\[(\d{5})\]");
-                    if (match.Success && int.TryParse(match.Groups[1].Value, out int db2Code))
-                    {
-                        extractedNumber = db2Code;
-                        extractedMessage = ex.Message.Replace(match.Value, "").Trim();
-                    }
-                }
-
-                // Check if we found a valid custom error in the 50000-51000 range
-                if (extractedNumber.HasValue && extractedNumber.Value >= 50000 && extractedNumber.Value < 51000)
-                {
-                    errorNumber = extractedNumber.Value;
-                    errorMessage = extractedMessage ?? ex.Message;
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
         /// Logs a status the query raised on purpose (50000 + status), which the client receives. It is
         /// the query's answer, not a failure of the engine, so the log gets its message without the stack
         /// trace: at Information for a 4xx, which a caller's input causes, and at Warning for any other.
@@ -364,10 +248,10 @@ namespace DBToRestAPI.Controllers
             }
             catch (Exception ex)
             {
-                // Check for custom database errors (50000-51000 range) from any supported database vendor
-                // This handles SQL Server, PostgreSQL, MySQL, Oracle, SQLite, and DB2. Once the response has
-                // started, the status can't reach the client, so that case is logged in full below.
-                if (!Response.HasStarted && TryGetCustomDbError(ex, out int dbErrorNumber, out string dbErrorMessage))
+                // A status the query raised (50000 + status), from any supported database. Once the
+                // response has started, the status can't reach the client, so that case is logged in
+                // full below.
+                if (!Response.HasStarted && DatabaseErrors.TryGetCustomDbError(ex, out int dbErrorNumber, out string dbErrorMessage))
                 {
                     int httpStatusCode = dbErrorNumber - 50000;
                     LogRaisedStatus(_logger, HttpContext.Items.TryGetValue("route", out var raisedRoute) ? raisedRoute : "unknown",
@@ -422,7 +306,9 @@ namespace DBToRestAPI.Controllers
                     });
                 }
 
-                return BadRequest(new { success = false, message = _settings.GetDefaultGenericErrorMessage() });
+                // 400, or 503 / 504 when the database couldn't be reached or didn't answer in time.
+                return StatusCode(DatabaseErrors.GenericErrorStatus(ex),
+                    new { success = false, message = _settings.GetDefaultGenericErrorMessage() });
 
             }
 
@@ -848,6 +734,16 @@ namespace DBToRestAPI.Controllers
                     response.RegisterForDisposeAsync(disposable);
             }
 
+            /// <summary>
+            /// Records the final query's connection, for a run whose result is streamed, so that Step6
+            /// can tell a connection the database closed while the rest of the result was read.
+            /// </summary>
+            public void StreamsFrom(DbConnection connection)
+            {
+                if (!Materialize)
+                    response.HttpContext.Items[DatabaseErrors.StreamedConnectionItem] = connection;
+            }
+
             public async ValueTask DisposeAsync()
             {
                 for (var i = _disposables.Count - 1; i >= 0; i--)
@@ -873,6 +769,18 @@ namespace DBToRestAPI.Controllers
             QueryRun run)
         {
             await using var _ = run;
+
+            // Checked before any query of a chain runs.
+            if (!TryGetChamberSize(serviceQuerySection.GetValue<string?>("buffer_rows"),
+                    _configuration.GetValue<string?>("buffer_rows"), out var chamberSize, out var invalidBufferRows))
+            {
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = $"Invalid buffer_rows `{invalidBufferRows}` for route `{run.Route}`: use a whole number, 0 or more "
+                    + $"(Contact your service provider support and provide them with error code `{_errorCode}`)"
+                });
+            }
 
             // Fallback timeouts from section and global config
             int? sectionTimeout = serviceQuerySection.GetValue<int?>("db_command_timeout");
@@ -904,6 +812,7 @@ namespace DBToRestAPI.Controllers
                     {
                         // Final query: disposed at request end (supports streaming), or when a cache fill ends
                         run.DisposeWhenDone(connection);
+                        run.StreamsFrom(connection);
 
                         // Delegate to existing method for response building
                         // We pass the accumulated qParams which now includes results from previous queries
@@ -913,6 +822,7 @@ namespace DBToRestAPI.Controllers
                             query.QueryText,
                             qParams,
                             commandTimeout,
+                            chamberSize,
                             run);
                     }
                     else
@@ -920,6 +830,7 @@ namespace DBToRestAPI.Controllers
                         // Intermediate query: prepare embedded HTTP calls (if any), execute, materialize, and add result to qParams
                         var queryText = await PrepareEmbeddedHttpCallsParamsIfAny(query.QueryText, qParams, serviceQuerySection, run);
 
+                        await OpenConnectionAsync(connection, run.Cancel);
                         var result = await connection.ExecuteQueryAsync(
                             queryText,
                             qParams,
@@ -992,9 +903,17 @@ namespace DBToRestAPI.Controllers
                 }
                 catch (Exception ex)
                 {
+                    // A connection the database closed during the query (SQL Server after a fatal
+                    // error, PostgreSQL's terminated session) means the database is unavailable, not
+                    // that the query is wrong. A timeout stays a timeout, whatever it did to the
+                    // connection, and a raised status is still found inside the wrapper.
+                    var cause = !run.Cancel.IsCancellationRequested && DatabaseErrors.LostTheConnection(ex, connection)
+                        ? new DatabaseUnavailableException($"The connection to the database was lost: {ex.Message}", ex)
+                        : ex;
+
                     // Wrap exception with query index for debugging
                     throw new InvalidOperationException(
-                        $"Query {query.Index + 1} of {queries.Count} failed: {ex.Message}", ex);
+                        $"Query {query.Index + 1} of {queries.Count} failed: {cause.Message}", cause);
                 }
                 finally
                 {
@@ -1024,6 +943,7 @@ namespace DBToRestAPI.Controllers
             string query,
             List<DbQueryParams> qParams,
             int? commandTimeout,
+            int chamberSize,
             QueryRun run)
         {
             var disableDeferredExecution = run.Materialize;
@@ -1066,6 +986,7 @@ namespace DBToRestAPI.Controllers
                         string.Join("; ", qParams.Select((p, i) => $"#{i}: regex='{(p.QueryParamsRegex?.Length > 60 ? p.QueryParamsRegex[..60] + "..." : p.QueryParamsRegex)}' hasData={p.DataModel != null}")));
                 }
 
+                await OpenConnectionAsync(connection, run.Cancel);
                 var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: run.Cancel);
                 if (resultWithNoCount != null)
                 {
@@ -1086,12 +1007,12 @@ namespace DBToRestAPI.Controllers
                         }
                         return StatusCode(customSuccessStatusCode, resultWithNoCount.AsEnumerable().ToArray());
                     }
-                    // Read the first two rows here. With zero rows or one, that reads the whole
-                    // result, so an error raised after the rows (THROW after a SELECT) is thrown
-                    // inside this controller's catch and gets its status. With more, the rest is
-                    // streamed while the response is written, and such an error can only reach
-                    // Step6, which maps it if nothing has been sent yet.
-                    var chamberedArray = await resultWithNoCount.ToChamberedEnumerableAsync(2, run.Cancel);
+                    // Read the first rows here: two, or buffer_rows + 1. A result that fits is read
+                    // whole, so an error raised after the rows (THROW after a SELECT) is thrown
+                    // inside this controller's catch and gets its status. A longer one is streamed
+                    // while the response is written, and such an error can only reach Step6, which
+                    // maps it if nothing has been sent yet.
+                    var chamberedArray = await resultWithNoCount.ToChamberedEnumerableAsync(chamberSize, run.Cancel);
                     if (!string.IsNullOrWhiteSpace(rootNodeName))
                     {
                         var wrappedResult = new ExpandoObject();
@@ -1108,10 +1029,11 @@ namespace DBToRestAPI.Controllers
 
                 if (responseStructure == "auto")
                 {
-                    var chamberedResult = await resultWithNoCount.ToChamberedEnumerableAsync(2, run.Cancel);
+                    var chamberedResult = await resultWithNoCount.ToChamberedEnumerableAsync(chamberSize, run.Cancel);
                     run.Cancel.ThrowIfCancellationRequested();
 
-                    if (chamberedResult.WasExhausted(2))
+                    // Fewer than two rows read, of at least two asked for: the whole result.
+                    if (chamberedResult.ChamberedCount < 2)
                     {
                         var singleResult = chamberedResult.AsEnumerable().FirstOrDefault();
                         await resultWithNoCount.CloseReaderAsync();
@@ -1151,6 +1073,7 @@ namespace DBToRestAPI.Controllers
             // With count query - prepare embedded HTTP calls (if any)
             countQuery = await PrepareEmbeddedHttpCallsParamsIfAny(countQuery, qParams, serviceQuerySection, run);
 
+            await OpenConnectionAsync(connection, run.Cancel);
             var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: commandTimeout, cToken: run.Cancel);
             if (resultCount != null)
             {
@@ -1199,9 +1122,9 @@ namespace DBToRestAPI.Controllers
                     new { success = true, count = rowCount, data = result.AsEnumerable().ToArray() });
             }
 
-            // The first two rows are read here, as for `array`, so a result of zero rows or one
-            // is read to its end inside this controller's catch.
-            var chamberedData = await result.ToChamberedEnumerableAsync(2, run.Cancel);
+            // The first rows are read here, as for `array`, so a result of zero rows or one (or
+            // up to buffer_rows) is read to its end inside this controller's catch.
+            var chamberedData = await result.ToChamberedEnumerableAsync(chamberSize, run.Cancel);
 
             if (!string.IsNullOrWhiteSpace(rootNodeName))
             {
@@ -1234,6 +1157,63 @@ namespace DBToRestAPI.Controllers
         {
             var value = string.IsNullOrWhiteSpace(routeValue) ? "auto" : routeValue.ToLowerInvariant();
             return value == "single" ? "auto" : value;
+        }
+
+        /// <summary>
+        /// Opens a query's connection, unless it is open, right before the query runs: after its
+        /// {http{}} calls, so that a connection isn't held while they run. Opened here rather than
+        /// by Com.H.Data.Common, so that a database the engine can't reach is told apart from a
+        /// query that fails, and the caller gets 503.
+        /// </summary>
+        private static async Task OpenConnectionAsync(DbConnection connection, CancellationToken cancel)
+        {
+            if (connection.State == System.Data.ConnectionState.Open)
+                return;
+            try
+            {
+                await connection.OpenAsync(cancel);
+            }
+            catch (Exception ex) when (!cancel.IsCancellationRequested)
+            {
+                throw new DatabaseUnavailableException($"The database could not be reached: {ex.Message}", ex);
+            }
+        }
+
+        // The rows read before a streamed result is written, without buffer_rows: two, which tells
+        // one row from several and reads a result of zero rows or one to its end.
+        private const int DefaultChamberSize = 2;
+
+        /// <summary>
+        /// How many rows to read before a streamed result (<c>array</c>, several rows without
+        /// <c>response_structure</c>, a count query's data) is written: the route's
+        /// <c>buffer_rows</c>, else the global one, plus one, so that a result of up to that many
+        /// rows is read to its end and an error raised after its rows still gets its status. Without
+        /// either, or with 0, two. A blank value counts as none.
+        /// </summary>
+        /// <remarks>
+        /// The rows read are held in memory until the response is written, which is why reading
+        /// ahead is the endpoint author's choice and not the default: a streamed result otherwise
+        /// costs the same memory whatever its size.
+        /// </remarks>
+        /// <returns>False, with the value, when it isn't a whole number of 0 or more.</returns>
+        internal static bool TryGetChamberSize(string? routeValue, string? globalValue, out int chamberSize, out string? invalidValue)
+        {
+            chamberSize = DefaultChamberSize;
+            invalidValue = null;
+            var value = string.IsNullOrWhiteSpace(routeValue) ? globalValue : routeValue;
+            if (string.IsNullOrWhiteSpace(value))
+                return true;
+            var digits = value.Trim();
+            if (!digits.All(char.IsAsciiDigit))
+            {
+                invalidValue = value;
+                return false;
+            }
+            // A number too large for an int reads everything there is.
+            if (!int.TryParse(digits, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var bufferRows))
+                bufferRows = int.MaxValue;
+            chamberSize = bufferRows == int.MaxValue ? int.MaxValue : Math.Max(DefaultChamberSize, bufferRows + 1);
+            return true;
         }
 
         /// <summary>

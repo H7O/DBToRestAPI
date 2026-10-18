@@ -193,6 +193,7 @@ curl -X POST http://localhost:5000/support-requests \
 | A file part with no entry | `400` | ``{"success":false,"message":"Uploaded file `x.pdf` has no entry in `attachments`."}`` |
 | Body over `max_payload_size_in_bytes` | `413` | `{"success":false,"message":"The request body could not be read."}` |
 | Any other database error | `400` | `{"success":false,"message":"An error occurred while processing your request."}` |
+| The database couldn't be reached, or timed out | `503`, `504` | The same body as the `400` |
 
 In each of these cases the engine deletes every file the request stored. The exceptions are rare, such as a file a download has open on Windows ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
 
@@ -273,7 +274,7 @@ An existing file (an entry that brought no file) arrives as the client sent it, 
 | MySQL 8 | `SELECT ... FROM JSON_TABLE({{attachments}}, '$[*]' COLUMNS (id CHAR(36) PATH '$.id', is_new_upload VARCHAR(5) PATH '$.is_new_upload', ...)) AS f WHERE f.is_new_upload = 'true'` |
 | SQLite | `SELECT ... FROM json_each({{attachments}}) WHERE json_extract(value, '$.is_new_upload') = 1` |
 
-SQLite can't raise a custom status outside a trigger ([errors.md](../reference/errors.md#raising-an-error-from-sql)), so its validation failures come back as the generic `400`.
+On SQLite, raise a status from the insert itself with `raise_error()` ([errors.md](../reference/errors.md#raising-an-error-from-sql)).
 
 ## Partial updates (keep, remove, add)
 

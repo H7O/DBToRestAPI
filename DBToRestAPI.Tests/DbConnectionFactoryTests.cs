@@ -1,5 +1,7 @@
 using DBToRestAPI.Services;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DBToRestAPI.Tests;
@@ -120,5 +122,67 @@ public class DbConnectionFactoryTests
             "Npgsql", connStr);
 
         Assert.Equal(connStr, result);
+    }
+
+    // Opens a SQLite connection from the factory, runs the SQL, then disposes the connection, and
+    // tells whether the engine rolled back. SQLite's rollback hook fires on a ROLLBACK, not on the
+    // implicit one when a connection closes, so another test clearing the pools can't fake it.
+    private static async Task<(bool RolledBack, CapturedLogs Logs)> DisposeAfterAsync(string sql, bool disposeAsync)
+    {
+        var file = Path.Combine(Path.GetTempPath(), "dbtorest-tx-" + Guid.NewGuid().ToString("N") + ".db");
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:main"] = $"Data Source={file}",
+            ["ConnectionStrings:main:provider"] = "Microsoft.Data.Sqlite",
+        }).Build();
+        var logs = new CapturedLogs();
+        using var loggers = LoggerFactory.Create(builder => builder.AddProvider(logs));
+        var factory = new DbConnectionFactory(new TestEncryptedConfiguration(configuration), loggers.CreateLogger<DbConnectionFactory>());
+        try
+        {
+            var connection = factory.Create("main");
+            await connection.OpenAsync();
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = sql;
+                await command.ExecuteNonQueryAsync();
+            }
+            var rolledBack = false;
+            SQLitePCL.raw.sqlite3_rollback_hook(((SqliteConnection)((TrackedDbConnection)connection).Inner).Handle, _ => rolledBack = true, null);
+
+            if (disposeAsync)
+                await connection.DisposeAsync();
+            else
+                connection.Dispose();
+            return (rolledBack, logs);
+        }
+        finally
+        {
+            SqliteConnection.ClearPool(new SqliteConnection($"Data Source={file}"));
+            File.Delete(file);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ASqliteTransactionAQueryLeftOpen_IsRolledBack_BeforeTheConnectionIsPooled(bool disposeAsync)
+    {
+        // Microsoft.Data.Sqlite pools a connection as it is, open transaction and write lock included.
+        var (rolledBack, logs) = await DisposeAfterAsync("CREATE TABLE t (x INTEGER); BEGIN; INSERT INTO t VALUES (1);", disposeAsync);
+
+        Assert.True(rolledBack);
+        Assert.DoesNotContain(logs.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Theory]
+    [InlineData("CREATE TABLE t (x INTEGER); BEGIN; INSERT INTO t VALUES (1); COMMIT;")]
+    [InlineData("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);")]
+    public async Task ASqliteConnectionWithNoOpenTransaction_IsPooledAsItIs(string sql)
+    {
+        var (rolledBack, logs) = await DisposeAfterAsync(sql, disposeAsync: true);
+
+        Assert.False(rolledBack);
+        Assert.DoesNotContain(logs.Entries, e => e.Level >= LogLevel.Warning);
     }
 }

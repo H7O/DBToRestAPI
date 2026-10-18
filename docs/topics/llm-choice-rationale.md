@@ -96,8 +96,8 @@ The SQL `THROW` statement maps directly to HTTP responses:
 
 An error numbered `50000 + status` becomes that HTTP status: use `50400` to `50599`.
 This works with SQL Server `THROW`, PostgreSQL `RAISE EXCEPTION` (inside a procedure the query
-`CALL`s), MySQL `SIGNAL`, and SQLite `RAISE` inside a trigger. Oracle and DB2
-custom errors are not mapped yet and arrive as a generic 400. See
+`CALL`s), MySQL `SIGNAL`, Oracle `RAISE_APPLICATION_ERROR`, DB2 `SIGNAL`, and on SQLite the
+`raise_error()` function the engine adds. See
 [Errors, status codes and rollback](../reference/errors.md).
 
 An agent writing a DbToRestAPI endpoint produces a secure API by default. There is
@@ -541,7 +541,7 @@ The same patient screen requires a single endpoint definition:
     <stores>patient_docs</stores>
   </file_management>
   <query><![CDATA[
-    SET XACT_ABORT ON;  -- any error rolls back the whole transaction below
+    SET XACT_ABORT ON;  -- THROW and run-time errors roll back the whole transaction below
 
     -- Step 1: Authorize (does this user own this patient record?)
     DECLARE @user_id NVARCHAR(200) = {auth{user_id}};

@@ -271,7 +271,7 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
             {
                 connection.Open();
                 using var command = connection.CreateCommand();
-                // SQLite raises a custom error only from a trigger; the engine maps its [50404] message.
+                // RAISE() in a trigger, one way SQLite raises a status; the engine maps its [50404] message.
                 command.CommandText = """
                     CREATE TABLE raise_after (x INTEGER);
                     CREATE TRIGGER raise_after_trg BEFORE INSERT ON raise_after

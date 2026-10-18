@@ -176,7 +176,7 @@ Parameters use SQL Server's parameterization — **SQL injection protected by de
 
 ## Error Handling
 
-Return HTTP errors from SQL using error codes 50000-51000:
+Return HTTP errors from SQL with error number 50000 + the status (50404 for 404):
 
 ```sql
 -- 404 Not Found

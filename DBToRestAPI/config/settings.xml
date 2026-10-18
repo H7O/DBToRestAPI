@@ -107,6 +107,16 @@
   a query uses its connection string's timeout, or the provider's default.
   <db_command_timeout>30</db_command_timeout>
   -->
+
+  <!--
+  Optional: how many rows a route reads before it writes its result. A result of up to that many
+  rows is read whole first, so an error the query raises after its rows still gets its status;
+  without it, a result of several rows is written as it is read, and such an error cuts the
+  connection once part of the result has been sent. The rows read are held in memory until the
+  response is written. A route's own <buffer_rows> overrides this value, and 0 turns it off.
+  Left unset, nothing more is read ahead.
+  <buffer_rows>1000</buffer_rows>
+  -->
   
   <!-- 
   `cache` can be specified here with similar structure to  `cache` structure on API nodes 

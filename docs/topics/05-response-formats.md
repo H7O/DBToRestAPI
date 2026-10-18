@@ -1,7 +1,7 @@
 ---
 title: Response formats
-summary: The shape of a successful response (one object, an array, a count wrapper or a file), chosen with response_structure, plus nested JSON, status codes and empty results.
-keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, "204", "{type{json{...}}}", FOR JSON]
+summary: The shape of a successful response (one object, an array, a count wrapper or a file), chosen with response_structure, plus nested JSON, status codes, empty results, and buffer_rows, which reads a result before writing it.
+keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, buffer_rows, "204", "{type{json{...}}}", FOR JSON]
 ---
 
 # Response Formats
@@ -36,7 +36,37 @@ A row whose only column has no name (an unaliased `SELECT COUNT(*)` on SQL Serve
 
 ### An error raised after the rows
 
-Raise errors before the first statement that returns rows ([errors.md](../reference/errors.md)). An error raised after them still gets its status when the result has zero rows or one. A file download's query and a count query take their first row by reading two. When such a query returns one row, it is read to its end, so an error after the row gets its status. When it returns more, the engine stops at the second row, and an error after the rows is lost.
+Raise errors before the first statement that returns rows ([errors.md](../reference/errors.md)). An error raised after them still gets its status when the result has zero rows or one. A longer result is written while it is read. Once part of it has been handed to the server, an error after the rows can't change the status, so the engine cuts the connection. To keep the status for a longer result, set `buffer_rows` ([below](#buffer_rows-read-a-result-before-writing-it)).
+
+A file download's query and a count query take their first row by reading two. When such a query returns one row, it is read to its end, so an error after the row gets its status. When it returns more, the engine stops at the second row, and an error after the rows is lost. `buffer_rows` doesn't change that.
+
+### `buffer_rows`: read a result before writing it
+
+With `<buffer_rows>N</buffer_rows>`, the engine reads up to N rows before it writes anything. A result of N rows or fewer is read to its end first. So an error raised after its rows, or a database error while they are read (a conversion that fails on row 300), answers with its status and JSON body instead of a cut connection. A longer result is written as it would be without the tag, once N rows have been read.
+
+```xml
+<settings>
+  <queries>
+    <report_lines>
+      <route>reports/{{id}}/lines</route>
+      <verb>GET</verb>
+      <response_structure>array</response_structure>
+      <!-- A report has at most 5000 lines: read them all before writing -->
+      <buffer_rows>5000</buffer_rows>
+      <query><![CDATA[
+        SELECT line_no, CAST(amount_text AS DECIMAL(18, 2)) AS amount
+        FROM report_lines WHERE report_id = {{id}} ORDER BY line_no;
+      ]]></query>
+    </report_lines>
+  </queries>
+</settings>
+```
+
+The rows read are held in memory until the response is written. Without the tag, a result costs the same small amount of memory whatever its size. With it, each request in flight holds up to N rows. So set it only on routes that need it, to the largest result they return.
+
+| Setting | Where | Default | Notes |
+|---|---|---|---|
+| `buffer_rows` | route, then directly under `<settings>` | not set: two rows are read first, which tells one row from several | A whole number, 0 or more. `0` on a route turns a global value off for it, and `1` reads as many rows as not setting it. Any other value makes every request to the route answer `500`, and none of its queries runs. It applies to `array`, to the default shape and to a count query's `data`. A file download's query and a count query's count still read two rows. A GET or HEAD request to a route with `<cache>` reads its result whole anyway. |
 
 ## One Record: No Tag
 

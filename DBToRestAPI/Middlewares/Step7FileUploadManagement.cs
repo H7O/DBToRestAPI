@@ -826,7 +826,7 @@ namespace DBToRestAPI.Middlewares
                 // answers it (at Error when it can no longer reach the client). So is a caller who
                 // left, as one line.
                 var callerLeft = context.RequestAborted.IsCancellationRequested;
-                if (!callerLeft && !Controllers.ApiController.TryGetCustomDbError(ex, out _, out _))
+                if (!callerLeft && !Services.DatabaseErrors.TryGetCustomDbError(ex, out _, out _))
                 {
                     this._logger.LogError(ex, "{errorCode}: An exception occurred in Step6FileManagement middleware: {message}",
                         _errorCode,

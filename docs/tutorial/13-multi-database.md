@@ -85,7 +85,7 @@ If `<connection_string_name>` is omitted, the `default` connection string is use
 
 ## Cross-Database Error Handling
 
-Each database engine has its own syntax for raising errors. The application turns most of them into HTTP status codes. [Errors, status codes and rollback](../reference/errors.md) lists which ones work:
+Each database engine has its own syntax for raising errors. The application turns each of the forms below into an HTTP status code. [Errors, status codes and rollback](../reference/errors.md) has the details:
 
 ### SQL Server
 ```sql
@@ -97,22 +97,22 @@ THROW 50409, 'Already exists', 1;
 `RAISE` works only in PL/pgSQL, and a `DO` block can't see request parameters. So put the check in a procedure and `CALL` it from the endpoint's query with the request values. (A function would be called with `SELECT`, whose row would replace your response.)
 ```sql
 -- once, in the database
--- It takes the id as text and checks its format before casting: a failed cast's error message
--- repeats the input, so a caller could otherwise put a [5xxxx] token in it and pick the status.
+-- It takes the id as text and checks its format before casting, so that a malformed id is a 404
+-- too, not a failed cast (the generic 400).
 CREATE OR REPLACE PROCEDURE require_contact(contact_id text) LANGUAGE plpgsql AS $$
 BEGIN
   IF contact_id IS NULL OR contact_id !~ '^[0-9]{1,9}$' THEN
-    RAISE EXCEPTION '[50404] Not found';
+    RAISE EXCEPTION 'Not found' USING ERRCODE = '50404';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = contact_id::integer) THEN
-    RAISE EXCEPTION '[50404] Not found';
+    RAISE EXCEPTION 'Not found' USING ERRCODE = '50404';
   END IF;
 END $$;
 
 -- in the endpoint's query, before any statement that returns rows
 CALL require_contact(CAST({{id}} AS text));
 ```
-A `NULL` id matches no row, so it gets the 404 too. [Errors, status codes and rollback](../reference/errors.md#raising-an-error-from-sql) has a validation example.
+A `NULL` id fails the first check, so it gets the 404 too. [Errors, status codes and rollback](../reference/errors.md#raising-an-error-from-sql) has a validation example.
 
 ### MySQL / MariaDB
 ```sql
@@ -121,18 +121,21 @@ SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';
 
 ### Oracle
 ```sql
--- Oracle uses the -20000 to -20999 range, from PL/SQL only (a BEGIN ... END; block or a procedure).
--- Not mapped (a known issue): the engine expects a negative error number, but the
--- Oracle driver reports a positive one, so this arrives as the generic 400.
+-- -20000 minus the status (-20404 is 404), from PL/SQL only (a BEGIN ... END; block or a procedure).
 BEGIN
   RAISE_APPLICATION_ERROR(-20404, 'Not found');
 END;
 ```
 
 ### SQLite
+SQLite has no `IF`, and accepts `RAISE()` only in a trigger, so the engine adds a function, `raise_error()`, to every SQLite connection it opens. Put the check after a lookup's `SELECT`, or inside the write it guards:
 ```sql
--- Once, in the database. Only inside a trigger: SQLite refuses RAISE() anywhere else,
--- and the caller gets the generic 400.
+SELECT id, name FROM customers WHERE id = {{id}};
+SELECT raise_error(50404, 'Customer not found') WHERE NOT EXISTS (SELECT 1 FROM customers WHERE id = {{id}});
+```
+A trigger works too:
+```sql
+-- once, in the database
 CREATE TRIGGER orders_require_customer
 BEFORE INSERT ON orders
 WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id = NEW.customer_id)
@@ -144,13 +147,12 @@ END;
 ### IBM DB2
 ```sql
 -- Only inside a compound statement (BEGIN ... END) or a procedure.
--- Not mapped (a known issue): arrives as the generic 400.
 BEGIN
   SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
 END
 ```
 
-The key pattern: embed the HTTP status code (404, 409, etc.) in the error code or message, and the application extracts it. The Oracle and DB2 forms are not mapped yet and arrive as a generic 400. See [Errors, status codes and rollback](../reference/errors.md) for the details and for what the client receives.
+The key pattern: embed the HTTP status code (404, 409, etc.) in the error number, and the application extracts it. See [Errors, status codes and rollback](../reference/errors.md) for the details and for what the client receives.
 
 ## Practical Example: A Cross-Database Endpoint
 

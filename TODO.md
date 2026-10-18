@@ -14,16 +14,6 @@ names the note that explains the background.
 The items below were found on 2026-10-06 while testing the docs with docs-only agents graded
 against the code. Each was read in the code; none has a test yet.
 
-- **Custom SQL errors don't map on every database** (ApiController.cs, `TryGetCustomDbError`):
-  - PostgreSQL messages keep the `P0001:` SQLSTATE prefix (use `MessageText`).
-  - Oracle expects a negative `Number`, but ODP.NET reports a positive one.
-  - DB2 takes the first `[nnnnn]` in the message, which is the SQLSTATE.
-  - ODBC and OleDb have no branch.
-  - SQLite can raise only inside a trigger: consider registering a function such as `throw_http(404, 'msg')`.
-  - SQL Server `RAISERROR('text', 16, 1)` reports 50000, which becomes status 0.
-- **Unmapped database errors are a `400` with the generic message** (ApiController.cs,
-  `BadRequest`), so a caller learns nothing about the database (AGENTS rule 4). The cost: a timeout
-  or an unreachable database looks like a client error. A 5xx for those two would help monitoring.
 - **A caller waiting on a slow cache fill waits for all of it.** Callers that join a running fill
   wait until it ends, however long that takes (a 3-second query made every joined caller wait about
   3.5 s). A maximum join wait, after which a waiting caller runs its own query, would bound it. Not
@@ -56,14 +46,6 @@ against the code. Each was read in the code; none has a test yet.
 
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
-- **An error after part of a streamed result has been written cuts the connection**, the cost of
-  streaming (AGENTS rule 2). Results of two or more rows (other than a file download's or a count
-  query's count) are written as they are read, so memory stays flat whatever their size, and an
-  error raised after the rows (from 1.7.7 it surfaces) can't change a status that MVC has already
-  handed to the server: Step6 aborts the connection. That happens after about 4 KB of short values,
-  or much sooner with long text. To keep the status for small and medium results, buffer a streamed
-  result up to a configurable size before writing it, and stream only beyond that. Found by review
-  on 2026-10-07.
 - **OpenAPI doesn't show a `root_node` wrapper,** and documents a file route that also has a
   `count_query` as a download, though it answers the count wrapper. Found by review on 2026-10-07.
 - **Cache invalidators are read from every parameter source** (CacheService.cs), so one named like
@@ -111,6 +93,38 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **A status raised from SQL didn't map on every database.** Fixed in 1.7.15
+  (`Services/DatabaseErrors.cs`). PostgreSQL's message kept its `P0001:` prefix, and SQLite's its
+  `SQLite Error 19: '...'` wrapper. Oracle's number was read as negative, though ODP.NET reports it
+  positive, and DB2's as the first `[nnnnn]` in the message, which is the SQLSTATE. ODBC and OLE DB
+  weren't read at all. Each now gives the status with the database's own text. PostgreSQL also
+  takes the number as the `ERRCODE` (`RAISE EXCEPTION 'Not found' USING ERRCODE = '50404'`). A `[nnnnn]` in the text is read only from an error the SQL
+  raised, and only at the start of its text, so a database error that repeats a caller's value (a
+  failed cast of `'[50404]'`), or a raised message that carries one after its start, no longer
+  picks the status. Only a status from 200 to 599 maps: SQL Server's `RAISERROR('text', 16,
+  1)`, which reports 50000, sent an invalid status line (`0`) and kept the uploads, and is now the
+  generic `400`. On SQL Server, a raised error that followed another error in the batch is found
+  too.
+- **SQLite could raise a status only from a trigger.** Changed in 1.7.15: the engine adds
+  `raise_error(number, message)` to every SQLite connection it opens, so any statement can raise
+  one. A number that isn't a status makes the function fail with a database error.
+- **A timeout or an unreachable database was a `400`, like a client error.** Changed in 1.7.15: a
+  timeout is a `504`, and a database the engine can't connect to, or that closes the connection
+  during the query, is a `503`, both with the generic message. The engine now opens each
+  connection itself, so that a failure to connect is told apart from a query that fails.
+- **On SQLite, a query that failed inside `BEGIN ... COMMIT` left its transaction open.** Fixed in
+  1.7.15. Microsoft.Data.Sqlite returns a connection to its pool as it is, so the open transaction
+  kept the database's write lock: every other connection's write waited and failed (`database is
+  locked`), and the next request given that connection ran inside the transaction. The engine now
+  rolls back a transaction a query left open before it lets a SQLite connection go. PostgreSQL's
+  driver rolls back as the connection closes. SQL Server's and MySQL's reset a pooled connection
+  only when it is next used, so a transaction left open there keeps its locks until then: errors.md
+  now says how to roll back on SQL Server (`SET XACT_ABORT ON` with `THROW`) and MySQL (an exit handler).
+  Found by the 1.7.15 review.
+- **An error after part of a streamed result had been written always cut the connection**, the
+  cost of streaming. Changed in 1.7.15 by an opt-in `<buffer_rows>` (route, else global): a result of up to
+  that many rows is read before it is written, so such an error keeps its status. The rows read are
+  held in memory, so the default still streams.
 - **In an SFTP store, a failed request deleted the file its upload had overwritten,** and a write
   that failed part-way could leave a partial file. Fixed in 1.7.14, as 1.7.13 did for local stores,
   with the rename `Com.H.Net.Ssh` 10.2.0 adds. An SFTP upload is written under a hidden name beside

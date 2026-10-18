@@ -6,7 +6,7 @@
 
 In a clone, read [AGENTS.md](AGENTS.md) first: it routes tasks to pages and lists the rules whose violation fails silently. The ones that matter most:
 
-- Reject a request with a status, never with `200` and an error flag: raise `50000 + status` from SQL (SQL Server: `THROW 50400, 'Reason', 1;`; SQLite only from a trigger; other databases: [errors.md](docs/reference/errors.md)). The body is `{"success":false,"message":"Reason","error_number":400}`. Raise before the first statement that returns rows.
+- Reject a request with a status, never with `200` and an error flag: raise `50000 + status` from SQL (SQL Server: `THROW 50400, 'Reason', 1;`; SQLite: `raise_error(50400, 'Reason')` inside the write or after the `SELECT`, never first; other databases: [errors.md](docs/reference/errors.md)). The body is `{"success":false,"message":"Reason","error_number":400}`. Raise before the first statement that returns rows.
 - Files uploaded by a request that ends with a status of 400 or higher are deleted automatically. Write no cleanup code, but put your inserts in a transaction: rows are not rolled back. Insert only upload entries with `is_new_upload`. See [09-file-uploads.md](docs/topics/09-file-uploads.md).
 - `<authorize>` protects a route with JWT, and there the user's id is `{auth{user_id}}`. Of the API-key tags, only `<api_keys_collections>` protects a route. Look up every XML tag before using it: unknown tags are ignored silently.
 - The shipped demo database is SQLite; most examples here are SQL Server. Write the dialect of your connection.
@@ -57,7 +57,7 @@ Fetch only what you need:
 | Configuration | [02-configuration.md](docs/topics/02-configuration.md) | settings.xml, sql.xml, connection strings |
 | CRUD Operations | [03-crud-operations.md](docs/topics/03-crud-operations.md) | Create, Read, Update, Delete patterns |
 | Parameters | [04-parameters.md](docs/topics/04-parameters.md) | {{param}}, which source wins, one-source markers ({r{}}, {qs{}}, {j{}}, {f{}}, {h{}}), names with any characters, route params, mandatory params |
-| Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON |
+| Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON, buffer_rows |
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
 | Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |
 | API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs |
@@ -124,10 +124,12 @@ DECLARE @api_key NVARCHAR(500) = {s{my_api_key}};  -- From <vars> in settings
 |----------|--------|-------------|
 | SQL Server | `THROW 50404, 'Not found', 1;` | 404 |
 | MySQL | `SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';` | 404 |
-| PostgreSQL | `RAISE EXCEPTION '[50404] Not found';` in a procedure you `CALL` with the values (a `DO` block can't see parameters) | 404 |
-| SQLite | `RAISE(ABORT, '[50404] Not found')`, inside a trigger only | 404 |
+| PostgreSQL | `RAISE EXCEPTION 'Not found' USING ERRCODE = '50404';` in a procedure you `CALL` with the values (a `DO` block can't see parameters) | 404 |
+| SQLite | `SELECT raise_error(50404, 'Not found')` after the `SELECT` it checks, or inside the write it guards | 404 |
+| Oracle | `RAISE_APPLICATION_ERROR(-20404, 'Not found');` in PL/SQL | 404 |
+| DB2 | `SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';` | 404 |
 
-An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`, with body `{"success":false,"message":"Not found","error_number":404}` (SQL Server and MySQL; PostgreSQL and SQLite messages keep a driver prefix). Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads. Raise before the first statement that returns rows: an error after them still gets its status unless part of a longer result has already been handed to the server (about 4 KB of short values, less with long text; then the connection is cut), or a file download's query or a count query returned several rows (only two are read). Any other database error is `400` with the generic message. Oracle and DB2 custom errors don't map yet (a known issue). Every status and body: [errors.md](docs/reference/errors.md).
+An error numbered `50000 + status`, for a status from 200 to 599, becomes that HTTP status, with body `{"success":false,"message":"Not found","error_number":404}`. Use `50400`-`50599`: below 400 is not an error status and doesn't roll back uploads, and any other number (SQL Server's `RAISERROR` reports 50000) is the generic 400. Raise before the first statement that returns rows: an error after them still gets its status unless part of a longer result has already been handed to the server (about 4 KB of short values, less with long text; then the connection is cut), or a file download's query or a count query returned several rows (only two are read). `<buffer_rows>N</buffer_rows>` reads up to N rows before writing, so a result that fits keeps the status; the rows are held in memory ([05](docs/topics/05-response-formats.md#buffer_rows-read-a-result-before-writing-it)). Any other database error is `400` with the generic message: `504` when it is a timeout, `503` when the database can't be reached. Every status and body: [errors.md](docs/reference/errors.md).
 
 ### Key XML Tags
 | Tag | Purpose |
@@ -146,6 +148,7 @@ An error numbered `n` with `50000 <= n < 51000` becomes HTTP status `n - 50000`,
 | `<cors>` | Cross-origin settings |
 | `<file_management>` | File upload/download config |
 | `<response_structure>` | Leave it out for one record: one row answers an object, several an array. `array` for lists, so one matching row still answers `[...]`. `file` for downloads. Don't write `single` or `auto` (read as the tag left out) |
+| `<buffer_rows>` | Rows read before a result is written, so an error after them keeps its status. Opt-in: the rows are held in memory. Route, else global |
 | `<openapi>` | Per-endpoint OpenAPI enrichment: `<enabled>`, `<summary>`, `<description>`, `<tags>`, `<response_schema>` |
 | `<rate_limit>` | Per-endpoint request limit: `<max_requests>`, `<window_seconds>`, `<per>`, `<enabled>`, `<message>`; global default under `<settings>` |
 

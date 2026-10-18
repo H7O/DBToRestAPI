@@ -101,22 +101,22 @@ SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 50404, MESSAGE_TEXT = 'Not found';
 `RAISE` works only in PL/pgSQL, and a `DO` block can't see request parameters. Put the check in a procedure and `CALL` it from the endpoint's query with the request values. (A function would have to be called with `SELECT`, which returns a row, and the engine reads only the first result set, so that row would replace your response.)
 ```sql
 -- once, in the database
--- It takes the id as text and checks its format before casting: a failed cast's error message
--- repeats the input, so a caller could otherwise put a [5xxxx] token in it and pick the status.
+-- It takes the id as text and checks its format before casting, so that a malformed id is a 404
+-- too, not a failed cast (the generic 400).
 CREATE OR REPLACE PROCEDURE require_contact(contact_id text) LANGUAGE plpgsql AS $$
 BEGIN
   IF contact_id IS NULL OR contact_id !~ '^[0-9]{1,9}$' THEN
-    RAISE EXCEPTION '[50404] Not found';
+    RAISE EXCEPTION 'Not found' USING ERRCODE = '50404';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = contact_id::integer) THEN
-    RAISE EXCEPTION '[50404] Not found';
+    RAISE EXCEPTION 'Not found' USING ERRCODE = '50404';
   END IF;
 END $$;
 
 -- in the endpoint's query, before any statement that returns rows
 CALL require_contact(CAST({{id}} AS text));
 ```
-**Note:** A `NULL` id matches no row, so it gets the 404 too. The message keeps a `P0001:` prefix (known issue). A validation example: [errors.md](../reference/errors.md#raising-an-error-from-sql).
+**Note:** The `ERRCODE` is the number, and the caller gets the message as written. `RAISE EXCEPTION '[50404] Not found';` works too. A `NULL` id fails the first check, so it gets the 404 too. A validation example: [errors.md](../reference/errors.md#raising-an-error-from-sql).
 
 ### Oracle
 ```sql
@@ -124,11 +124,19 @@ BEGIN
   RAISE_APPLICATION_ERROR(-20404, 'Not found');
 END;
 ```
-**Note:** `RAISE_APPLICATION_ERROR` is PL/SQL, so it runs only inside a `BEGIN ... END;` block or a procedure. The engine expects the -20000 to -20999 range (`-20404` → HTTP 404), but the Oracle driver reports the number as positive, so this arrives as the generic 400 (a known issue).
+**Note:** `RAISE_APPLICATION_ERROR` is PL/SQL, so it runs only inside a `BEGIN ... END;` block or a procedure. The number is `-20000` minus the status: `-20404` → HTTP 404, with the message `Not found`.
 
 ### SQLite
 ```sql
--- once, in the database: SQLite accepts RAISE() only inside a trigger
+-- a lookup that answers 404 when it finds nothing: the check follows the SELECT
+SELECT id, name FROM customers WHERE id = {{id}};
+SELECT raise_error(50404, 'Customer not found') WHERE NOT EXISTS (SELECT 1 FROM customers WHERE id = {{id}});
+```
+**Note:** `raise_error(number, message)` is a function the engine adds to every SQLite connection it opens: SQLite has no `IF`, and accepts `RAISE()` only in a trigger. A check that must stop a write goes inside the write ([example](../reference/errors.md#raising-an-error-from-sql)). Don't put a check written as its own `SELECT` first: it would be the first result set, and its empty result would be the response.
+
+A trigger works too:
+```sql
+-- once, in the database
 CREATE TRIGGER orders_require_customer
 BEFORE INSERT ON orders
 WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id = NEW.customer_id)
@@ -136,7 +144,7 @@ BEGIN
   SELECT RAISE(ABORT, '[50404] Customer not found');
 END;
 ```
-**Note:** An endpoint's `INSERT INTO orders` for an unknown customer then gets the 404. Outside a trigger, SQLite refuses `RAISE()` and the caller gets the generic 400.
+**Note:** An endpoint's `INSERT INTO orders` for an unknown customer then gets the 404.
 
 ### DB2
 ```sql
@@ -145,7 +153,7 @@ BEGIN
   SIGNAL SQLSTATE '75000' SET MESSAGE_TEXT = '[50404] Not found';
 END
 ```
-**Note:** This arrives as the generic 400: the engine reads the first `[nnnnn]` in the message, which is the SQLSTATE (a known issue).
+**Note:** The message must start with the `[nnnnn]`, and the caller gets the text after it. Use an SQLSTATE of class `7` to `9` or `I` to `Z`, which DB2 leaves to applications.
 
 The response body, every other status, and when uploaded files are rolled back: [Errors, status codes and rollback](../reference/errors.md).
 

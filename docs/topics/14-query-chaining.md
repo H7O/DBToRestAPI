@@ -200,7 +200,7 @@ BEGIN
 END
 ```
 
-An error number from 50000 to 50999 maps to an HTTP status (number minus 50000). Use 50400 to 50599: a smaller number gives a status below 400, which is not an error and keeps uploads. The body carries the database's message, with no hint of which query failed:
+An error numbered 50000 + status, for a status from 200 to 599, maps to that HTTP status. Use 50400 to 50599: 50200 to 50399 give a status below 400, which is not an error and keeps uploads, and any other number is the generic 400. The body carries the database's message, with no hint of which query failed:
 ```json
 {
   "success": false,
@@ -209,7 +209,7 @@ An error number from 50000 to 50999 maps to an HTTP status (number minus 50000).
 }
 ```
 
-Any other error returns `400` with the generic error message. The position text (`"Query 2 of 3 failed: ..."`) appears only in the `500` response sent in debug mode. See [Errors](../reference/errors.md).
+Any other error returns `400` with the generic error message: `503` when a query's database can't be reached, and `504` when it times out. The position text (`"Query 2 of 3 failed: ..."`) appears only in the `500` response sent in debug mode. See [Errors](../reference/errors.md).
 
 ## Caching
 

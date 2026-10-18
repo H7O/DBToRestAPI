@@ -200,9 +200,15 @@ namespace DBToRestAPI.Middlewares
                 if (Controllers.ApiController.CallerLeft(_logger, context, route, ex))
                     return;
 
+                // A connection the database closed while the rest of a streamed result was read: the
+                // database is unavailable (503), as when it closes during the controller's own reading.
+                if (context.Items.TryGetValue(Services.DatabaseErrors.StreamedConnectionItem, out var streamed)
+                    && Services.DatabaseErrors.LostTheConnection(ex, streamed as System.Data.Common.DbConnection))
+                    ex = new Services.DatabaseUnavailableException($"The connection to the database was lost: {ex.Message}", ex);
+
                 // A status the query raised on purpose, which the client is about to receive, is its
                 // answer rather than a failure. Any other exception is logged in full.
-                if (canWriteError && Controllers.ApiController.TryGetCustomDbError(ex, out var raisedNumber, out var raisedMessage))
+                if (canWriteError && Services.DatabaseErrors.TryGetCustomDbError(ex, out var raisedNumber, out var raisedMessage))
                 {
                     Controllers.ApiController.LogRaisedStatus(_logger, route, raisedNumber - 50000, raisedMessage);
                 }
@@ -259,12 +265,13 @@ namespace DBToRestAPI.Middlewares
         /// after the rows (SQL Server's THROW after a SELECT, or a later statement that fails) then
         /// surfaces here, outside the controller's catch, and used to become a 500 "unexpected
         /// error". It now gets the controller's response: the status the SQL asked for (50000 + n),
-        /// the generic 400 for any other database error, or the details in debug mode. Anything
-        /// that isn't a database error is still the 500.
+        /// the generic message for any other database error (400, or 503 / 504 when the database
+        /// was lost or didn't answer in time), or the details in debug mode. Anything that isn't a
+        /// database error is still the 500.
         /// </remarks>
         internal static ObjectResult LateErrorResponse(Exception ex, bool debugMode, string genericErrorMessage)
         {
-            if (Controllers.ApiController.TryGetCustomDbError(ex, out var errorNumber, out var errorMessage))
+            if (Services.DatabaseErrors.TryGetCustomDbError(ex, out var errorNumber, out var errorMessage))
             {
                 var status = errorNumber - 50000;
                 return new ObjectResult(new { success = false, message = errorMessage, error_number = status })
@@ -273,7 +280,7 @@ namespace DBToRestAPI.Middlewares
                 };
             }
 
-            if (ex is System.Data.Common.DbException || ex.InnerException is System.Data.Common.DbException)
+            if (Services.DatabaseErrors.IsDatabaseError(ex))
             {
                 if (debugMode)
                 {
@@ -290,7 +297,7 @@ namespace DBToRestAPI.Middlewares
                 }
                 return new ObjectResult(new { success = false, message = genericErrorMessage })
                 {
-                    StatusCode = 400
+                    StatusCode = Services.DatabaseErrors.GenericErrorStatus(ex)
                 };
             }
 

@@ -32,7 +32,7 @@ public class LateDbErrorTests : IDisposable
         _connection = new SqliteConnection("Data Source=:memory:");
         _connection.Open();
         using var command = _connection.CreateCommand();
-        // SQLite raises a custom error only from a trigger; the engine maps its [50404] message.
+        // RAISE() in a trigger, one way SQLite raises a status; the engine maps its [50404] message.
         command.CommandText = """
             CREATE TABLE raise_after (x INTEGER);
             CREATE TRIGGER raise_after_trg BEFORE INSERT ON raise_after
@@ -55,7 +55,7 @@ public class LateDbErrorTests : IDisposable
         var ex = await Assert.ThrowsAsync<SqliteException>(
             () => ApiController.FirstRowAsync(result, CancellationToken.None));
 
-        Assert.True(ApiController.TryGetCustomDbError(ex, out var number, out _));
+        Assert.True(DBToRestAPI.Services.DatabaseErrors.TryGetCustomDbError(ex, out var number, out _));
         Assert.Equal(50404, number);
     }
 
@@ -86,7 +86,7 @@ public class LateDbErrorTests : IDisposable
     public void LateError_RaisedStatus_GetsTheControllersBody()
     {
         var result = Step6MandatoryFieldsCheck.LateErrorResponse(
-            new SqliteException("[50404] Category not found", 19), debugMode: false, "generic");
+            new SqliteException("SQLite Error 19: '[50404] Category not found'.", 19, 1811), debugMode: false, "generic");
 
         Assert.Equal(404, result.StatusCode);
         var body = JsonSerializer.SerializeToElement(result.Value);
