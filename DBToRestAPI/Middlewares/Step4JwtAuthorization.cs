@@ -455,6 +455,8 @@ namespace DBToRestAPI.Middlewares
             }
             catch (Exception ex)
             {
+                if (Controllers.ApiController.CallerLeft(_logger, context, route, ex))
+                    return;
                 _logger.LogError(ex, "Unexpected error during token validation");
                 await context.Response.DeferredWriteAsJsonAsync(
                     new ObjectResult(
@@ -474,30 +476,40 @@ namespace DBToRestAPI.Middlewares
 
 
             #region Claims: read the token, fill gaps from UserInfo, build {auth{...}}
-            var (claimsDict, token) = await ResolveClaimsAsync(
-                principal,
-                userInfoFallbackClaims,
-                providerName,
-                async missingClaims =>
-                {
-                    _logger.LogDebug("Missing claims in access token: {claims}. Calling UserInfo endpoint...",
-                        string.Join(", ", missingClaims));
+            Dictionary<string, object> claimsDict;
+            TokenIdentity token;
+            try
+            {
+                (claimsDict, token) = await ResolveClaimsAsync(
+                    principal,
+                    userInfoFallbackClaims,
+                    providerName,
+                    async missingClaims =>
+                    {
+                        _logger.LogDebug("Missing claims in access token: {claims}. Calling UserInfo endpoint...",
+                            string.Join(", ", missingClaims));
 
-                    var userInfoClaims = await GetUserInfoAsync(
-                        accessToken,
-                        discoveryDocument,
-                        userInfoCacheDuration,
-                        userInfoTimeoutSeconds,
-                        validatedToken.ValidTo,  // Pass token expiration
-                        context.RequestAborted);
+                        var userInfoClaims = await GetUserInfoAsync(
+                            accessToken,
+                            discoveryDocument,
+                            userInfoCacheDuration,
+                            userInfoTimeoutSeconds,
+                            validatedToken.ValidTo,  // Pass token expiration
+                            context.RequestAborted);
 
-                    if (userInfoClaims != null && userInfoClaims.Any())
-                        _logger.LogDebug("UserInfo claims added successfully");
-                    else
-                        _logger.LogWarning("Failed to retrieve UserInfo claims");
+                        if (userInfoClaims != null && userInfoClaims.Any())
+                            _logger.LogDebug("UserInfo claims added successfully");
+                        else
+                            _logger.LogWarning("Failed to retrieve UserInfo claims");
 
-                    return userInfoClaims;
-                });
+                        return userInfoClaims;
+                    });
+            }
+            catch (OperationCanceledException ex) when (Controllers.ApiController.CallerLeft(_logger, context, route, ex))
+            {
+                // The caller left while it waited on the UserInfo lookup; CallerLeft logged it.
+                return;
+            }
 
             context.User = principal;
             context.Items["user_claims"] = claimsDict;

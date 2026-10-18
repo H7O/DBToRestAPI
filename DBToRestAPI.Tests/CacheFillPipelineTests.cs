@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace DBToRestAPI.Tests;
 
@@ -52,6 +53,15 @@ public class CacheFillPipelineTests(CacheFillPipelineTests.FillEngine engine) : 
         ["routes:fill_gateway_alone:url"] = "https://slow.test/gateway-alone",
         ["routes:fill_gateway_alone:excluded_headers"] = "host",
         ["routes:fill_gateway_alone:cache:memory:duration_in_milliseconds"] = "60000",
+
+        // A caller who leaves: while it waits on a cache fill, and while its own query's call runs.
+        ["queries:fill_left_waiting:route"] = "fill/left-waiting",
+        ["queries:fill_left_waiting:verb"] = "GET",
+        ["queries:fill_left_waiting:cache:memory:duration_in_milliseconds"] = "60000",
+        ["queries:fill_left_waiting:query"] = """SELECT {http{ {"url": "https://slow.test/left-waiting", "method": "GET"} }http} AS resp;""",
+        ["queries:fill_left_running:route"] = "fill/left-running",
+        ["queries:fill_left_running:verb"] = "GET",
+        ["queries:fill_left_running:query"] = """SELECT {http{ {"url": "https://slow.test/left-running", "method": "GET"} }http} AS resp;""",
     });
 
     internal const string QueryEntryLog = "in ApiController.Index method";
@@ -110,6 +120,74 @@ public class CacheFillPipelineTests(CacheFillPipelineTests.FillEngine engine) : 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("from upstream", await response.Content.ReadAsStringAsync());
         Assert.Equal(1, engine.Http.Count(upstream));
+    }
+
+    /// <summary>
+    /// A caller who leaves is not a failure: one Information line names the route, with no stack
+    /// trace, and the engine logs nothing at Warning or above for it.
+    /// </summary>
+    private async Task AssertLoggedAsLeft(int before, string route)
+    {
+        var line = $"The caller left before route {route} answered";
+        await WaitUntil(() => engine.Logs.Entries.Skip(before).Any(e => e.Message.Contains(line)));
+        var entries = engine.Logs.Entries.Skip(before).ToList();
+        var left = Assert.Single(entries, e => e.Message.Contains(line));
+        Assert.Equal(LogLevel.Information, left.Level);
+        Assert.Null(left.Exception);
+        Assert.DoesNotContain(entries, e => e.Category.StartsWith("DBToRestAPI") && e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task ACallerWhoLeavesWhileWaitingOnAFill_IsLoggedAsLeft_NotAsAnError()
+    {
+        var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        engine.Http.MapAsync("https://slow.test/left-waiting", async (_, cancel) =>
+        {
+            called.TrySetResult();
+            await release.Task.WaitAsync(cancel);
+            return FakeHttpServer.Text("from upstream");
+        });
+        var before = engine.Logs.Entries.Count;
+
+        var second = await SecondCallerAfterTheFirstLeaves(engine, "fill/left-waiting", QueryEntryLog, called.Task);
+        release.SetResult();
+
+        using var response = await second.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await AssertLoggedAsLeft(before, "fill/left-waiting");
+    }
+
+    [Fact]
+    public async Task ACallerWhoLeavesWhileItsQueryCallRuns_StopsTheCall_AndIsLoggedAsLeft()
+    {
+        // The call stops with the caller, and the query never runs.
+        var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        engine.Http.MapAsync("https://slow.test/left-running", async (_, cancel) =>
+        {
+            called.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cancel);
+            }
+            catch (OperationCanceledException)
+            {
+                stopped.TrySetResult();
+                throw;
+            }
+            return FakeHttpServer.Text("never");
+        });
+        var before = engine.Logs.Entries.Count;
+
+        using var leaving = new CancellationTokenSource();
+        var call = engine.Client.GetAsync("fill/left-running", leaving.Token);
+        await called.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        leaving.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await AssertLoggedAsLeft(before, "fill/left-running");
     }
 
     [Fact]

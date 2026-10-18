@@ -527,7 +527,7 @@ This pattern is useful in **update** scenarios where a parameter may or may not 
 
 ## Error Handling
 
-Every embedded HTTP call **always** returns a structured JSON response — even when the call fails. This gives query authors full visibility into what happened:
+Every embedded HTTP call **always** returns a structured JSON response — even when the call fails — unless its caller disconnects. Then the call stops and the query doesn't run, since nobody waits for the answer; on a route with `<cache>`, a call that other callers wait on keeps running until all of them have gone ([caching](07-caching.md#requests-that-arrive-while-the-query-runs)). Any other failure reaches the query, which gives query authors full visibility into what happened:
 
 ```sql
 DECLARE @response NVARCHAR(MAX) = {http{

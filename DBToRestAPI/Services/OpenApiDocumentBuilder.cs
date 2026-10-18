@@ -357,8 +357,7 @@ $$"""
             descriptionParts.Add("Supports pagination with count.");
 
         // Rate limit, resolved exactly as Step4bRateLimiting resolves it (endpoint → global → default).
-        // Configuration warnings are reported once by the middleware; the document only reflects the result.
-        var rateLimit = _rateLimitResolver.Resolve(section, new List<string>());
+        var rateLimit = _rateLimitResolver.Resolve(section);
         if (rateLimit is not null)
             descriptionParts.Add($"Rate limited: {rateLimit.MaxRequests} requests per {rateLimit.WindowSeconds} s per {RateLimitScopeLabel(rateLimit.Per)}.");
         var fullDescription = descriptionParts.Count > 0 ? string.Join(" | ", descriptionParts) : null;

@@ -367,7 +367,15 @@ A status your query raises on purpose (`THROW 50404, ...`, see [errors](../refer
 is logged as one line with the route, the status and the message, without a stack trace: at
 `Information` for a 4xx, which a caller's input causes, and at `Warning` for any other status. A
 database error you didn't raise is logged at `Error` with its stack trace, and so is a raised status
-that can no longer reach the caller because the response has started.
+that can no longer reach the caller because the response has started. A caller who disconnects
+while the engine checks its token, or, on a query route, while it stores the caller's files, waits
+on a cache fill, or runs the query or a `{http{ ... }http}` call, is logged as one `Information`
+line with the route and the exception's message, without a stack trace. While the engine is
+stopping, that line is a `Warning` saying the caller left or the server cut the request off. A
+caller who disconnects at another time, such as while its request is still read, once a result of
+several rows streams, or on a gateway route after its token check, is logged at `Debug` or not at
+all. A timeout is not a caller who left: a database command timeout is still an `Error`, and a
+`{http{ ... }http}` call's timeout a `Warning` (below).
 
 A URL in the log is an http or https URL without its query string, its fragment or a user name and
 password; any other value is logged as `(not a network URL)`. So a key in a URL's query string stays

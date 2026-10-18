@@ -27,17 +27,14 @@ against the code. Each was read in the code; none has a test yet.
   handles `ObjectResult`, so the file result is replaced and its stream leaks.
 - **Rollback with `overwrite_existing_files` deletes the overwritten file**, so a failed request
   destroys the previous content instead of restoring it.
-- **A write that fails part-way leaves a partial file.** Step7 records a path for rollback only
-  after its copy or upload completes. Record it before, or delete the destination in the catch.
-- **Silent upload and download misconfigurations.** Each of these returns success, or a 404 at
-  request time, with nothing stored or served:
-  - an upload route without `files_json_field_or_form_field_name`;
-  - no `stores`, or only unknown store names;
-  - a local store without `base_path`, or an SFTP store missing credentials;
-  - a second `<local_file_store>` or `<sftp_file_store>` element in one file, which numbers the
-    siblings so that no store name matches;
-  - a download route without `<store>`, or with an unknown one.
-  Warn at start-up, as `InertApiKeysWarning` does for API keys.
+- **A write that fails part-way can leave a partial file** in an optional store, whose failure
+  doesn't fail the request, and in an SFTP store with `overwrite_existing_files` on, where the path
+  is tracked for rollback only after its upload (so a failure before the upload writes never deletes
+  the file it would have replaced). Delete the destination in the catch when the write had started.
+- **A caller waiting on a slow cache fill waits for all of it.** Callers that join a running fill
+  wait until it ends, however long that takes (a 3-second query made every joined caller wait about
+  3.5 s). A maximum join wait, after which a waiting caller runs its own query, would bound it. Not
+  requested; recorded from the downstream's measurement of the 1.7.11 fix.
 - **An `application/json` body that isn't valid JSON is read as no parameters** (every
   parameter NULL) instead of being refused with 400.
 - **Step8 small bugs:** the `response_type` fallback reads `file_management:file_management:response_type`,
@@ -140,6 +137,43 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   bundled in release archives.
 
 ## Done
+
+- **Warnings about configuration the engine doesn't read are gone.** Removed in 1.7.12. The engine
+  warned about a few such mistakes (an `<api_keys>` block in a route, an `<api_keys_collections>`
+  that names no collection, a `response_structure` of
+  `single`, `auto` or an unknown value, a global `response_structure`, `<rate_limit>` values that
+  don't parse or a block with no `max_requests`, an empty API key collection, an empty static files
+  `root_path`, more than one `<rate_limit>` block in a node) and not about the many others, such
+  as a misspelled `<cache>` duration. Keeping a
+  list of what is legitimate is a chase that never ends, and each check cost code that has to be
+  read and kept in step. The engine now ignores every tag and value it doesn't read, as it always
+  did for most of them, and the docs say how to check that a route does what it should. The Open
+  item that asked for warnings about silent upload and download misconfigurations was dropped for
+  the same reason. Warnings about events at run time stay.
+- **A caller who disconnected was logged as an error with a stack trace.** Fixed in 1.7.12. A
+  caller who leaves while it waits on another caller's cache fill, while its query (before a
+  streamed result starts) or a `{http{ ... }http}` call runs, while its uploaded files are stored,
+  or while an `<authorize>` route loads its provider's discovery document, is now logged as one
+  `Information` line with the route and the exception's message, and the engine sets `499`. One
+  who leaves while an `<authorize>` route calls UserInfo logged nothing at the default level, and
+  one who leaves during an SFTP upload, which doesn't stop with the caller, was a rollback warning;
+  both get the same line now. While the engine is stopping, that line is a `Warning` saying the
+  caller left or the server cut the request off. Only the request's own `RequestAborted` counts, so a timeout is logged as before (a
+  database timeout at `Error`). A `{http{ ... }http}` call whose caller
+  left used to be logged as a warning and handed to the query as `status_code` 0, and the query then
+  stopped on the cancelled token with an `Error`; the call now stops the run. A call's own
+  `timeout_seconds` still gives the query `status_code` 0. A `no_wait` call cut off because the
+  engine stops is one warning naming its URL, without a stack trace.
+- **An upload cut off while it was copied into a store stayed there half written.** Fixed in
+  1.7.12. The rollback deleted only the files whose copy had finished, so a caller who left, or a
+  failure, during a copy left a partial file in the store. A file is now tracked for the rollback
+  once its copy has created it (local stores), or before its upload when it can't replace an
+  existing file (SFTP stores).
+- **The tutorial's endpoint anatomy taught a cache that never caches.** Fixed in 1.7.12.
+  `docs/tutorial/06-xml-structure.md` showed `<cache><duration_in_seconds>`, but the engine reads
+  `<cache><memory><duration_in_milliseconds>`, so a route copied from it ran its query on every
+  request. The caching topic now says how to check that a route is cached. Also in 1.7.12: Com.H
+  10.3.3 (its Fill and FillDate fixes; the engine doesn't call them).
 
 - **A caller waiting on another caller's cache fill got a 400 when that caller disconnected.** Fixed
   in 1.7.11. HybridCache runs one fill per key, and every caller with the same key waits on it, but
@@ -401,8 +435,8 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   `<api_keys>`, so such a route answered callers without a key while reading as protected. The
   engine now logs a warning naming each such route, and each `<api_keys_collections>` that names
   no collection (keys pasted in from api_keys.xml, say), at start-up and when the configuration is
-  reloaded. The API key and gateway docs say which tag protects a route. See
-  [InertApiKeysWarning.cs](DBToRestAPI/Services/InertApiKeysWarning.cs).
+  reloaded. The API key and gateway docs say which tag protects a route. (1.7.12 removed the
+  warning, with the other configuration warnings.)
 
 - **Uploads could store something other than what was sent.** Fixed in 1.7.4. Base64 content
   without its trailing `=` padding lost its last one or two bytes (the streaming decoder dropped

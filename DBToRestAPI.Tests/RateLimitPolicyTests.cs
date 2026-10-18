@@ -16,30 +16,26 @@ public class RateLimitPolicyTests
     private static IConfigurationRoot Build(Dictionary<string, string?> data)
         => new ConfigurationBuilder().AddInMemoryCollection(data).Build();
 
-    private static (RateLimitPolicy? policy, List<string> warnings) Resolve(Dictionary<string, string?> data, string endpoint = "ep")
+    private static RateLimitPolicy? Resolve(Dictionary<string, string?> data, string endpoint = "ep")
     {
         var root = Build(data);
-        var resolver = new RateLimitPolicyResolver(root);
-        var warnings = new List<string>();
-        var policy = resolver.Resolve(root.GetSection($"queries:{endpoint}"), warnings);
-        return (policy, warnings);
+        return new RateLimitPolicyResolver(root).Resolve(root.GetSection($"queries:{endpoint}"));
     }
 
     // ── resolution table ──────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void NoBlockAnywhere_NoLimit_NoWarning()
+    public void NoBlockAnywhere_NoLimit()
     {
-        var (policy, warnings) = Resolve(new() { ["queries:ep:route"] = "x" });
+        var policy = Resolve(new() { ["queries:ep:route"] = "x" });
 
         Assert.Null(policy);
-        Assert.Empty(warnings);
     }
 
     [Fact]
     public void GlobalOnly_AppliesToEndpoint()
     {
-        var (policy, _) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:max_requests"] = "120",
             ["rate_limit:window_seconds"] = "60",
@@ -55,7 +51,7 @@ public class RateLimitPolicyTests
     [Fact]
     public void EndpointMaxRequestsOnly_InheritsGlobalWindow()
     {
-        var (policy, _) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:max_requests"] = "120",
             ["rate_limit:window_seconds"] = "10",
@@ -69,17 +65,16 @@ public class RateLimitPolicyTests
     [Fact]
     public void EndpointOnly_WindowDefaultsTo60()
     {
-        var (policy, warnings) = Resolve(new() { ["queries:ep:rate_limit:max_requests"] = "30" });
+        var policy = Resolve(new() { ["queries:ep:rate_limit:max_requests"] = "30" });
 
         Assert.Equal(30, policy!.MaxRequests);
         Assert.Equal(RateLimitPolicyResolver.DefaultWindowSeconds, policy.WindowSeconds);
-        Assert.Empty(warnings);
     }
 
     [Fact]
     public void EndpointEnabledFalse_OptsOutOfGlobal()
     {
-        var (policy, _) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:max_requests"] = "120",
             ["queries:ep:rate_limit:enabled"] = "false",
@@ -91,7 +86,7 @@ public class RateLimitPolicyTests
     [Fact]
     public void GlobalEnabledFalse_IsKillSwitch_EvenForEndpointWithItsOwnNumbers()
     {
-        var (policy, _) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:enabled"] = "false",
             ["rate_limit:max_requests"] = "120",
@@ -104,7 +99,7 @@ public class RateLimitPolicyTests
     [Fact]
     public void EndpointEnabledTrue_OverridesGlobalKillSwitch()
     {
-        var (policy, _) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:enabled"] = "false",
             ["rate_limit:max_requests"] = "120",
@@ -116,19 +111,17 @@ public class RateLimitPolicyTests
     }
 
     [Fact]
-    public void BlockPresentButNoMaxRequestsAnywhere_NoLimit_WithWarning()
+    public void BlockPresentButNoMaxRequestsAnywhere_NoLimit()
     {
-        // The "looks configured, does nothing" case must not be silent.
-        var (policy, warnings) = Resolve(new() { ["queries:ep:rate_limit:window_seconds"] = "10" });
+        var policy = Resolve(new() { ["queries:ep:rate_limit:window_seconds"] = "10" });
 
         Assert.Null(policy);
-        Assert.Contains(warnings, w => w.Contains("queries:ep") && w.Contains("max_requests") && w.Contains("NOT rate limited"));
     }
 
     [Fact]
     public void PerAndMessage_ResolveEndpointThenGlobal()
     {
-        var (policy, _) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:max_requests"] = "120",
             ["rate_limit:per"] = "ip",
@@ -153,23 +146,19 @@ public class RateLimitPolicyTests
     [InlineData("99999999999")]
     public void BadEndpointMaxRequests_FallsThroughToGlobal(string bad)
     {
-        var (policy, warnings) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:max_requests"] = "120",
             ["queries:ep:rate_limit:max_requests"] = bad,
         });
 
         Assert.Equal(120, policy!.MaxRequests);
-        if (!string.IsNullOrWhiteSpace(bad))
-            Assert.Contains(warnings, w => w.Contains("queries:ep:rate_limit:max_requests"));
-        else
-            Assert.Empty(warnings); // empty is simply "not set", not a typo
     }
 
     [Fact]
     public void BadGlobalAndNoEndpoint_NoLimit_NeverThrows()
     {
-        var (policy, warnings) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:max_requests"] = "lots",
             ["rate_limit:window_seconds"] = "a minute",
@@ -178,21 +167,18 @@ public class RateLimitPolicyTests
         });
 
         Assert.Null(policy);
-        Assert.Equal(4, warnings.Count(w => w.Contains("treated as not set")));   // every typo reported at once
-        Assert.Contains(warnings, w => w.Contains("NOT rate limited"));
     }
 
     [Fact]
     public void BadEnabledOnEndpoint_IsNotSet_SoGlobalStillApplies()
     {
-        var (policy, warnings) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["rate_limit:max_requests"] = "120",
             ["queries:ep:rate_limit:enabled"] = "fasle",
         });
 
-        Assert.NotNull(policy); // the typo did not switch anything off ...
-        Assert.Contains(warnings, w => w.Contains("queries:ep:rate_limit:enabled")); // ... and it is reported
+        Assert.NotNull(policy); // the typo did not switch anything off
     }
 
     [Theory]
@@ -232,17 +218,16 @@ public class RateLimitPolicyTests
         => Assert.False(RateLimitPolicyResolver.TryParsePositiveInt("100000", RateLimitPolicyResolver.MaxWindowSeconds, out _));
 
     [Fact]
-    public void DuplicateRateLimitBlocks_UseFirst_WithWarning()
+    public void DuplicateRateLimitBlocks_UseFirst()
     {
         // The XML provider indexes two <rate_limit> siblings as rate_limit:0 and rate_limit:1.
-        var (policy, warnings) = Resolve(new()
+        var policy = Resolve(new()
         {
             ["queries:ep:rate_limit:0:max_requests"] = "5",
             ["queries:ep:rate_limit:1:max_requests"] = "50",
         });
 
         Assert.Equal(5, policy!.MaxRequests);
-        Assert.Contains(warnings, w => w.Contains("more than one"));
     }
 
     [Fact]
@@ -268,25 +253,23 @@ public class RateLimitPolicyTests
     public void ClientIpSettings_DefaultOff()
     {
         var root = Build(new() { ["rate_limit:max_requests"] = "1" });
-        var settings = new RateLimitPolicyResolver(root).ResolveClientIpSettings(new List<string>());
+        var settings = new RateLimitPolicyResolver(root).ResolveClientIpSettings();
 
         Assert.Null(settings.ClientIpHeader);
     }
 
     [Fact]
-    public void ClientIpSettings_HeaderWithDefaultHops_AndBadHopsWarns()
+    public void ClientIpSettings_HeaderWithDefaultHops_WhenHopsDoNotParse()
     {
         var root = Build(new()
         {
             ["rate_limit:client_ip_header"] = "X-Azure-ClientIP",
             ["rate_limit:client_ip_header_trusted_hops"] = "two",
         });
-        var warnings = new List<string>();
-        var settings = new RateLimitPolicyResolver(root).ResolveClientIpSettings(warnings);
+        var settings = new RateLimitPolicyResolver(root).ResolveClientIpSettings();
 
         Assert.Equal("X-Azure-ClientIP", settings.ClientIpHeader);
         Assert.Equal(1, settings.TrustedHops);
-        Assert.Contains(warnings, w => w.Contains("client_ip_header_trusted_hops"));
     }
 
     // ── caller identity ───────────────────────────────────────────────────────────────────────

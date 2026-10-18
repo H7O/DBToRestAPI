@@ -182,8 +182,6 @@ public sealed class StaticFileFallbackService
             var configuredRoot = section.GetValue<string>("root_path");
             if (string.IsNullOrWhiteSpace(configuredRoot))
             {
-                _logger.LogWarning(
-                    "A `static_files` block is present but `root_path` is empty. Static file serving is disabled.");
                 _state = Disabled;
                 return;
             }

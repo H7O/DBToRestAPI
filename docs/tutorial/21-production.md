@@ -233,7 +233,7 @@ Three things to get right:
 
 Limits are per process: two instances behind a load balancer each allow the full number. See the
 [Rate Limiting reference](../topics/18-rate-limiting.md) for how settings resolve, what a config
-typo does (the endpoint stays open and a warning is logged, never a 500), and hot-reload
+typo does (the endpoint stays open, never a 500), and hot-reload
 behaviour.
 
 ---

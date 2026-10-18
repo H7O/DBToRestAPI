@@ -196,6 +196,10 @@ namespace DBToRestAPI.Middlewares
                 var hasBufferedBody = bodyWriter.CanGetUnflushedBytes && bodyWriter.UnflushedBytes > 0;
                 var canWriteError = !hasResponseStarted && !hasBufferedBody;
 
+                // A caller who left gets nothing more; the connection is already gone.
+                if (Controllers.ApiController.CallerLeft(_logger, context, route, ex))
+                    return;
+
                 // A status the query raised on purpose, which the client is about to receive, is its
                 // answer rather than a failure. Any other exception is logged in full.
                 if (canWriteError && Controllers.ApiController.TryGetCustomDbError(ex, out var raisedNumber, out var raisedMessage))

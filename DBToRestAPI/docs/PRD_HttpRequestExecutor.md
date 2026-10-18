@@ -727,11 +727,10 @@ var response = await _httpExecutor.ExecuteAsync("""
 | Invalid JSON config | `false` | `0` | Validation error details |
 | SSL certificate error | `false` | `0` | Certificate error details |
 | DNS resolution failure | `false` | `0` | "Host not found: {hostname}" |
-| Request cancelled | `false` | `0` | "Request was cancelled" |
 
 ### 7.2 Exception Handling
 
-The service **never throws exceptions** to callers. All errors are captured in the response:
+Errors the call meets, a timeout included, are captured in the response. The service throws an `OperationCanceledException` when the caller's cancellation token is cancelled, and may throw for a request description it can't read:
 
 ```csharp
 var response = await _httpExecutor.ExecuteAsync(json);
@@ -788,7 +787,7 @@ Return: success response with RetryAttempts = 2
 | Level | Events |
 |-------|--------|
 | `Debug` | Each call: the request (method, URL, header names), a response in 2xx, timing |
-| `Warning` | Retry attempts, responses outside 2xx, timeouts and cancellations |
+| `Warning` | Retry attempts, responses outside 2xx, timeouts |
 | `Error` | Requests that fail to connect, unexpected exceptions |
 
 Nothing is logged at `Information`, so the engine's shipped log level shows only problems.
@@ -855,7 +854,7 @@ https URL without its query string, fragment or user name and password, and any 
 
 ### 10.2 Non-Functional Requirements
 
-- [x] No exceptions thrown to callers (error details in response)
+- [x] Errors the call meets are in the response, not thrown (a cancelled token throws; see 7.2)
 - [x] Sensitive headers redacted in logs
 - [x] Singleton-safe with proper `HttpClient` management via `IHttpClientFactory`
 - [x] Thread-safe for concurrent requests

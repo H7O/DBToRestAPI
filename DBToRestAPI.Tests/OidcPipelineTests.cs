@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 
 namespace DBToRestAPI.Tests;
@@ -133,6 +134,9 @@ public class OidcPipelineTests(OidcPipelineTests.OidcEngine engine) : IClassFixt
         // As Policy, but its JWKS URL answers 503.
         public FakeIdp Down { get; }
 
+        // Its discovery document is mapped by the test that uses it.
+        public FakeIdp SlowDiscovery { get; }
+
         public OidcEngine() : base(_ => Settings())
         {
             Idp = new FakeIdp(Http, "https://idp.test", "api://pipeline");
@@ -140,6 +144,7 @@ public class OidcPipelineTests(OidcPipelineTests.OidcEngine engine) : IClassFixt
             Flaky = new FakeIdp(Http, "https://flaky.test", "api://pipeline", "/keys?p=SECRET-FLAKY");
             Policy = new FakeIdp(Http, "https://policy.test", "api://pipeline", "/keys?p=SECRET-POLICY");
             Down = new FakeIdp(Http, "https://down.test", "api://pipeline", "/keys?p=SECRET-DOWN");
+            SlowDiscovery = new FakeIdp(Http, "https://slow-discovery.test", "api://pipeline");
             Http.Map(Down.JwksUrl, _ => FakeHttpServer.Text("unavailable", status: HttpStatusCode.ServiceUnavailable));
             var keySetCalls = 0;
             Http.Map(Flaky.JwksUrl, _ => Interlocked.Increment(ref keySetCalls) switch
@@ -216,6 +221,13 @@ public class OidcPipelineTests(OidcPipelineTests.OidcEngine engine) : IClassFixt
             ["queries:auth_flaky:verb"] = "GET",
             ["queries:auth_flaky:authorize:provider"] = "flaky",
             ["queries:auth_flaky:query"] = "SELECT 'ok' AS result;",
+
+            ["authorize:providers:slow_discovery:authority"] = "https://slow-discovery.test",
+            ["authorize:providers:slow_discovery:audience"] = "api://pipeline",
+            ["queries:auth_slow_discovery:route"] = "auth/slow-discovery",
+            ["queries:auth_slow_discovery:verb"] = "GET",
+            ["queries:auth_slow_discovery:authorize:provider"] = "slow_discovery",
+            ["queries:auth_slow_discovery:query"] = "SELECT 'ok' AS result;",
         };
     }
 
@@ -312,6 +324,59 @@ public class OidcPipelineTests(OidcPipelineTests.OidcEngine engine) : IClassFixt
             Assert.Equal(HttpStatusCode.OK, status);
             Assert.Equal("grace@example.com", Text(row, "email"));
             Assert.Equal(calls + 1, Http.Count(engine.Idp.UserInfoUrl));   // one lookup served both
+        }
+        finally
+        {
+            Http.Map(engine.Idp.UserInfoUrl, _ => FakeIdp.UserInfoAnswer());
+        }
+    }
+
+    /// <summary>
+    /// The only caller of a lookup the engine waits on leaves: one Information line naming the route,
+    /// and nothing from the engine at Warning or above.
+    /// </summary>
+    private async Task AssertTheCallerWhoLeavesIsLoggedAsLeft(string path, string token, string waitedOnUrl)
+    {
+        var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Http.MapAsync(waitedOnUrl, async (_, cancel) =>
+        {
+            called.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancel);
+            return FakeHttpServer.Text("never");
+        });
+        var before = engine.Logs.Entries.Count;
+        using var leaving = new CancellationTokenSource();
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var call = engine.Client.SendAsync(request, leaving.Token);
+        await called.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        leaving.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+
+        var line = $"The caller left before route {path} answered";
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!engine.Logs.Entries.Skip(before).Any(e => e.Message.Contains(line)) && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        await Task.Delay(200);   // anything logged after it arrives too
+        var entries = engine.Logs.Entries.Skip(before).ToList();
+        var left = Assert.Single(entries, e => e.Message.Contains(line));
+        Assert.Equal(LogLevel.Information, left.Level);
+        Assert.Null(left.Exception);
+        Assert.DoesNotContain(entries, e => e.Category.StartsWith("DBToRestAPI") && e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task ACallerWhoLeavesWhileTheDiscoveryDocumentLoads_IsLoggedAsLeft_NotAsAnError()
+        => await AssertTheCallerWhoLeavesIsLoggedAsLeft(
+            "auth/slow-discovery", engine.SlowDiscovery.Issue(FakeIdp.Claims()), engine.SlowDiscovery.DiscoveryUrl);
+
+    [Fact]
+    public async Task ACallerWhoLeavesWhileUserInfoIsCalled_IsLoggedAsLeft_NotAsAnError()
+    {
+        try
+        {
+            await AssertTheCallerWhoLeavesIsLoggedAsLeft(
+                "auth/claims", engine.Idp.Issue(FakeIdp.Claims("email")), engine.Idp.UserInfoUrl);
         }
         finally
         {

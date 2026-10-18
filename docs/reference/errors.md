@@ -103,7 +103,7 @@ All bodies are JSON. "Rolled back" means files this request stored are deleted.
 | `400` | Malformed form body, or a form over an ASP.NET Core limit (a field over 4 MiB, more than 1024 fields) | `{"success":false,"message":"The form data could not be read."}` | None were stored |
 | `400`-`599` | SQL raised `50400`-`50599` | `{"success":false,"message":"...","error_number":404}` | Rolled back |
 | `400` | Any other database error: constraint violation, timeout, deadlock, syntax error, unreachable database | `{"success":false,"message":"An error occurred while processing your request."}`, from `generic_error_message` | Rolled back |
-| `400` | The client disconnected (it never sees the response) | `Request was cancelled` before storing; the generic message if the query was running | Rolled back if anything was stored |
+| `400`, `499` | The client disconnected (it never sees the response) | `Request was cancelled` (`400`) if it left while its request was read; nothing (`499`) if it left while its token was checked, while its files were stored, or while its query or one of its `{http{ ... }http}` calls ran (a streamed result keeps the `200` it had sent) | Rolled back if anything was stored; once a streamed result has started, that depends on the driver |
 | `401` | API key missing or wrong | `API key was not provided` / `Unauthorized client` | None were stored |
 | `401` | JWT missing or invalid | `Authorization header is required` / `Invalid authorization header format. Use: Bearer <token>` / `Bearer token is required` / `Token has expired` / `Invalid token signature` / `Invalid token` | None were stored |
 | `403` | JWT valid but lacks required scopes or roles | `Insufficient permissions` | None were stored |
@@ -114,7 +114,7 @@ All bodies are JSON. "Rolled back" means files this request stored are deleted.
 | `429` | Rate limit hit | `{"success":false,"message":"...","retry_after_seconds":30}`, plus a `Retry-After` header | None were stored |
 | `500` | Writing to a non-optional store failed, or another failure that isn't a database error while rows were being written | `{"success":false,"message":"An unexpected error occurred processing your request"}` | Rolled back |
 | `500` | Reading the request failed unexpectedly | ``An unexpected error occurred processing your request (Contact your service provider support and provide them with error code `...`)`` | None were stored |
-| `500` | The route's `response_structure` is a value the engine doesn't know (a route with a `count_query` ignores it; logged at start-up) | ``Invalid response structure `x` defined for route `r` (Contact your service provider support and provide them with error code `API Controller Error`)`` | Rolled back |
+| `500` | The route's `response_structure` is a value the engine doesn't know (a route with a `count_query` ignores it) | ``Invalid response structure `x` defined for route `r` (Contact your service provider support and provide them with error code `API Controller Error`)`` | Rolled back |
 | `500` | Engine configuration error (route, auth provider) | `Improper service setup. (...)`, `Authorization configuration error. (...)` and similar | None were stored |
 | `500` | The request sent the `debug-mode` header matching `debug_mode_header_value`, and a database error was not mapped | `{"success":false,"message":"Query 1 of 1 failed: ...","stack_trace":"...","inner_exception":"..."}`. For an error raised while a streamed result was written, `message` is the driver's text without the `Query 1 of 1 failed:` prefix, and `inner_exception` is usually `null`. | Rolled back |
 
@@ -138,7 +138,7 @@ Rollback has limits. Know them before relying on it:
 - **It covers files, not rows.** Statements that ran before the error, and earlier queries in a chain, stay committed unless your SQL used a transaction. An error after your `COMMIT` (for example in a final `SELECT`) still deletes the files while the rows stay.
 - **Deleting a row never deletes its file.** The engine deletes stored files only during rollback. When an update query removes an attachment's row, the file stays in the store.
 - **With `overwrite_existing_files` on,** a failed request deletes the file it overwrote. The previous content is lost, not restored.
-- **A write that failed part-way** (disk full, connection lost mid-upload) may leave a partial file behind.
+- **A write that failed part-way** (disk full, connection lost mid-upload) is deleted with the rest, with two exceptions. In an optional store, the failure doesn't fail the request, so when the request succeeds no rollback runs and the partial file stays. In an SFTP store with `overwrite_existing_files` on, a partial file stays, whether or not it replaced an existing one.
 - **A client that disconnects after the SQL committed** still gets the files deleted, so committed rows can point at missing files.
 
 ## Client pattern

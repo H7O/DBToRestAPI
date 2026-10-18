@@ -58,8 +58,8 @@ Each rule prevents a mistake that fails silently or looks like it works. These r
 ## Check your work
 
 1. Start the engine: `dotnet run --project DBToRestAPI` from a clone, or the executable from a release. It prints its URL (port 5000 unless `settings.xml` sets another).
-2. Read the start-up log. Of your endpoint mistakes, it warns only about routes that look protected by API keys but aren't, and about a `response_structure` of `single`, `auto` or a value the engine doesn't know, or one set directly under `<settings>`. Other start-up warnings, such as a skipped HTTPS endpoint, are about hosting. Most other mistakes (unknown tags, missing stores, a missing files field or `<store>`) log nothing at start-up, and an unknown store name is logged only when an upload reaches it.
-3. So call the endpoint for success and for each failure you designed. Compare the status and the JSON body with what the docs promise.
+2. Read the start-up log for hosting problems, such as a skipped HTTPS endpoint. It says nothing about endpoint mistakes: an unknown tag, a tag in the wrong place, a value the engine doesn't accept, a missing store or files field all log nothing at start-up, and an unknown store name is logged only when an upload reaches it.
+3. So call the endpoint for success and for each failure you designed. Compare the status and the JSON body with what the docs promise. For a route with `<cache>`, also check that it is cached ([07](docs/topics/07-caching.md#basic-configuration)).
 
 ## Documentation layout
 

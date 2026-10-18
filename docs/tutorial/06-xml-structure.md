@@ -81,9 +81,11 @@ Here's every tag you can use inside an endpoint definition:
         <provider>my_auth_provider</provider>
       </authorize>
 
-      <!-- Caching -->
+      <!-- Caching (milliseconds, under <memory>) -->
       <cache>
-        <duration_in_seconds>300</duration_in_seconds>
+        <memory>
+          <duration_in_milliseconds>300000</duration_in_milliseconds>
+        </memory>
       </cache>
 
       <!-- CORS (endpoint-level override) -->

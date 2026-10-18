@@ -55,7 +55,6 @@ public class ApiKeysService
             var apiKeysSection = _configuration.GetSection("api_keys_collections");
             if (apiKeysSection == null || !apiKeysSection.Exists())
             {
-                _logger.LogWarning("API keys collections configuration section not found");
                 _apiKeysCollections = new();
                 return;
             }
@@ -105,12 +104,6 @@ public class ApiKeysService
                 if (apiKeys.Count > 0)
                 {
                     newCollections[collectionName] = apiKeys;
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "API key collection '{CollectionName}' is empty or contains only whitespace keys",
-                        collectionName);
                 }
             }
 

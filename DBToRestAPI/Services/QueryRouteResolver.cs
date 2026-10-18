@@ -41,14 +41,10 @@ public class QueryRouteResolver
 
 
     private readonly Lock _reloadLock = new();
-    private readonly InertApiKeysWarning _inertApiKeysWarning;
-    private readonly ResponseStructureWarning _responseStructureWarning;
 
-    public QueryRouteResolver(IEncryptedConfiguration configuration, ILogger<QueryRouteResolver>? logger = null)
+    public QueryRouteResolver(IEncryptedConfiguration configuration)
     {
         _configuration = configuration;
-        _inertApiKeysWarning = new InertApiKeysWarning(logger);
-        _responseStructureWarning = new ResponseStructureWarning(logger);
         LoadRoutes(); // initial load
         ChangeToken.OnChange(
             () => _configuration.GetSection("queries").GetReloadToken(),
@@ -148,10 +144,6 @@ public class QueryRouteResolver
             _exactRoutes = newExactRoutes;
             _routesWithVariables = newRoutesWithVariables;
             // _exactRouteVerbs = newExactRouteVerbs;
-
-            var loadedRoutes = newExactRoutes.Concat(newRoutesWithVariables).Select(r => (r.NormalizedRoute, r.Config)).ToList();
-            _inertApiKeysWarning.Check(loadedRoutes);
-            _responseStructureWarning.Check(loadedRoutes, _configuration);
         }
         finally
         {

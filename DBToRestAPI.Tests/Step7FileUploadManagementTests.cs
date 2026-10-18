@@ -1,6 +1,7 @@
 using DBToRestAPI.Middlewares;
 using DBToRestAPI.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -48,7 +49,82 @@ public class Step7FileUploadManagementTests
         Assert.True(File.Exists(harness.StoredFilePath));
     }
 
-    private static TestHarness CreateHarness(RequestDelegate next)
+    [Fact]
+    public async Task InvokeAsync_WhenTheCallerLeavesWhileFilesAreStored_RollsBackWithoutAWarningOrAnError()
+    {
+        // Step6MandatoryFieldsCheck logs a caller who left, as one line. The copy had already created
+        // the file in the store, so the rollback must delete it.
+        var logs = new CapturedLogs();
+        using var loggerFactory = LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Trace).AddProvider(logs));
+        using var harness = CreateHarness(_ => Task.CompletedTask, loggerFactory.CreateLogger<Step7FileUploadManagement>());
+        harness.Context.Features.Set<IHttpRequestLifetimeFeature>(new LeavesAfter(liveReads: 1));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => harness.Middleware.InvokeAsync(harness.Context));
+
+        Assert.False(File.Exists(harness.StoredFilePath));
+        Assert.Contains(logs.Entries, e => e.Message.Contains("Rolling back uploaded files"));
+        Assert.DoesNotContain(logs.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WhenTheCallerLeavesOnceFilesAreStored_RollsBackInsteadOfGoingOn()
+    {
+        // A store whose write doesn't stop with the caller (an SFTP upload) finishes; the caller is
+        // gone by then. The request must not go on to the query: Step6MandatoryFieldsCheck logs it.
+        var logs = new CapturedLogs();
+        using var loggerFactory = LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Trace).AddProvider(logs));
+        var wentOn = false;
+        using var harness = CreateHarness(_ => { wentOn = true; return Task.CompletedTask; },
+            loggerFactory.CreateLogger<Step7FileUploadManagement>());
+        // Live for the entry check and the copy, gone from then on.
+        harness.Context.Features.Set<IHttpRequestLifetimeFeature>(new LeavesAfter(liveReads: 2));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => harness.Middleware.InvokeAsync(harness.Context));
+
+        Assert.False(wentOn);
+        Assert.False(File.Exists(harness.StoredFilePath));
+        Assert.DoesNotContain(logs.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WhenTheFileItWouldReplaceCantBeOpened_KeepsThatFile()
+    {
+        // With overwrite_existing_files on, a copy that fails before it opens its file must not
+        // delete the file already there. A download holding it open is one way that happens.
+        using var harness = CreateHarness(_ => Task.CompletedTask, overwrite: true);
+        Directory.CreateDirectory(Path.GetDirectoryName(harness.StoredFilePath)!);
+        File.WriteAllText(harness.StoredFilePath, "previous");
+
+        using (new FileStream(harness.StoredFilePath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+            await Assert.ThrowsAnyAsync<IOException>(() => harness.Middleware.InvokeAsync(harness.Context));
+
+        Assert.Equal("previous", File.ReadAllText(harness.StoredFilePath));
+    }
+
+    /// <summary>The caller is still there for the first reads of RequestAborted, and gone from then on.</summary>
+    private sealed class LeavesAfter : IHttpRequestLifetimeFeature
+    {
+        private readonly CancellationTokenSource _left = new();
+        private readonly int _liveReads;
+        private int _reads;
+
+        public LeavesAfter(int liveReads)
+        {
+            _liveReads = liveReads;
+            _left.Cancel();
+        }
+
+        public CancellationToken RequestAborted
+        {
+            get => Interlocked.Increment(ref _reads) <= _liveReads ? CancellationToken.None : _left.Token;
+            set { }
+        }
+
+        public void Abort() { }
+    }
+
+    private static TestHarness CreateHarness(
+        RequestDelegate next, ILogger<Step7FileUploadManagement>? logger = null, bool overwrite = false)
     {
         var basePath = Path.Combine(Path.GetTempPath(), "DBToRestAPI-Step7Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(basePath);
@@ -65,7 +141,8 @@ public class Step7FileUploadManagementTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["file_management:local_file_store:primary:base_path"] = basePath,
-                ["queries:upload:file_management:stores"] = "primary"
+                ["queries:upload:file_management:stores"] = "primary",
+                ["queries:upload:file_management:overwrite_existing_files"] = overwrite ? "true" : "false"
             })
             .Build();
 
@@ -84,7 +161,7 @@ public class Step7FileUploadManagementTests
             next,
             null!,
             new TestEncryptedConfiguration(configuration),
-            Mock.Of<ILogger<Step7FileUploadManagement>>());
+            logger ?? Mock.Of<ILogger<Step7FileUploadManagement>>());
 
         return new TestHarness(
             context,

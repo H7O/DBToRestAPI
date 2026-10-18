@@ -3,8 +3,11 @@ using System.Text.Json;
 using Com.H.Data.Common;
 using DBToRestAPI.Controllers;
 using DBToRestAPI.Middlewares;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace DBToRestAPI.Tests;
@@ -106,6 +109,71 @@ public class LateDbErrorTests : IDisposable
         Assert.Equal(level, entry.Level);
         Assert.Null(entry.Exception);
         Assert.EndsWith($"Route r/1 answered {status}, raised by its query: Bad%0Avalue", entry.Message);
+    }
+
+    [Fact]
+    public void CallerLeft_IsOneInformationLine_WithTheExceptionsMessage_AndA499()
+    {
+        // A driver that keeps running after the caller left can still fail for real: its message stays.
+        var logs = new CapturedLogs();
+        using var left = new CancellationTokenSource();
+        left.Cancel();
+        var context = new DefaultHttpContext { RequestAborted = left.Token };
+
+        Assert.True(ApiController.CallerLeft(logs.CreateLogger("test"), context, "r/1",
+            new InvalidOperationException("Query 1 of 1 failed: integer\noverflow")));
+
+        var entry = Assert.Single(logs.Entries);
+        Assert.Equal(LogLevel.Information, entry.Level);
+        Assert.Null(entry.Exception);
+        Assert.EndsWith(
+            "The caller left before route r/1 answered (InvalidOperationException: Query 1 of 1 failed: integer%0Aoverflow)",
+            entry.Message);
+        Assert.Equal(StatusCodes.Status499ClientClosedRequest, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public void CallerLeft_WhenTheEngineIsStopping_IsAWarningThatTheRouteWasCutOff()
+    {
+        // The server aborts the requests still running once its shutdown timeout has passed: the
+        // caller didn't leave.
+        var logs = new CapturedLogs();
+        using var aborted = new CancellationTokenSource();
+        aborted.Cancel();
+        using var services = new ServiceCollection().AddSingleton<IHostApplicationLifetime>(new StoppingLifetime()).BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestAborted = aborted.Token, RequestServices = services };
+
+        Assert.True(ApiController.CallerLeft(logs.CreateLogger("test"), context, "r/1", new OperationCanceledException()));
+
+        var entry = Assert.Single(logs.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Null(entry.Exception);
+        Assert.Contains("Route r/1 ended before it answered while the application is stopping", entry.Message);
+        Assert.Equal(StatusCodes.Status499ClientClosedRequest, context.Response.StatusCode);
+    }
+
+    private sealed class StoppingLifetime : IHostApplicationLifetime
+    {
+        private readonly CancellationTokenSource _stopping = new();
+
+        public StoppingLifetime() => _stopping.Cancel();
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => _stopping.Token;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() { }
+    }
+
+    [Fact]
+    public void CallerLeft_ACallerStillThere_IsNotACallerWhoLeft()
+    {
+        var logs = new CapturedLogs();
+        var context = new DefaultHttpContext();
+
+        Assert.False(ApiController.CallerLeft(logs.CreateLogger("test"), context, "r/1", new OperationCanceledException()));
+
+        Assert.Empty(logs.Entries);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
     }
 
     [Fact]

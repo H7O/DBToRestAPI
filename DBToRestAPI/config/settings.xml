@@ -133,7 +133,7 @@
   with the client address, e.g. X-Azure-ClientIP) and, for headers the proxy appends to such as
   X-Forwarded-For, <client_ip_header_trusted_hops>1</client_ip_header_trusted_hops>. Only do this
   once nothing but that proxy can reach the engine; otherwise the header is client-controlled.
-  A value that does not parse is treated as not set and logged once; it never causes a 500.
+  A value that does not parse is treated as not set, without a log line; it never causes a 500.
   See docs/topics/18-rate-limiting.md.
   -->
   <!--

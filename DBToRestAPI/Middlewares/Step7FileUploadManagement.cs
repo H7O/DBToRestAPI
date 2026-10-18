@@ -196,7 +196,9 @@ namespace DBToRestAPI.Middlewares
 
             async Task RollbackUploadedFilesAsync(string rollbackReason)
             {
-                this._logger.LogWarning("{time}: Rolling back uploaded files in Step6FileManagement middleware due to {rollbackReason}",
+                // Expected when the caller left (a 499 included), so not a warning then.
+                this._logger.Log(context.RequestAborted.IsCancellationRequested ? LogLevel.Debug : LogLevel.Warning,
+                    "{time}: Rolling back uploaded files in Step6FileManagement middleware due to {rollbackReason}",
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
                     rollbackReason);
 
@@ -317,14 +319,15 @@ namespace DBToRestAPI.Middlewares
                                     "Set 'overwrite_existing_files' to true to allow overwriting.");
                             }
 
-                            // Use async file copy
                             using (var sourceStream = new FileStream(file.Key, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true))
                             using (var destStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: true))
                             {
+                                // Tracked once the file is created (or an existing one emptied), so a rollback also
+                                // deletes a file the copy left half written, and never one it failed to open.
+                                entry.StoredRelativePaths.Add(file.Value.RelativePath);
                                 await sourceStream.CopyToAsync(destStream, context.RequestAborted);
                             }
 
-                            entry.StoredRelativePaths.Add(file.Value.RelativePath);
                             this._logger.LogDebug("{time}: Copied temp file '{tempFile}' to local store ({local_store_name})  at '{destinationPath}' in Step6FileManagement middleware",
                                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
                                 file.Key,
@@ -337,6 +340,9 @@ namespace DBToRestAPI.Middlewares
                     catch (Exception ex)
                     {
                         entry.WasSuccessful = false;
+                        // The caller left: nothing failed, and Step6MandatoryFieldsCheck logs it as one line.
+                        if (context.RequestAborted.IsCancellationRequested)
+                            throw;
                         bool optional = entry.Config.GetValue<bool>("optional", false);
                         if (optional)
                         {
@@ -399,13 +405,19 @@ namespace DBToRestAPI.Middlewares
                                     }
                                 }
 
-                                // Use async file stream with proper buffering
+                                // The upload doesn't say when it has created the file. Without overwrite, nothing
+                                // was there before, so the path is tracked first and a rollback also deletes a file
+                                // the upload left half written. With overwrite, only after, so a failure before the
+                                // upload writes never deletes the file it would have replaced.
+                                if (!overwriteExistingFiles)
+                                    entry.StoredRelativePaths.Add(file.Value.RelativePath);
                                 using (var fileStream = new FileStream(file.Key, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true))
                                 {
                                     await sftpClient.UploadAsync(fileStream, destinationPath);
                                 }
+                                if (overwriteExistingFiles)
+                                    entry.StoredRelativePaths.Add(file.Value.RelativePath);
 
-                                entry.StoredRelativePaths.Add(file.Value.RelativePath);
                                 this._logger.LogDebug("{time}: Uploaded temp file '{tempFile}' to SFTP store ({sftp_store_name}) at '{destinationPath}' in Step6FileManagement middleware",
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
                                     file.Key,
@@ -418,6 +430,9 @@ namespace DBToRestAPI.Middlewares
                         catch (Exception ex)
                         {
                             entry.WasSuccessful = false;
+                            // The caller left: nothing failed, and Step6MandatoryFieldsCheck logs it as one line.
+                            if (context.RequestAborted.IsCancellationRequested)
+                                throw;
                             bool optional = entry.Config.GetValue<bool>("optional", false);
                             if (optional)
                             {
@@ -445,6 +460,11 @@ namespace DBToRestAPI.Middlewares
                     }
                 }
 
+                // A caller who left while its files were stored, during an SFTP upload say, which doesn't
+                // take the request's token (cut off part-way with overwrite on, its partial file would
+                // stay): the catch below rolls back, and Step6MandatoryFieldsCheck logs it as one line.
+                context.RequestAborted.ThrowIfCancellationRequested();
+
                 // Proceed to the next middleware
                 await this._next(context);
 
@@ -456,15 +476,17 @@ namespace DBToRestAPI.Middlewares
             catch (Exception ex)
             {
                 // A status the query raised on purpose is logged by Step6MandatoryFieldsCheck, which
-                // answers it (at Error when it can no longer reach the client).
-                if (!Controllers.ApiController.TryGetCustomDbError(ex, out _, out _))
+                // answers it (at Error when it can no longer reach the client). So is a caller who
+                // left, as one line.
+                var callerLeft = context.RequestAborted.IsCancellationRequested;
+                if (!callerLeft && !Controllers.ApiController.TryGetCustomDbError(ex, out _, out _))
                 {
                     this._logger.LogError(ex, "{errorCode}: An exception occurred in Step6FileManagement middleware: {message}",
                         _errorCode,
                         ex.Message);
                 }
 
-                await RollbackUploadedFilesAsync(ex.Message);
+                await RollbackUploadedFilesAsync(callerLeft ? "the caller left" : ex.Message);
 
 
                 // Check if this is a "file already exists" error - return 409 Conflict

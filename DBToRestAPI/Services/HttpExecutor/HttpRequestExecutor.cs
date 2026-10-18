@@ -160,17 +160,9 @@ public class HttpRequestExecutor : IHttpRequestExecutor
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                stopwatch.Stop();
-                _logger.LogWarning(
-                    "HttpExecutor: Request cancelled for {Url} after {ElapsedMs}ms (timeout was {TimeoutSeconds}s)",
-                    LogText.Url(request.Url),
-                    stopwatch.ElapsedMilliseconds,
-                    effectiveTimeoutSeconds);
-                return HttpExecutorResponse.FromError(
-                    "Request was cancelled",
-                    null,
-                    stopwatch.Elapsed,
-                    currentAttempt - 1);
+                // The token the caller passed was cancelled: the call stops, and the exception tells
+                // the caller so. A timeout cancels another token, and is answered below.
+                throw;
             }
             catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
             {

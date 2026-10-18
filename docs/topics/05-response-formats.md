@@ -26,9 +26,9 @@ A query that returns one record (`SELECT ... WHERE id = {{id}}`, or an `INSERT` 
 
 A route with a `count_query` always answers `{"success": true, "count": N, "data": [...]}` and ignores the tag ([below](#pagination-with-count-query)).
 
-Don't write `single` or `auto`. Both are read as the tag left out, and the start-up log names every route that has one. So a `single` route whose query returns several rows answers all of them as an array, streamed like any other result (and with `<cache>`, cached whole). Limit such a query to one row (`TOP 1`, `LIMIT 1`), then remove the tag.
+Don't write `single` or `auto`. Both are read as the tag left out. So a `single` route whose query returns several rows answers all of them as an array, streamed like any other result (and with `<cache>`, cached whole). Limit such a query to one row (`TOP 1`, `LIMIT 1`), then remove the tag.
 
-Any other value makes every request to the route answer `500`, unless the route has a `count_query`, and is logged at start-up. An empty `<response_structure></response_structure>` counts as no tag. A `<response_structure>` placed directly under `<settings>` is not read, and the start-up log reports it: set the tag on each route that needs `array` or `file`.
+Any other value makes every request to the route answer `500`, unless the route has a `count_query`. An empty `<response_structure></response_structure>` counts as no tag. A `<response_structure>` placed directly under `<settings>` is not read: set the tag on each route that needs `array` or `file`.
 
 ### A column with no name
 

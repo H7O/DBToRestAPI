@@ -97,7 +97,7 @@ already resolve.
 | `120 / 60` | `<max_requests>30</max_requests>` only | 30 per 60 s (window inherited) |
 | `120 / 60` | `<enabled>false</enabled>` | no limit on this endpoint |
 | absent | `<max_requests>30</max_requests>` | 30 per **60** s (built-in window) |
-| absent | `<window_seconds>10</window_seconds>` only | no limit, **and a warning** (block present, nothing resolves) |
+| absent | `<window_seconds>10</window_seconds>` only | **no limit** (block present, nothing resolves) |
 | `<enabled>false</enabled>` + `120 / 60` | `30 / 60` | **no limit** — the global switch is the kill switch |
 | `<enabled>false</enabled>` + `120 / 60` | `30 / 60` + `<enabled>true</enabled>` | 30 per 60 s (the endpoint re-enabled itself) |
 
@@ -110,16 +110,14 @@ is read as text and parsed by the engine itself, never through the configuration
   range, empty or whitespace → **not set at that level**, fall through to the next level.
 - `enabled`: `true/false`, `1/0`, `yes/no`, `on/off`, any case. Anything else → not set.
 - `per`: `caller`, `ip`, `endpoint`, any case, trimmed. Anything else → not set.
-- `client_ip_header_trusted_hops`: whole number 1 – 64. Anything else → 1, with a warning. Only
+- `client_ip_header_trusted_hops`: whole number 1 – 64. Anything else → 1. Only
   read when `client_ip_header` is set.
 - Two `<rate_limit>` siblings in one node (the XML provider indexes them as `rate_limit:0` and
-  `rate_limit:1`, so every tag would read as "not set"): the first is used, with a warning.
+  `rate_limit:1`, so every tag would read as "not set"): the first is used.
 
-Each problem is logged **once** per distinct value, as a warning naming the configuration path,
-and the engine keeps serving. All tags are read before anything is decided, so one save reports
-every typo. A block that is present but resolves to no `max_requests` is also logged once, so an
-endpoint cannot look protected while being open. A limiter configuration mistake never takes the
-API down, and it is never silent either.
+None of these is logged, and the engine keeps serving: a limiter configuration mistake never takes
+the API down. A block that resolves to no `max_requests` leaves the endpoint open, so after
+configuring a limit, send more requests than it allows and check that the extra ones answer `429`.
 
 ## Where it runs, and what is counted
 
@@ -263,8 +261,9 @@ the slowest. Each rejection is a **Debug** line. Per endpoint, one **Information
 count since the last summary goes out at most once a minute; the count is read and reset
 atomically, so every rejection lands in exactly one summary, and the tail of a burst is reported
 with the first rejection after the interval. The summary names the configuration node and the
-caller only by kind (`user`, `key`, `ip`). Configuration problems are logged once per distinct
-message, and a fault inside the decision once per endpoint and exception type. Header values, URL
+caller only by kind (`user`, `key`, `ip`). The warning that a client IP header is trusted is logged
+once, each fallback described above once per endpoint, and a fault inside the decision once per
+endpoint and exception type. Header values, URL
 paths and identities never appear in Information-level lines.
 
 ## Cost and limits of the design

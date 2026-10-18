@@ -454,4 +454,53 @@ public class OutgoingHttpPipelineTests(OutgoingHttpPipelineTests.OutgoingEngine 
         Assert.Equal(7, sent.GetProperty("a").GetInt32());
         Assert.False(sent.GetProperty("flag").GetBoolean());
     }
+
+    /// <summary>An engine of its own, which the test stops.</summary>
+    private sealed class NoWaitEngine() : PipelineTests.PipelineEngine(_ => new()
+    {
+        ["queries:no_wait_stop:route"] = "no_wait/stop",
+        ["queries:no_wait_stop:verb"] = "GET",
+        ["queries:no_wait_stop:query"] =
+            """SELECT {http{ {"url": "https://slow.test/no-wait", "method": "GET", "no_wait": true} }http} AS response;""",
+    });
+
+    [Fact]
+    public async Task HttpMarker_ANoWaitCallCutOffByShutdown_IsOneWarningNamingItsUrl()
+    {
+        var stopping = new NoWaitEngine();
+        try
+        {
+            var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            stopping.Http.MapAsync("https://slow.test/no-wait", async (_, cancel) =>
+            {
+                called.TrySetResult();
+                await Task.Delay(Timeout.Infinite, cancel);
+                return FakeHttpServer.Text("never");
+            });
+            using (var response = await stopping.Client.GetAsync("no_wait/stop"))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            await called.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            stopping.Dispose();
+            throw;
+        }
+
+        var before = stopping.Logs.Entries.Count;
+        stopping.Dispose();
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!stopping.Logs.Entries.Skip(before).Any(e => e.Message.Contains("was cut off")) && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        await Task.Delay(200);   // anything logged after it arrives too
+        var entries = stopping.Logs.Entries.Skip(before).ToList();
+        var cutOff = Assert.Single(entries, e => e.Message.Contains("was cut off"));
+        Assert.Equal(LogLevel.Warning, cutOff.Level);
+        Assert.Contains("No-wait call to https://slow.test/no-wait was cut off", cutOff.Message);
+        Assert.Null(cutOff.Exception);
+        // Not the cancellation's stack trace. (A log provider the stopping host has already disposed
+        // can make writing that line throw, which is logged too: that one isn't the call's doing.)
+        Assert.DoesNotContain(entries, e => e.Category.StartsWith("DBToRestAPI") && e.Exception is OperationCanceledException);
+    }
 }

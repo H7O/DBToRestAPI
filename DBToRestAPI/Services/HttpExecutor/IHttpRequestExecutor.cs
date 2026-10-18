@@ -16,7 +16,9 @@ public interface IHttpRequestExecutor
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The response containing status, headers, and content.</returns>
     /// <remarks>
-    /// This method never throws exceptions. All errors are captured in the response.
+    /// Errors the call meets, timeouts included, are captured in the response. It throws an
+    /// <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is cancelled,
+    /// and may throw for a request description it can't read.
     /// </remarks>
     Task<HttpExecutorResponse> ExecuteAsync(
         string requestJson,
@@ -29,7 +31,9 @@ public interface IHttpRequestExecutor
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The response containing status, headers, and content.</returns>
     /// <remarks>
-    /// This method never throws exceptions. All errors are captured in the response.
+    /// Errors the call meets, timeouts included, are captured in the response. It throws an
+    /// <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is cancelled,
+    /// and may throw for a request description it can't read.
     /// </remarks>
     Task<HttpExecutorResponse> ExecuteAsync(
         JsonElement requestConfig,
@@ -42,7 +46,9 @@ public interface IHttpRequestExecutor
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The response containing status, headers, and content.</returns>
     /// <remarks>
-    /// This method never throws exceptions. All errors are captured in the response.
+    /// Errors the call meets, timeouts included, are captured in the response. It throws an
+    /// <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is cancelled,
+    /// and may throw for a request description it can't read.
     /// </remarks>
     Task<HttpExecutorResponse> ExecuteAsync(
         HttpExecutorRequest request,

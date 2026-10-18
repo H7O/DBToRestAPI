@@ -216,6 +216,33 @@ namespace DBToRestAPI.Controllers
                 "{Time}: Route {Route} answered {Status}, raised by its query: {Message}",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, status, LogText.Escape(message));
 
+        /// <summary>
+        /// True when the caller disconnected before its answer was sent, which is logged as one line
+        /// without the stack trace: nobody is waiting for a response. Only the request's own
+        /// RequestAborted counts. A timeout cancels another token, and stays an error. The line keeps
+        /// the exception's message: a driver that doesn't stop on the token can still fail for real
+        /// after the caller left, and each driver reports its own cancellation in its own exception.
+        /// The server also aborts the requests still running when the engine stops, once its shutdown
+        /// timeout has passed. While the engine stops, the line is a warning that says the caller left
+        /// or the server cut the request off, because the two can't be told apart.
+        /// </summary>
+        internal static bool CallerLeft(ILogger logger, HttpContext context, object? route, Exception ex)
+        {
+            if (!context.RequestAborted.IsCancellationRequested)
+                return false;
+            if (context.RequestServices?.GetService(typeof(IHostApplicationLifetime)) is IHostApplicationLifetime { ApplicationStopping.IsCancellationRequested: true })
+                logger.LogWarning(
+                    "{Time}: Route {Route} ended before it answered while the application is stopping: the caller left or the server cut it off ({ExceptionType}: {Message})",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, ex.GetType().Name, LogText.Escape(ex.Message));
+            else
+                logger.LogInformation(
+                    "{Time}: The caller left before route {Route} answered ({ExceptionType}: {Message})",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, ex.GetType().Name, LogText.Escape(ex.Message));
+            if (!context.Response.HasStarted)
+                context.Response.StatusCode = StatusCodes.Status499ClientClosedRequest;
+            return true;
+        }
+
 
 
         ///// <summary>
@@ -356,6 +383,9 @@ namespace DBToRestAPI.Controllers
                         }
                     };
                 }
+
+                if (CallerLeft(_logger, HttpContext, HttpContext.Items.TryGetValue("route", out var leftRoute) ? leftRoute : "unknown", ex))
+                    return new EmptyResult();
 
                 // Log the exception with timestamp for easier debugging
                 _logger.LogError(ex,
@@ -726,6 +756,22 @@ namespace DBToRestAPI.Controllers
                 response = await this._httpRequestExecutor.ExecuteAsync(
                     httpRequestDetails,
                     cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // A no-wait call runs on the application's token, which is cancelled when it stops.
+                // Nobody reads its result, so the line names the call that was cut off.
+                if (cancellationToken == _appLifetime.ApplicationStopping)
+                {
+                    _logger.LogWarning(
+                        "{Time}: [EmbeddedHTTP] No-wait call to {Url} was cut off after {ElapsedMs}ms: the application is stopping.",
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), urlForLog, callStopwatch.ElapsedMilliseconds);
+                    return null;
+                }
+                // Any other call runs on the run's token: its caller left, or every caller waiting on
+                // its cache fill did. Nobody waits for the answer, so the run stops. A call's own
+                // timeout cancels another token and gives the query status_code 0 below.
+                throw;
             }
             catch (Exception ex)
             {
@@ -1175,15 +1221,14 @@ namespace DBToRestAPI.Controllers
         /// </summary>
         /// <remarks>
         /// The documented values are <c>array</c> and <c>file</c>, and leaving the tag out gives the
-        /// row-count shape. From 1.7.8 <c>single</c> and <c>auto</c> are read as that shape, and
-        /// ResponseStructureWarning asks the author to drop them. <c>single</c> returned the first
-        /// row of any result, and it was mostly set on queries that return one row anyway. Reading
+        /// row-count shape. <c>single</c> and <c>auto</c> are read as that shape. <c>single</c> returned
+        /// the first row of any result, and it was mostly set on queries that return one row anyway. Reading
         /// only the first row loses an error raised after the rows, and reading to the end to find
         /// it cost every <c>single</c> route its whole result, so the engine follows the row count
         /// instead; a <c>single</c> query that does return many rows now answers (and, with
         /// <c>cache</c>, caches) all of them. A global <c>response_structure</c> under
         /// <c>settings</c>, which earlier versions applied to every route without its own tag, is
-        /// not read from 1.7.8 (the warning reports one that is still set).
+        /// not read.
         /// </remarks>
         internal static string ResolveResponseStructure(string? routeValue)
         {

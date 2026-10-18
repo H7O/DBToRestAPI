@@ -66,7 +66,7 @@ namespace DBToRestAPI.Middlewares
                     AutoReplenishment = false,
                 }));
 
-        /// <summary>Configuration problems are logged once per distinct message, not once per request. Keys are config-derived, never request-derived.</summary>
+        /// <summary>The trusted-header notice and each fault are logged once per distinct message, not once per request. Keys are config-derived, never request-derived.</summary>
         private readonly ConcurrentDictionary<string, byte> _warned = new();
 
         /// <summary>Rejections are summarised per endpoint at most once a minute; see <see cref="NoteRejection"/>.</summary>
@@ -115,20 +115,16 @@ namespace DBToRestAPI.Middlewares
 
             try
             {
-                var warnings = new List<string>();
-                policy = _resolver.Resolve(section, warnings);
+                policy = _resolver.Resolve(section);
 
                 if (policy is not null)
                 {
-                    caller = ResolveCaller(context, section, policy, warnings);
+                    caller = ResolveCaller(context, section, policy);
                     var key = new RateLimitPartitionKey(endpointPath, caller, policy.MaxRequests, policy.WindowSeconds);
 
                     using var lease = _limiter.AttemptAcquire(key);
                     rejected = !lease.IsAcquired;
                 }
-
-                foreach (var warning in warnings)
-                    WarnOnce(warning);
             }
             catch (Exception ex)
             {
@@ -171,9 +167,9 @@ namespace DBToRestAPI.Middlewares
             #endregion
         }
 
-        private string ResolveCaller(HttpContext context, IConfigurationSection section, RateLimitPolicy policy, List<string> warnings)
+        private string ResolveCaller(HttpContext context, IConfigurationSection section, RateLimitPolicy policy)
         {
-            var clientIpSettings = _resolver.ResolveClientIpSettings(warnings);
+            var clientIpSettings = _resolver.ResolveClientIpSettings();
             if (clientIpSettings.ClientIpHeader is not null)
                 WarnOnce($"rate limiting trusts header `{clientIpSettings.ClientIpHeader}` (client_ip_header_trusted_hops={clientIpSettings.TrustedHops}) for the client address; make sure only the proxy that sets it can reach this engine");
 

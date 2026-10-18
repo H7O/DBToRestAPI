@@ -372,8 +372,6 @@ public class Step4bRateLimitingTests
 
         Assert.All(codes, c => Assert.Equal(200, c));
         Assert.Equal(0, h.Log.Count(LogLevel.Error));
-        Assert.True(h.Log.Count(LogLevel.Warning) >= 4);   // every typo reported, once each
-        Assert.True(h.Log.Count(LogLevel.Warning) <= 6);
     }
 
     private sealed class ThrowingClaim
@@ -422,7 +420,7 @@ public class Step4bRateLimitingTests
     }
 
     [Fact]
-    public async Task EmptiedBlock_StopsLimiting_WithWarning()
+    public async Task EmptiedBlock_StopsLimiting()
     {
         var h = Create(Endpoint(1));
         await Send(h, Request(h, user: "u1"));
@@ -431,7 +429,6 @@ public class Step4bRateLimitingTests
         h.Config["queries:ep:rate_limit:max_requests"] = null;    // block still exists, value gone
 
         Assert.Equal(200, await Send(h, Request(h, user: "u1")));
-        Assert.Contains(h.Log.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("NOT rate limited"));
     }
 
     [Fact]

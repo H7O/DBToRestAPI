@@ -321,8 +321,28 @@ public class HttpRequestExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_Cancellation_ReturnsErrorResponse()
+    public async Task ExecuteAsync_Timeout_ReturnsErrorResponse()
     {
+        // A call's own timeout is answered, so the query can read status_code 0.
+        var handler = new MockHttpMessageHandler(async (request, ct) =>
+        {
+            await Task.Delay(10_000, ct);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        var executor = CreateExecutor(handler);
+
+        var response = await executor.ExecuteAsync(
+            """{"url": "https://example.com/api", "timeout_seconds": 1}""",
+            CancellationToken.None);
+
+        Assert.False(response.IsSuccess);
+        Assert.Equal(0, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CancelledByTheCaller_Throws()
+    {
+        // The caller's own token means nobody waits for the answer; a timeout is answered instead.
         // Arrange
         var handler = new MockHttpMessageHandler(async (request, ct) =>
         {
@@ -334,14 +354,10 @@ public class HttpRequestExecutorTests
         var cts = new CancellationTokenSource();
         cts.CancelAfter(50);
 
-        // Act
-        var response = await executor.ExecuteAsync(
+        // Act and assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => executor.ExecuteAsync(
             """{"url": "https://example.com/api"}""",
-            cts.Token);
-
-        // Assert
-        Assert.False(response.IsSuccess);
-        Assert.Contains("cancelled", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+            cts.Token));
     }
 
     [Fact]

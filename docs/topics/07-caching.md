@@ -19,6 +19,8 @@ Cache API responses to improve performance and reduce database load.
 
 Response cached for 60 seconds.
 
+The duration is in milliseconds, under `<memory>`. A tag the engine doesn't read, such as a misspelled or misplaced duration, is ignored without a word. A route whose `<cache>` has no `<memory>` block is not cached, and runs its query on every request. A `<memory>` block without a duration the engine reads takes the global default from `settings.xml` (`<settings><cache><memory><duration_in_milliseconds>`), and without one the route is not cached either. To check that a route is cached, add the current time as a column while you test (`strftime('%Y-%m-%d %H:%M:%f', 'now') AS checked_at` on SQLite, `SYSDATETIME() AS checked_at` on SQL Server) and call it twice within the duration: a cached route answers the same time both times. This checks that the route is cached, not for how long.
+
 Only GET and HEAD requests use the cache. Any other verb always runs the query and leaves the cached entry alone, so an endpoint with no `<verb>` can still take writes.
 
 ## Cache Invalidators
@@ -147,7 +149,7 @@ For an API gateway route, the key is the route, the verb, the requested path, an
 
 ### Requests that arrive while the query runs
 
-A request with the same key that arrives while the first one's query runs waits for that query instead of running its own, and gets its result. The query keeps running for the callers still waiting when the caller who started it disconnects, and stops only when all of them have gone. Its command timeout (`db_command_timeout`) still applies, as does a gateway route's `target_route_timeout_seconds`.
+A request with the same key that arrives while the first one's query runs waits for that query instead of running its own, and gets its result. The query keeps running for the callers still waiting when the caller who started it disconnects, and stops only when all of them have gone. On a query route, a caller who disconnects is logged as one `Information` line naming the route; on a gateway route, nothing is logged. Its command timeout (`db_command_timeout`) still applies, as does a gateway route's `target_route_timeout_seconds`.
 
 On a gateway route, a response that is not stored (an excluded status, or a `Set-Cookie` header) goes only to the caller whose request was forwarded, and each caller who waited for it is forwarded on its own.
 

@@ -194,7 +194,7 @@ curl -X POST http://localhost:5000/support-requests \
 | Body over `max_payload_size_in_bytes` | `413` | `{"success":false,"message":"The request body could not be read."}` |
 | Any other database error | `400` | `{"success":false,"message":"An error occurred while processing your request."}` |
 
-In each of these cases the engine deletes every file the request stored. The exceptions are rare, such as a write that failed part-way ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
+In each of these cases the engine deletes every file the request stored. The exceptions are rare, such as an upload to an SFTP store with `overwrite_existing_files` on that failed part-way ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
 
 ## Request formats
 
@@ -474,8 +474,7 @@ IF NOT EXISTS (
 Tracked in [TODO.md](../../TODO.md):
 
 - With `overwrite_existing_files` on, a failed request deletes the file it overwrote.
-- A write that failed part-way can leave a partial file ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
-- The silent failures above are not reported at start-up.
+- A write that failed part-way can leave a partial file in an optional store, or in an SFTP store with `overwrite_existing_files` on ([rollback limits](../reference/errors.md#when-uploads-are-rolled-back)).
 - The OpenAPI document has no request schema for upload endpoints.
 
 ## Related

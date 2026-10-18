@@ -160,7 +160,6 @@ WHERE f.id = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}}) AND r.owner_id = {auth{user_i
 Tracked in [TODO.md](../../TODO.md):
 
 - `<cache>` on a file route breaks the download.
-- A missing or unknown `<store>` is a `404` at request time, not a start-up warning.
 - The `http` source has no host allow-list.
 
 ## Related

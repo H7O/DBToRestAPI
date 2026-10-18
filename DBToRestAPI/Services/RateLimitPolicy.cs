@@ -60,7 +60,7 @@ public readonly record struct RateLimitPartitionKey(string EndpointPath, string 
 /// Every value is read as text and parsed here rather than through <c>GetValue&lt;T&gt;</c>, because
 /// the configuration binder throws on a non-numeric value and a throw on this path would turn a
 /// typo in settings.xml into a 500 on every request. Anything that does not parse is treated as
-/// "not set" at that level and reported through <c>warnings</c>, so the caller can log it once.
+/// "not set" at that level.
 /// </summary>
 public sealed class RateLimitPolicyResolver(IConfiguration globalConfiguration)
 {
@@ -74,27 +74,25 @@ public sealed class RateLimitPolicyResolver(IConfiguration globalConfiguration)
     /// The effective policy for <paramref name="endpoint"/>, or null when the endpoint is not limited
     /// (no block anywhere, <c>enabled</c> resolves to false, or no valid <c>max_requests</c> resolves).
     /// </summary>
-    public RateLimitPolicy? Resolve(IConfigurationSection endpoint, ICollection<string> warnings)
+    public RateLimitPolicy? Resolve(IConfigurationSection endpoint)
     {
-        var endpointPath = endpoint.Path;
-        var ep = Block(endpoint.GetSection(SectionName), endpointPath, warnings);
-        var gl = Block(_global.GetSection(SectionName), "settings", warnings);
+        var ep = Block(endpoint.GetSection(SectionName));
+        var gl = Block(_global.GetSection(SectionName));
 
         if (ep is null && gl is null)
             return null;
 
-        // Per-tag resolution: endpoint → global → default. Every tag is read before anything is
-        // decided so that all typos are reported together, not one per edit-and-retry.
-        var enabled = ReadBool(ep, "enabled", warnings) ?? ReadBool(gl, "enabled", warnings) ?? true;
+        // Per-tag resolution: endpoint → global → default.
+        var enabled = ReadBool(ep, "enabled") ?? ReadBool(gl, "enabled") ?? true;
 
-        var maxRequests = ReadPositiveInt(ep, "max_requests", int.MaxValue, warnings)
-            ?? ReadPositiveInt(gl, "max_requests", int.MaxValue, warnings);
+        var maxRequests = ReadPositiveInt(ep, "max_requests", int.MaxValue)
+            ?? ReadPositiveInt(gl, "max_requests", int.MaxValue);
 
-        var windowSeconds = ReadPositiveInt(ep, "window_seconds", MaxWindowSeconds, warnings)
-            ?? ReadPositiveInt(gl, "window_seconds", MaxWindowSeconds, warnings)
+        var windowSeconds = ReadPositiveInt(ep, "window_seconds", MaxWindowSeconds)
+            ?? ReadPositiveInt(gl, "window_seconds", MaxWindowSeconds)
             ?? DefaultWindowSeconds;
 
-        var per = ReadPer(ep, warnings) ?? ReadPer(gl, warnings) ?? RateLimitPer.Caller;
+        var per = ReadPer(ep) ?? ReadPer(gl) ?? RateLimitPer.Caller;
 
         var message = ReadText(ep, "message") ?? ReadText(gl, "message");
 
@@ -104,18 +102,15 @@ public sealed class RateLimitPolicyResolver(IConfiguration globalConfiguration)
             return null;
 
         if (maxRequests is null)
-        {
-            warnings.Add($"`{endpointPath}`: a <{SectionName}> block is present but no valid <max_requests> resolves at endpoint or global level, so the endpoint is NOT rate limited");
             return null;
-        }
 
         return new RateLimitPolicy(maxRequests.Value, windowSeconds, per, message);
     }
 
     /// <summary>The global client-IP settings (these have no per-endpoint form).</summary>
-    public RateLimitClientIpSettings ResolveClientIpSettings(ICollection<string> warnings)
+    public RateLimitClientIpSettings ResolveClientIpSettings()
     {
-        var gl = Block(_global.GetSection(SectionName), "settings", warnings);
+        var gl = Block(_global.GetSection(SectionName));
         if (gl is null)
             return RateLimitClientIpSettings.None;
 
@@ -123,7 +118,7 @@ public sealed class RateLimitPolicyResolver(IConfiguration globalConfiguration)
         if (header is null)
             return RateLimitClientIpSettings.None;
 
-        var hops = ReadPositiveInt(gl, "client_ip_header_trusted_hops", 64, warnings) ?? 1;
+        var hops = ReadPositiveInt(gl, "client_ip_header_trusted_hops", 64) ?? 1;
         return new RateLimitClientIpSettings(header, hops);
     }
 
@@ -131,22 +126,16 @@ public sealed class RateLimitPolicyResolver(IConfiguration globalConfiguration)
 
     /// <summary>
     /// The block to read, or null when absent. Two <c>&lt;rate_limit&gt;</c> siblings are indexed by
-    /// the XML provider as <c>rate_limit:0</c> and <c>rate_limit:1</c>; the first is used and the
-    /// duplication is reported, because otherwise every value would silently read as "not set".
+    /// the XML provider as <c>rate_limit:0</c> and <c>rate_limit:1</c>; the first is used, because
+    /// otherwise every value would read as "not set".
     /// </summary>
-    private static IConfigurationSection? Block(IConfigurationSection section, string owner, ICollection<string> warnings)
+    private static IConfigurationSection? Block(IConfigurationSection section)
     {
         if (!section.Exists())
             return null;
 
         var first = section.GetSection("0");
-        if (first.Exists())
-        {
-            warnings.Add($"`{owner}`: more than one <{SectionName}> block is defined; only the first is used");
-            return first;
-        }
-
-        return section;
+        return first.Exists() ? first : section;
     }
 
     private static string? ReadText(IConfigurationSection? block, string key)
@@ -155,52 +144,22 @@ public sealed class RateLimitPolicyResolver(IConfiguration globalConfiguration)
         return string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
     }
 
-    private static int? ReadPositiveInt(IConfigurationSection? block, string key, int max, ICollection<string> warnings)
+    private static int? ReadPositiveInt(IConfigurationSection? block, string key, int max)
     {
-        if (block is null)
-            return null;
-
-        var raw = block.GetSection(key).Value;
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-
-        if (TryParsePositiveInt(raw, max, out var value))
-            return value;
-
-        warnings.Add($"`{block.Path}:{key}` = `{Sanitize(raw)}` is not a whole number between 1 and {max}; treated as not set");
-        return null;
+        var raw = ReadText(block, key);
+        return raw is not null && TryParsePositiveInt(raw, max, out var value) ? value : null;
     }
 
-    private static bool? ReadBool(IConfigurationSection? block, string key, ICollection<string> warnings)
+    private static bool? ReadBool(IConfigurationSection? block, string key)
     {
-        if (block is null)
-            return null;
-
-        var raw = block.GetSection(key).Value;
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-
-        if (TryParseBool(raw, out var value))
-            return value;
-
-        warnings.Add($"`{block.Path}:{key}` = `{Sanitize(raw)}` is not true/false; treated as not set");
-        return null;
+        var raw = ReadText(block, key);
+        return raw is not null && TryParseBool(raw, out var value) ? value : null;
     }
 
-    private static RateLimitPer? ReadPer(IConfigurationSection? block, ICollection<string> warnings)
+    private static RateLimitPer? ReadPer(IConfigurationSection? block)
     {
-        if (block is null)
-            return null;
-
-        var raw = block.GetSection("per").Value;
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-
-        if (TryParsePer(raw, out var value))
-            return value;
-
-        warnings.Add($"`{block.Path}:per` = `{Sanitize(raw)}` is not one of caller/ip/endpoint; treated as not set");
-        return null;
+        var raw = ReadText(block, "per");
+        return raw is not null && TryParsePer(raw, out var value) ? value : null;
     }
 
     internal static bool TryParsePositiveInt(string raw, int max, out int value)
@@ -235,12 +194,5 @@ public sealed class RateLimitPolicyResolver(IConfiguration globalConfiguration)
             case "endpoint": value = RateLimitPer.Endpoint; return true;
             default: value = RateLimitPer.Caller; return false;
         }
-    }
-
-    /// <summary>Config values end up in log lines; keep them to one short printable line.</summary>
-    private static string Sanitize(string raw)
-    {
-        var oneLine = raw.Replace('\r', ' ').Replace('\n', ' ').Trim();
-        return oneLine.Length <= 40 ? oneLine : oneLine[..40] + "…";
     }
 }
