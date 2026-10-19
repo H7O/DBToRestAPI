@@ -44,8 +44,9 @@ namespace DBToRestAPI.Middlewares
         {
 
             #region log the time and the middleware name
-            this._logger.LogDebug("{time}: in Step5JwtAuthorization middleware",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
+            if (this._logger.IsEnabled(LogLevel.Debug))
+                this._logger.LogDebug("{time}: in Step5JwtAuthorization middleware",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
             #endregion
 
             #region if no section passed from the previous middlewares, return 500

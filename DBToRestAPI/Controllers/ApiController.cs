@@ -162,8 +162,9 @@ namespace DBToRestAPI.Controllers
         public async Task<IActionResult> Index()
         {
             #region log the time and the method name
-            this._logger.LogDebug("{time}: in ApiController.Index method",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
+            if (this._logger.IsEnabled(LogLevel.Debug))
+                this._logger.LogDebug("{time}: in ApiController.Index method",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
             #endregion
 
             #region if no section passed from the previous middlewares, return 500
@@ -352,9 +353,10 @@ namespace DBToRestAPI.Controllers
                 .DistinctBy(m => m.Value)
                 .ToList();
 
-            _logger.LogDebug(
-                "{Time}: [EmbeddedHTTP] Route: {Route} — Found {Count} distinct {{http{{...}}http}} markers in query (regex match took {ElapsedMs}ms)",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, distinctMatches.Count, overallStopwatch.ElapsedMilliseconds);
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
+                    "{Time}: [EmbeddedHTTP] Route: {Route} — Found {Count} distinct {{http{{...}}http}} markers in query (regex match took {ElapsedMs}ms)",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, distinctMatches.Count, overallStopwatch.ElapsedMilliseconds);
 
             if (distinctMatches.Count < 1)
             {

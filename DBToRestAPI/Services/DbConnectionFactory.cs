@@ -12,6 +12,9 @@ public class DbConnectionFactory
     // The provider inferred from each connection string. Keyed by the string itself, so an edited
     // connection string is inferred afresh without a restart.
     private readonly ConcurrentDictionary<string, string> _inferredProviders = new();
+    // Each connection string as its provider is given it (see NormalizeConnectionStringPaths), worked
+    // out once per provider and string rather than parsed again for every connection.
+    private readonly ConcurrentDictionary<(string Provider, string ConnectionString), string> _normalizedConnectionStrings = new();
 
     // Track active connections for diagnostics
     private static int _activeConnectionCount = 0;
@@ -77,7 +80,8 @@ public class DbConnectionFactory
         var connection = factory.CreateConnection()
             ?? throw new InvalidOperationException($"Failed to create connection for provider '{provider}'");
 
-        connection.ConnectionString = NormalizeConnectionStringPaths(provider, connectionString);
+        connection.ConnectionString = _normalizedConnectionStrings.GetOrAdd((provider, connectionString),
+            key => NormalizeConnectionStringPaths(key.Provider, key.ConnectionString));
 
         // SQLite accepts RAISE() only in a trigger: raise_error(50404, 'Not found') works anywhere.
         if (connection is Microsoft.Data.Sqlite.SqliteConnection sqlite)
@@ -86,11 +90,12 @@ public class DbConnectionFactory
         // Wrap connection to track disposal
         var trackedConnection = new TrackedDbConnection(connection, _logger, connectionStringName);
         var count = Interlocked.Increment(ref _activeConnectionCount);
-        _logger.LogDebug(
-            "{Time}: Connection CREATED for '{ConnectionStringName}'. Active connections: {Count}",
-            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-            connectionStringName,
-            count);
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug(
+                "{Time}: Connection CREATED for '{ConnectionStringName}'. Active connections: {Count}",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                connectionStringName,
+                count);
 
         return trackedConnection;
     }
@@ -204,7 +209,7 @@ internal class TrackedDbConnection : DbConnection
         _inner = inner;
         _logger = logger;
         _connectionStringName = connectionStringName;
-        _createdAt = DateTime.Now;
+        _createdAt = DateTime.UtcNow;
     }
 
     public override string ConnectionString
@@ -278,17 +283,18 @@ internal class TrackedDbConnection : DbConnection
             if (disposing)
                 RollBackAnOpenSqliteTransaction();
             _disposed = true;
-            var lifetime = DateTime.Now - _createdAt;
+            var lifetime = DateTime.UtcNow - _createdAt;
             DbConnectionFactory.DecrementConnectionCount();
             var count = DbConnectionFactory.ActiveConnectionCount;
 
-            _logger.LogDebug(
-                "{Time}: Connection DISPOSED for '{ConnectionStringName}'. " +
-                "Lifetime: {Lifetime}ms. Active connections: {Count}",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                _connectionStringName,
-                lifetime.TotalMilliseconds.ToString("F0"),
-                count);
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
+                    "{Time}: Connection DISPOSED for '{ConnectionStringName}'. " +
+                    "Lifetime: {Lifetime}ms. Active connections: {Count}",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    _connectionStringName,
+                    lifetime.TotalMilliseconds.ToString("F0"),
+                    count);
 
             if (disposing)
             {
@@ -304,17 +310,18 @@ internal class TrackedDbConnection : DbConnection
         {
             RollBackAnOpenSqliteTransaction();
             _disposed = true;
-            var lifetime = DateTime.Now - _createdAt;
+            var lifetime = DateTime.UtcNow - _createdAt;
             DbConnectionFactory.DecrementConnectionCount();
             var count = DbConnectionFactory.ActiveConnectionCount;
 
-            _logger.LogDebug(
-                "{Time}: Connection DISPOSED (async) for '{ConnectionStringName}'. " +
-                "Lifetime: {Lifetime}ms. Active connections: {Count}",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                _connectionStringName,
-                lifetime.TotalMilliseconds.ToString("F0"),
-                count);
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
+                    "{Time}: Connection DISPOSED (async) for '{ConnectionStringName}'. " +
+                    "Lifetime: {Lifetime}ms. Active connections: {Count}",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    _connectionStringName,
+                    lifetime.TotalMilliseconds.ToString("F0"),
+                    count);
 
             await _inner.DisposeAsync();
         }

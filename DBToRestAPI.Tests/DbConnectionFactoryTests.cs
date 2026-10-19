@@ -49,6 +49,44 @@ public class DbConnectionFactoryTests
         Assert.Equal("SqlConnection", ProviderConnectionType(factory, "main"));
     }
 
+    private static string ProviderConnectionString(DbConnectionFactory factory, string name)
+    {
+        using var connection = factory.Create(name);
+        return ((TrackedDbConnection)connection).Inner.ConnectionString;
+    }
+
+    [Fact]
+    public void AnEditedConnectionString_ReachesTheConnection()
+    {
+        var (configuration, factory) = FactoryFor(new()
+        {
+            ["ConnectionStrings:main"] = "Data Source=one.db",
+            ["ConnectionStrings:main:provider"] = "Microsoft.Data.Sqlite",
+        });
+        Assert.Contains(Path.Combine(AppContext.BaseDirectory, "one.db"), ProviderConnectionString(factory, "main"));
+        Assert.Contains(Path.Combine(AppContext.BaseDirectory, "one.db"), ProviderConnectionString(factory, "main"));
+
+        configuration["ConnectionStrings:main"] = "Data Source=two.db";
+
+        Assert.Contains(Path.Combine(AppContext.BaseDirectory, "two.db"), ProviderConnectionString(factory, "main"));
+    }
+
+    [Fact]
+    public void AnEditedProviderAttribute_ReadsTheSameConnectionStringAsItsOwn()
+    {
+        // "Data Source" is a file for SQLite, made absolute, and a server name for SQL Server, left as it is.
+        var (configuration, factory) = FactoryFor(new()
+        {
+            ["ConnectionStrings:main"] = "Data Source=shop.db",
+            ["ConnectionStrings:main:provider"] = "Microsoft.Data.Sqlite",
+        });
+        Assert.Contains(Path.Combine(AppContext.BaseDirectory, "shop.db"), ProviderConnectionString(factory, "main"));
+
+        configuration["ConnectionStrings:main:provider"] = "Microsoft.Data.SqlClient";
+
+        Assert.Equal("Data Source=shop.db", ProviderConnectionString(factory, "main"));
+    }
+
     [Fact]
     public void Sqlite_RelativePath_BecomesAbsolute()
     {

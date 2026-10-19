@@ -51,8 +51,9 @@ namespace DBToRestAPI.Middlewares
 
             #region log the time and the middleware name
 
-            this._logger.LogDebug("{time}: in Step5MandatoryFieldsCheck middleware",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
+            if (this._logger.IsEnabled(LogLevel.Debug))
+                this._logger.LogDebug("{time}: in Step5MandatoryFieldsCheck middleware",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
 
             #endregion
 

@@ -34,7 +34,11 @@ The report is written to `results/<date-time>.md`. Run it from a `pwsh` prompt: 
    leaving out the server CPU's hyper-threading sibling.
 3. Asks each server for every scenario once and compares the two answers. A difference is reported
    at the top of the results.
-4. For each scenario, database and connection count: a warmup (3 s), then a measured run (10 s).
+4. Loads each server for at least two minutes (`-ServerWarmupSeconds`), through every scenario, 10
+   seconds each, and reports none of it. The .NET runtime compiles a hot method a second time,
+   optimized, only once no new method has been compiled for a moment. Under full load on one CPU
+   that takes about a minute, and until then a server runs at half its speed or less.
+5. For each scenario, database and connection count: a warmup (3 s), then a measured run (10 s).
    The load generator keeps that many connections busy, each sending its next request as soon as
    the last one is answered.
 
@@ -63,20 +67,27 @@ every request would cost more than the request itself.
 ## Results
 
 The full tables are in [results/](results/). The latest run, from 32 connections, each server on
-one logical CPU of a Ryzen 7 5800H laptop under Windows:
+one logical CPU of a Ryzen 7 5800H laptop under Windows (each cell: DbToRestAPI / Minimal API):
 
-| Scenario | SQLite: DbToRestAPI / Minimal API req/s | SQL Server: DbToRestAPI / Minimal API req/s |
-|---|---:|---:|
-| `SELECT 1` | 3,597 / 28,918 | 5,400 / 11,199 |
-| One row by id | 4,937 / 22,947 | 4,470 / 10,599 |
-| 100 rows | 2,484 / 6,661 | 1,864 / 5,151 |
-| 1,000 rows | 421 / 910 | 366 / 674 |
-| Insert from a JSON body | 1,292 / 1,481 | 3,638 / 9,098 |
+| Scenario | SQLite req/s | SQLite CPU per request (µs) | SQL Server req/s | SQL Server CPU per request (µs) |
+|---|---:|---:|---:|---:|
+| `SELECT 1` | 9,945 / 33,089 | 100 / 29 | 5,930 / 10,462 | 166 / 93 |
+| One row by id | 7,035 / 21,900 | 141 / 45 | 5,042 / 10,089 | 196 / 96 |
+| 100 rows | 2,690 / 6,356 | 369 / 157 | 2,012 / 4,981 | 495 / 199 |
+| 1,000 rows | 428 / 856 | 2,266 / 1,159 | 371 / 661 | 2,641 / 1,472 |
+| Insert from a JSON body | see below | | 3,988 / 11,559 | 244 / 81 |
 
-DbToRestAPI spends about 150 to 250 µs of CPU per request more than the hand-written endpoints, the
+DbToRestAPI spends about 70 to 100 µs of CPU per request more than the hand-written endpoints, the
 cost of what it does for every request: route matching, the API key, CORS, JWT and rate-limit
-checks, gathering parameters from every source, and reading the result into dynamic rows. That
-matters most for small, fast queries. The slower the query, the smaller the share: an insert on
-SQLite, which waits on the database's write lock, runs at 87% of the hand-written speed. A result
-of 1,000 rows costs about twice the hand-written CPU, in serializing its rows. The engine's working
-set stays near 150 MB under load.
+checks, and gathering parameters from every source. That matters most for small, fast queries: the
+slower the query, the smaller the share. Each row costs about 1 µs more, in reading it into a
+dynamic row and serializing it, so a result of 1,000 rows costs about twice the hand-written CPU.
+The engine's working set stays near 150 MB under load.
+
+SQLite inserts from 32 connections are left out of the table. SQLite lets one connection write at
+a time, and Microsoft.Data.Sqlite waits 150 ms before it retries a write that found the database
+locked. How often writes collide depends on how the operating system schedules the server's
+threads, so the result varies from run to run: in this run DbToRestAPI answered 192 inserts a
+second and the Minimal API 1,522, and in repeated 10-second runs of one DbToRestAPI build the rate
+went from 170 to 1,000. From one connection, where nothing collides, an insert runs at 84% of the
+hand-written speed (1,319 / 1,566 a second).

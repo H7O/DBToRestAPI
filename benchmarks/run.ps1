@@ -20,6 +20,8 @@ param(
     # A SQL Server instance reachable with Windows authentication. Leave it out to run SQLite only.
     [string]$SqlServer,
     [int[]]$Concurrency = @(1, 32),
+    # Load each server for at least this long, cycling through the scenarios, before measuring it.
+    [int]$ServerWarmupSeconds = 120,
     [int]$WarmupSeconds = 3,
     [int]$DurationSeconds = 10,
     [int]$Rows = 10000,
@@ -143,7 +145,18 @@ function Get-Answer($server, $db, $name) {
     "$status " + ($json | ConvertTo-Json -Depth 20 -Compress)
 }
 
+function Get-RunArguments($server, $process, $db, $name, $c, $warmup, $duration, $file) {
+    $s = $scenarios[$name]
+    $run = @('run', '--server', $server.Name, '--db', $db, '--scenario', $name,
+        '--url', "http://127.0.0.1:$($server.Port)/bench/$db/$($s.Path)", '--method', $s.Method,
+        '--concurrency', $c, '--warmup', $warmup, '--duration', $duration, '--rows', $Rows,
+        '--pid', $process.Id, '--affinity', $clientMask, '--out', $file)
+    if ($s.ContainsKey('Body')) { $run += @('--body', $s.Body) }
+    $run
+}
+
 $results = Join-Path $out "results-$stamp.jsonl"
+$warmupResults = Join-Path $out "warmup-$stamp.jsonl"
 $answers = @{}
 foreach ($server in $servers) {
     Write-Host "Starting $($server.Label)..."
@@ -152,15 +165,25 @@ foreach ($server in $servers) {
         foreach ($db in $databases) {
             foreach ($name in $selected) { $answers["$($server.Name)|$db|$name"] = Get-Answer $server $db $name }
         }
+        # The runtime compiles a method again, optimized, only once it has been called for a while, and
+        # it waits until no new method has been compiled for a moment. Under full load on one CPU, a
+        # server gets its steady speed only after about a minute: before that it runs at half of it or
+        # less. So each server is loaded first, through every scenario, and these runs aren't reported.
+        $warmedFor = 0
+        while ($warmedFor -lt $ServerWarmupSeconds) {
+            if ($warmedFor -eq 0) { Write-Host "  warming up for at least $ServerWarmupSeconds s..." }
+            foreach ($db in $databases) {
+                foreach ($name in $selected) {
+                    $run = Get-RunArguments $server $process $db $name ($Concurrency | Measure-Object -Maximum).Maximum 0 10 $warmupResults
+                    Invoke-LoadGenerator @run | Out-Null
+                    $warmedFor += 10
+                }
+            }
+        }
         foreach ($db in $databases) {
             foreach ($name in $selected) {
-                $s = $scenarios[$name]
                 foreach ($c in $Concurrency) {
-                    $run = @('run', '--server', $server.Name, '--db', $db, '--scenario', $name,
-                        '--url', "http://127.0.0.1:$($server.Port)/bench/$db/$($s.Path)", '--method', $s.Method,
-                        '--concurrency', $c, '--warmup', $WarmupSeconds, '--duration', $DurationSeconds, '--rows', $Rows,
-                        '--pid', $process.Id, '--affinity', $clientMask, '--out', $results)
-                    if ($s.ContainsKey('Body')) { $run += @('--body', $s.Body) }
+                    $run = Get-RunArguments $server $process $db $name $c $WarmupSeconds $DurationSeconds $results
                     $line = Invoke-LoadGenerator @run | ConvertFrom-Json
                     Write-Host ("  {0,-9} {1,-9} c={2,-3} {3,9:N0} req/s  p50 {4,7:N2} ms  p99 {5,7:N2} ms  errors {6}" -f `
                         $db, $name, $c, $line.rps, $line.p50_ms, $line.p99_ms, $line.errors)
@@ -200,7 +223,7 @@ $md.Add('')
 $md.Add("- Machine: $cpuName, $cpus logical CPUs, $([math]::Round((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory / 1GB)) GB, $([Runtime.InteropServices.RuntimeInformation]::OSDescription.Trim()).")
 $md.Add("- Runtime: $runtime. Each server pinned to logical CPU $ServerCpu with ``DOTNET_PROCESSOR_COUNT=1``; the load generator on the other CPUs, the database wherever its own service runs.")
 if ($SqlServer) { $md.Add("- SQL Server: $sqlServerVersion, on the same machine.") }
-$md.Add("- $Rows contacts. Each run: $WarmupSeconds s warmup, then $DurationSeconds s measured, from 1 and from $(($Concurrency | Measure-Object -Maximum).Maximum) connections.")
+$md.Add("- $Rows contacts. Each server first loaded for at least $ServerWarmupSeconds s, through every scenario, not reported. Then each run: $WarmupSeconds s warmup, then $DurationSeconds s measured, from 1 and from $(($Concurrency | Measure-Object -Maximum).Maximum) connections.")
 $md.Add('- CPU per request is the server process''s CPU time divided by the requests it answered: what a request costs on a 1 vCPU machine.')
 if ($mismatches) { $md.Add(''); $md.Add('**The servers'' answers differed:**'); $md.Add(''); $mismatches | ForEach-Object { $md.Add($_) } }
 

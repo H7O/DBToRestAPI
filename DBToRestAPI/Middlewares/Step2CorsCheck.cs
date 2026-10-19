@@ -45,8 +45,9 @@ public class Step2CorsCheck(
     public async Task InvokeAsync(HttpContext context)
     {
         #region log the time and the middleware name
-        this._logger.LogDebug("{time}: in Step2_CorsCheck middleware",
-            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
+        if (this._logger.IsEnabled(LogLevel.Debug))
+            this._logger.LogDebug("{time}: in Step2_CorsCheck middleware",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
         #endregion
 
 
@@ -382,16 +383,23 @@ public class Step2CorsCheck(
             return _defaultMethods;
         }
 
-        var verbs = verb.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(v => v.ToUpperInvariant())
-            .ToHashSet();
+        var methods = _methodsOfVerb.GetOrAdd((verb, System.Globalization.CultureInfo.CurrentCulture.Name), key =>
+        {
+            var verbs = key.Verb.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(v => v.ToUpperInvariant())
+                .ToHashSet();
 
-        verbs.Add("OPTIONS");
+            verbs.Add("OPTIONS");
 
-        var methods = string.Join(", ", verbs.OrderBy(v => v));
+            return string.Join(", ", verbs.OrderBy(v => v));
+        });
         this._logger.LogDebug("CORS: Using route-specific allowed methods: {methods}", methods);
         return methods;
     }
+
+    // The allowed methods for each verb setting, worked out once per setting (and culture, which
+    // orders them).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Verb, string Culture), string> _methodsOfVerb = new();
 
     /// <summary>
     /// Gets the allowed HTTP methods by aggregating verbs from ALL matching route sections.

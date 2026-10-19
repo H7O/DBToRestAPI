@@ -62,8 +62,9 @@ public class Step1ServiceTypeChecks(
 
 
         #region log the time and the middleware name
-        this._logger.LogDebug("{time}: in Step2ServiceTypeChecks middleware",
-            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
+        if (this._logger.IsEnabled(LogLevel.Debug))
+            this._logger.LogDebug("{time}: in Step2ServiceTypeChecks middleware",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
         #endregion
 
         // Retrieve the route data

@@ -120,4 +120,37 @@ public class ConfigurationReloadTests : IDisposable
         Assert.NotNull(gateway.ResolveRoute("two"));
         Assert.True(keys.IsValidApiKey("second", "k2"));
     }
+
+    [Fact]
+    public void ASection_HandsOutTheSectionsALookupByPathGives()
+    {
+        var (_, engine) = Load(keyFolder: true, Queries(("a", "SELECT 1")));
+        var queries = engine.GetSection("queries");
+
+        Assert.Same(engine.GetSection("queries:a"), queries.GetSection("a"));
+        Assert.Same(engine.GetSection("queries:a"), queries.GetSection("A"));
+        Assert.Same(engine.GetSection("queries:a:query"), queries.GetSection("a:query"));
+        Assert.Equal("SELECT 1", queries.GetSection("a").GetSection("query").Value);
+
+        var missing = queries.GetSection("b");
+        Assert.Null(missing.Value);
+        Assert.Equal("queries:b", missing.Path);
+        Assert.Same(missing, queries.GetSection("b"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ASectionKeptAcrossAReload_HandsOutTheNewConfiguration(bool keyFolder)
+    {
+        var (root, engine) = Load(keyFolder, Queries(("a", "SELECT 1")));
+        var queries = engine.GetSection("queries");
+        Assert.Equal("SELECT 1", queries.GetSection("a").GetSection("query").Value);
+
+        Save(Queries(("a", "SELECT 2"), ("b", "SELECT 3")));
+        Reload(root);
+
+        Assert.Equal("SELECT 2", queries.GetSection("a").GetSection("query").Value);
+        Assert.Equal("SELECT 3", queries.GetSection("b").GetSection("query").Value);
+    }
 }

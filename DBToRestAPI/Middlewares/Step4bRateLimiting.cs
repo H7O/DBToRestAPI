@@ -77,8 +77,9 @@ namespace DBToRestAPI.Middlewares
         public async Task InvokeAsync(HttpContext context)
         {
             #region log the time and the middleware name
-            this._logger.LogDebug("{time}: in Step4bRateLimiting middleware",
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
+            if (this._logger.IsEnabled(LogLevel.Debug))
+                this._logger.LogDebug("{time}: in Step4bRateLimiting middleware",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"));
             #endregion
 
             #region if no section passed from the previous middlewares, return 500

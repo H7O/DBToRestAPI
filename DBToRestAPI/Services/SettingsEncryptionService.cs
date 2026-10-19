@@ -399,17 +399,26 @@ public class SettingsEncryptionService : IEncryptedConfiguration
     {
         var newCache = new Dictionary<string, ConfigurationSectionWrapper>(StringComparer.OrdinalIgnoreCase);
         var newRootChildren = new List<ConfigurationSectionWrapper>();
+        var build = _sectionCacheBuild + 1;
 
         // Build cache recursively starting from root
         BuildSectionCacheRecursive(
             _mergedConfiguration,
             parentPath: "",
             parentChildrenList: newRootChildren,
-            cache: newCache);
+            cache: newCache,
+            build);
 
         _sectionCache = newCache;
         _rootChildren = newRootChildren;
+        Volatile.Write(ref _sectionCacheBuild, build);
     }
+
+    // The build the section cache holds now (see ConfigurationSectionWrapper.GetSection). Rebuilds run
+    // under _reloadLock, one at a time.
+    private int _sectionCacheBuild;
+
+    internal int SectionCacheBuild => Volatile.Read(ref _sectionCacheBuild);
 
     /// <summary>
     /// Recursively builds section wrappers for all configuration paths.
@@ -418,7 +427,8 @@ public class SettingsEncryptionService : IEncryptedConfiguration
         IConfiguration mergedConfig,
         string parentPath,
         List<ConfigurationSectionWrapper> parentChildrenList,
-        Dictionary<string, ConfigurationSectionWrapper> cache)
+        Dictionary<string, ConfigurationSectionWrapper> cache,
+        int build)
     {
         var mergedChildren = mergedConfig.GetChildren().ToList();
 
@@ -433,14 +443,15 @@ public class SettingsEncryptionService : IEncryptedConfiguration
             var wrapper = new ConfigurationSectionWrapper(
                 mergedChild,
                 childrenList,
-                this);
+                this,
+                build);
 
             // Add to cache and parent's children list
             cache[path] = wrapper;
             parentChildrenList.Add(wrapper);
 
             // Recurse into children
-            BuildSectionCacheRecursive(mergedChild, path, childrenList, cache);
+            BuildSectionCacheRecursive(mergedChild, path, childrenList, cache, build);
         }
     }
 
@@ -470,7 +481,8 @@ public class SettingsEncryptionService : IEncryptedConfiguration
             new ConfigurationSectionWrapper(
                 _mergedConfiguration.GetSection(key),
                 new List<ConfigurationSectionWrapper>(),
-                this));
+                this,
+                build: -1));
     }
 
     /// <summary>
@@ -979,15 +991,21 @@ internal class ConfigurationSectionWrapper : IConfigurationSection
     private readonly IConfigurationSection _mergedSection;
     private readonly List<ConfigurationSectionWrapper> _children;
     private readonly SettingsEncryptionService _parent;
+    // The section cache build this wrapper belongs to (-1 for a path the configuration doesn't have),
+    // and its children by key, made on the first GetSection.
+    private readonly int _build;
+    private Dictionary<string, ConfigurationSectionWrapper>? _childrenByKey;
 
     public ConfigurationSectionWrapper(
         IConfigurationSection mergedSection,
         List<ConfigurationSectionWrapper> children,
-        SettingsEncryptionService parent)
+        SettingsEncryptionService parent,
+        int build)
     {
         _mergedSection = mergedSection;
         _children = children;
         _parent = parent;
+        _build = build;
     }
 
     /// <summary>
@@ -1035,8 +1053,22 @@ internal class ConfigurationSectionWrapper : IConfigurationSection
     /// </summary>
     public IConfigurationSection GetSection(string key)
     {
+        // A wrapper of the current build hands out its own children: they are the wrappers the cache
+        // holds for their paths. One a reload has replaced asks the current cache, as does a key that
+        // isn't one of its children (a missing one, or a path such as "a:b").
+        if (_build == _parent.SectionCacheBuild
+            && (_childrenByKey ??= ChildrenByKey()).TryGetValue(key, out var child))
+            return child;
         var childPath = string.IsNullOrEmpty(Path) ? key : $"{Path}:{key}";
         return _parent.GetCachedSection(childPath);
+    }
+
+    private Dictionary<string, ConfigurationSectionWrapper> ChildrenByKey()
+    {
+        var byKey = new Dictionary<string, ConfigurationSectionWrapper>(_children.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var child in _children)
+            byKey.TryAdd(child.Key, child);
+        return byKey;
     }
 
     /// <summary>

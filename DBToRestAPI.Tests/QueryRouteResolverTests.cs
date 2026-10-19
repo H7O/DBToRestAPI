@@ -531,4 +531,68 @@ public class QueryRouteResolverTests
 
         Assert.True(stopwatch.ElapsedMilliseconds < 500, $"2,000 calls took {stopwatch.ElapsedMilliseconds} ms");
     }
+
+    // ──────────────────────────────────────────────
+    //  Each route is read with its own pattern, worked out when the routes load
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void SameRouteAndVerb_TheFirstListedAnswers()
+    {
+        var resolver = BuildResolver(new Dictionary<string, string?>
+        {
+            ["queries:ep_a:route"] = "items",
+            ["queries:ep_a:verb"] = "GET",
+            ["queries:ep_a:query"] = "SELECT 'a'",
+            ["queries:ep_b:route"] = "items",
+            ["queries:ep_b:verb"] = "GET",
+            ["queries:ep_b:query"] = "SELECT 'b'",
+        });
+
+        Assert.Equal("SELECT 'a'", resolver.ResolveRoute("items", "GET")?.GetValue<string>("query"));
+        Assert.Equal("SELECT 'a'", resolver.ResolveRoute("/ITEMS/", "GET")?.GetValue<string>("query"));
+    }
+
+    [Fact]
+    public void RoutesWithVariables_AreEachMatchedWithTheirOwnPattern()
+    {
+        var resolver = BuildResolver(new Dictionary<string, string?>
+        {
+            ["queries:brackets:route"] = "a/[[x]]/b",
+            ["queries:brackets:verb"] = "GET",
+            ["queries:brackets:route_variable_pattern"] = BracketsPattern,
+            ["queries:brackets:query"] = "SELECT 'brackets'",
+            ["queries:braces:route"] = "a/{{x}}/c",
+            ["queries:braces:verb"] = "GET",
+            ["queries:braces:query"] = "SELECT 'braces'",
+        });
+
+        Assert.Equal("SELECT 'brackets'", resolver.ResolveRoute("a/1/b", "GET")?.GetValue<string>("query"));
+        Assert.Equal("SELECT 'braces'", resolver.ResolveRoute("a/1/c", "GET")?.GetValue<string>("query"));
+        Assert.Null(resolver.ResolveRoute("a/1/d", "GET"));
+        Assert.Equal("SELECT 'brackets'", Assert.Single(resolver.ResolveRoutes("a/1/b")).GetValue<string>("query"));
+    }
+
+    [Fact]
+    public void TheGlobalRouteVariablePattern_AppliesToARouteWithoutItsOwn_AndAnEditTakesEffectOnReload()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["route_variable_pattern"] = BracketsPattern,
+                ["queries:ep:route"] = "users/[[id]]/orders",
+                ["queries:ep:verb"] = "GET",
+                ["queries:ep:query"] = "SELECT 1",
+            })
+            .Build();
+        var resolver = new QueryRouteResolver(new TestEncryptedConfiguration(config));
+        Assert.NotNull(resolver.ResolveRoute("users/7/orders", "GET"));
+
+        // With the default pattern, [[id]] is text to match as it is written.
+        config["route_variable_pattern"] = DBToRestAPI.Settings.DefaultRegex.DefaultRouteVariablesPattern;
+        config.Reload();
+
+        Assert.Null(resolver.ResolveRoute("users/7/orders", "GET"));
+        Assert.NotNull(resolver.ResolveRoute("users/[[id]]/orders", "GET"));
+    }
 }

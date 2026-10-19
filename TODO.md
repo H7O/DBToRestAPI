@@ -17,6 +17,27 @@ names the note that explains the background.
   (`EmbeddedHttpTemplate.ConvertValue` uses `ToString()`), so on a server whose culture writes a
   decimal comma a number is sent as `19,99`, and a date takes that culture's format. Writing it in
   the invariant culture would change the dates that existing configurations send on such servers.
+- **A result of many rows costs about twice the CPU of hand-written code** (`benchmarks/`, 1,000
+  rows). Profiled for 1.7.18: each row becomes an `ExpandoObject`, built one property at a time
+  (`ExpandoClass.FindNewClass`), and is serialized as a dictionary of `object` values, so
+  System.Text.Json looks up a converter for every value. A row type whose column names are shared by
+  every row of a result, or writing the JSON straight from the reader, would remove most of it. Both
+  change what Com.H.Data.Common hands its callers (code reads rows as `dynamic`), so each needs its
+  own release.
+- **Under full load on one CPU, the engine reaches its full speed only after about a minute.** The
+  runtime compiles a hot method again, optimized, only after a pause in which no new method was
+  compiled, and a busy server keeps cutting that pause short: for the first 20 seconds a lookup by
+  id costs about 2.3 times its steady CPU. Setting `DOTNET_TC_CallCountingDelayMs=0` gets it there in
+  10 to 20 seconds; turning off `TieredPGO` instead makes the steady speed worse. Not set by default:
+  it changes what the runtime compiles at start-up, for a cost paid once per start.
+- **SQLite writes from many connections at once stall for 150 ms when they collide.** SQLite lets
+  one connection write at a time, and Microsoft.Data.Sqlite sleeps 150 ms before it retries a write
+  that found the database locked. In the benchmark on one CPU, 32 connections inserting at once got
+  from 170 to 1,000 inserts a second, varying from run to run, in 1.7.17 as in 1.7.18 (one
+  connection: 1,319). An open reader doesn't hold the lock (checked for 1.7.18), so the collisions
+  likely come from a thread the operating system pauses during a commit. SQLite's own busy handler
+  (`PRAGMA busy_timeout`), which waits in short steps, or WAL mode would likely cut the stalls; both
+  change how a deployment's database behaves, so either needs a decision.
 - **Idea: an opt-in `<allowed_hosts>` for outbound calls** (`{http{ … }http}` and the download
   `http` source). The configuration author chooses the hosts a route calls, and a caller can't
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
@@ -102,6 +123,17 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **A request spent CPU on work it didn't need.** Fixed in 1.7.18, found by profiling the engine
+  under load. Each middleware step formatted the time for a Debug log line even with Debug off;
+  every connection parsed its connection string again; `GetSection` on a configuration section
+  built and hashed the full path; route matching read two settings and ran the route variable
+  pattern over every parameterized route; CORS sorted the route's verbs; and Com.H.Data.Common
+  10.1.0.14 stopped allocating, on each query, a 6.4 KB table and twenty-odd collections for every
+  placeholder source that matched nothing. On one CPU, in steady state, a lookup by id went from 158
+  to 137 µs of CPU, and `SELECT 1` from 117 to 100. The benchmark changed with it: it now loads each
+  server for two minutes before measuring. Under full load on one CPU the runtime recompiles the hot
+  code only after about a minute, and the 3-second warmup had measured both servers before that
+  (the 1.7.17 figures below among them).
 - **Every request compiled a regular expression.** Fixed in 1.7.17 (`QueryRouteResolver.cs`):
   reading a route's parameters fell back to the default pattern's text, not to its precompiled
   regex, so each request compiled one (`RegexOptions.Compiled`), about a millisecond of CPU, most

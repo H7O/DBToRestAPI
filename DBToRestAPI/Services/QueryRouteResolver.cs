@@ -37,7 +37,10 @@ public class QueryRouteResolver
 {
 
     private List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)> _exactRoutes = new();
-    private List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)> _routesWithVariables = new();
+    // The exact routes by their text, each route's entries in the order of _exactRoutes.
+    private Dictionary<string, List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>> _exactRoutesByRoute = new(StringComparer.OrdinalIgnoreCase);
+    // The routes with variables, each with the route variable pattern its segments are read with.
+    private List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config, Regex VariablePattern)> _routesWithVariables = new();
     private readonly IEncryptedConfiguration _configuration;
 
 
@@ -62,6 +65,24 @@ public class QueryRouteResolver
             ? DefaultRegex.DefaultRouteVariablesCompiledRegex
             : _routeVariableRegexes.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled));
 
+    // Each configured route's segments, with the name of the variable each holds (null for a segment
+    // matched as it is written), per route variable pattern. Read once per route instead of per request.
+    private static readonly ConcurrentDictionary<(Regex Pattern, string Route), (string[] Segments, string?[] Variables)> _routeSegments = new();
+
+    private static (string[] Segments, string?[] Variables) RouteSegments(Regex pattern, string route) =>
+        _routeSegments.GetOrAdd((pattern, route), key =>
+        {
+            var segments = key.Route.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var variables = new string?[segments.Length];
+            for (int i = 0; i < segments.Length; i++)
+            {
+                var match = key.Pattern.Match(segments[i]);
+                if (match.Success && match.Groups["param"].Success)
+                    variables[i] = match.Groups["param"].Value;
+            }
+            return (segments, variables);
+        });
+
     private static readonly HashSet<string> _allVerbs = new(StringComparer.OrdinalIgnoreCase)
     {
         "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"
@@ -77,12 +98,13 @@ public class QueryRouteResolver
             {
                 // The last endpoint was removed: none answers any more.
                 _exactRoutes = new();
+                _exactRoutesByRoute = new(StringComparer.OrdinalIgnoreCase);
                 _routesWithVariables = new();
                 return;
             }
 
             var newExactRoutes = new List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>();
-            var newRoutesWithVariables = new List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>();
+            var newRoutesWithVariables = new List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config, Regex VariablePattern)>();
             var newExactRouteVerbs = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var querySection in querySections.GetChildren())
@@ -130,7 +152,7 @@ public class QueryRouteResolver
                     if (routeParametersRegex.IsMatch(normalizedRoute))
                     {
                         // Store routes with variables separately
-                        newRoutesWithVariables.Add((normalizedRoute, verbs, hostPattern, endpointSection));
+                        newRoutesWithVariables.Add((normalizedRoute, verbs, hostPattern, endpointSection, routeParametersRegex));
                     }
                     else
                     {
@@ -150,7 +172,16 @@ public class QueryRouteResolver
                 }
             }
 
+            var newExactRoutesByRoute = new Dictionary<string, List<(string NormalizedRoute, HashSet<string> Verbs, string? HostPattern, IConfigurationSection Config)>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var exactRoute in newExactRoutes)
+            {
+                if (!newExactRoutesByRoute.TryGetValue(exactRoute.NormalizedRoute, out var sameRoute))
+                    newExactRoutesByRoute[exactRoute.NormalizedRoute] = sameRoute = new();
+                sameRoute.Add(exactRoute);
+            }
+
             _exactRoutes = newExactRoutes;
+            _exactRoutesByRoute = newExactRoutesByRoute;
             _routesWithVariables = newRoutesWithVariables;
             // _exactRouteVerbs = newExactRouteVerbs;
         }
@@ -194,18 +225,28 @@ public class QueryRouteResolver
         // with the normalized routes in the config
         urlRoute = NormalizeRoute(urlRoute);
 
-        // Try exact match with both route and verb, prioritized by host specificity
-        var exactMatch = _exactRoutes
-            .Where(rc =>
-                string.Equals(rc.NormalizedRoute, urlRoute, StringComparison.OrdinalIgnoreCase)
-                && rc.Verbs.Contains(verb)
-                && MatchHost(rc.HostPattern, requestHost))
-            .OrderByDescending(rc => GetHostSpecificityScore(rc.HostPattern, requestHost))
-            .FirstOrDefault();
-
-        if (exactMatch.Config != null)
+        // Try exact match with both route and verb, prioritized by host specificity: of the routes with
+        // the most specific host, the first listed
+        if (_exactRoutesByRoute.TryGetValue(urlRoute, out var sameRoute))
         {
-            return exactMatch.Config;
+            IConfigurationSection? exactMatch = null;
+            var bestHostScore = 0;
+            foreach (var rc in sameRoute)
+            {
+                if (!rc.Verbs.Contains(verb) || !MatchHost(rc.HostPattern, requestHost))
+                    continue;
+                var hostScore = GetHostSpecificityScore(rc.HostPattern, requestHost);
+                if (exactMatch == null || hostScore > bestHostScore)
+                {
+                    exactMatch = rc.Config;
+                    bestHostScore = hostScore;
+                }
+            }
+
+            if (exactMatch != null)
+            {
+                return exactMatch;
+            }
         }
 
         // If no exact match, try best matching route with variables
@@ -259,7 +300,7 @@ public class QueryRouteResolver
 
         var urlSegments = normalizedUrlRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        foreach (var (NormalizedConfigRoute, Verbs, HostPattern, Config) in _routesWithVariables)
+        foreach (var (NormalizedConfigRoute, Verbs, HostPattern, Config, VariablePattern) in _routesWithVariables)
         {
             if (!MatchHost(HostPattern, requestHost))
                 continue;
@@ -271,13 +312,8 @@ public class QueryRouteResolver
                 continue;
             }
 
-            var routeParameterPattern = Config.GetValue<string>("route_variable_pattern")
-                ?? _configuration.GetValue<string>("route_variable_pattern");
-
-            var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
-
             // Check if this route matches (score > 0)
-            var score = CalculateRouteMatchScore(urlSegments, NormalizedConfigRoute, routeParametersRegex);
+            var score = CalculateRouteMatchScore(urlSegments, NormalizedConfigRoute, VariablePattern);
 
             if (score > 0)
             {
@@ -301,9 +337,7 @@ public class QueryRouteResolver
         var configRoute = configSection.GetValue<string>("route") ?? configSection.Key;
         if (string.IsNullOrWhiteSpace(configRoute)) return [];
 
-        // Split both strings into segments
         string[] urlSegments = urlRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        string[] configSegments = configRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
         var routeParameterPattern = configSection?.GetValue<string>("route_variable_pattern");
         if (string.IsNullOrWhiteSpace(routeParameterPattern))
@@ -312,17 +346,14 @@ public class QueryRouteResolver
             routeParameterPattern = DefaultRegex.DefaultRouteVariablesPattern;
 
         var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
+        var (configSegments, variables) = RouteSegments(routeParametersRegex, configRoute);
 
         Dictionary<string, string> parameters = [];
 
         for (int i = 0; i < configSegments.Length && i < urlSegments.Length; i++)
         {
-            string configSegment = configSegments[i];
-            Match match = routeParametersRegex.Match(configSegment);
-
-            if (match.Success && match.Groups["param"].Success)
+            if (variables[i] is string paramName)
             {
-                string paramName = match.Groups["param"].Value;
                 string paramValue = urlSegments[i];
 
                 parameters.Add(paramName, paramValue);
@@ -350,13 +381,6 @@ public class QueryRouteResolver
             || _routesWithVariables == null)
             return null;
 
-        // Filter by verb and host for performance (case insensitive)
-        var verbMatches = _routesWithVariables.Where(rc =>
-            rc.Verbs.Contains(verb) && MatchHost(rc.HostPattern, requestHost));
-
-        if (!verbMatches.Any())
-            return null;
-
         IConfigurationSection? bestMatch = null;
         var bestScore = -1;
         var bestHostScore = -1;
@@ -365,8 +389,12 @@ public class QueryRouteResolver
         var urlSegments = normalizedUrlRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
 
-        foreach (var (NormalizedConfigRoute, Verbs, HostPattern, Config) in verbMatches)
+        foreach (var (NormalizedConfigRoute, Verbs, HostPattern, Config, VariablePattern) in _routesWithVariables)
         {
+            // Only the routes with the verb, and the host if they name one (case insensitive)
+            if (!Verbs.Contains(verb) || !MatchHost(HostPattern, requestHost))
+                continue;
+
             // do a direct comparison first for performance
             if (string.Equals(normalizedUrlRoute, NormalizedConfigRoute, StringComparison.OrdinalIgnoreCase))
             {
@@ -380,13 +408,8 @@ public class QueryRouteResolver
                 continue;
             }
 
-            var routeParameterPattern = Config.GetValue<string>("route_variable_pattern")
-            ?? _configuration.GetValue<string>("route_variable_pattern");
-
-            var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
-
             // Calculate the match score for the route config
-            var score = CalculateRouteMatchScore(urlSegments, NormalizedConfigRoute, routeParametersRegex);
+            var score = CalculateRouteMatchScore(urlSegments, NormalizedConfigRoute, VariablePattern);
 
             if (score > 0)
             {
@@ -414,7 +437,7 @@ public class QueryRouteResolver
     /// <returns>Match score (higher is better, -1 for no match)</returns>
     private static int CalculateRouteMatchScore(string[] urlSegments, string normalizedConfigRoute, Regex parameterRegex)
     {
-        var configSegments = normalizedConfigRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var (configSegments, variables) = RouteSegments(parameterRegex, normalizedConfigRoute);
 
         // Early exit if segment counts don't match - exact segment count required for best match
         if (urlSegments.Length != configSegments.Length)
@@ -437,8 +460,7 @@ public class QueryRouteResolver
             }
 
             // Check if this segment is a parameter
-            var match = parameterRegex.Match(configSegment);
-            if (match.Success && match.Groups["param"].Success)
+            if (variables[i] != null)
             {
                 // Parameter segment - always matches, but lower score
                 score += PARAMETER_MATCH_POINTS;

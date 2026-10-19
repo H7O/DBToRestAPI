@@ -126,6 +126,10 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         ["queries:pl_ok:response_structure"] = "array",
         ["queries:pl_ok:query"] = $"{ThreeRows};",
 
+        ["queries:pl_verbs:route"] = "pl/verbs",
+        ["queries:pl_verbs:verb"] = "post, get ,Post",
+        ["queries:pl_verbs:query"] = "SELECT 1 AS a;",
+
         ["queries:pl_window:route"] = "pl/window/{{n}}",
         ["queries:pl_window:verb"] = "GET",
         ["queries:pl_window:response_structure"] = "array",
@@ -732,6 +736,47 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         var entry = Assert.Single(engine.Logs.Entries, e => e.Message.Contains("forged-origin"));
         Assert.Equal(LogLevel.Debug, entry.Level);
         Assert.Contains("Origin 'x%0B%1B[2K%E2%80%A8forged-origin' is not an absolute URL", entry.Message);
+    }
+
+    [Theory]
+    [InlineData("/pl/ok", "GET, OPTIONS")]
+    [InlineData("/pl/verbs", "GET, OPTIONS, POST")]
+    public async Task Cors_AllowedMethods_AreTheRoutesVerbs_UppercasedAndSorted(string path, string methods)
+    {
+        for (var i = 0; i < 2; i++)
+        {
+            var context = await engine.Server.SendAsync(c =>
+            {
+                c.Request.Method = "GET";
+                c.Request.Path = path;
+            });
+
+            Assert.Equal(200, context.Response.StatusCode);
+            Assert.Equal(methods, context.Response.Headers.AccessControlAllowMethods.ToString());
+        }
+    }
+
+    [Fact]
+    public async Task ARequest_IsTracedAtDebug_ThroughEachStep()
+    {
+        // These lines are written only when Debug is on, as it is here: their arguments aren't worked out otherwise.
+        var context = await engine.Server.SendAsync(c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/pl/ok";
+        });
+
+        Assert.Equal(200, context.Response.StatusCode);
+        foreach (var text in new[]
+        {
+            "in Step2ServiceTypeChecks middleware", "in Step2_CorsCheck middleware", "in Step3LocalApiKeysCheck middleware",
+            "in Step5JwtAuthorization middleware", "in Step4bRateLimiting middleware", "in Step4APIGatewayProcess middleware",
+            "in Step5MandatoryFieldsCheck middleware", "in Step6FileManagement middleware",
+            "in Step6FileDownloadManagement middleware", "in ApiController.Index method",
+            "Connection CREATED for 'pipeline'", "Connection DISPOSED",
+            "[EmbeddedHTTP] Route: pl/ok",
+        })
+            Assert.True(engine.Logs.Entries.Any(e => e.Level == LogLevel.Debug && e.Message.Contains(text)), text);
     }
 
     [Theory]
