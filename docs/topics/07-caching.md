@@ -85,9 +85,9 @@ Each user ID gets its own cached response.
   </cache>
   
   <query><![CDATA[
-    DECLARE @category NVARCHAR(100) = {{category}};
-    DECLARE @min_price DECIMAL = {{min_price}};
-    DECLARE @max_price DECIMAL = {{max_price}};
+    DECLARE @category NVARCHAR(100) = NULLIF({{category}}, '');
+    DECLARE @min_price DECIMAL(10, 2) = TRY_CONVERT(DECIMAL(10, 2), NULLIF({{min_price}}, ''));
+    DECLARE @max_price DECIMAL(10, 2) = TRY_CONVERT(DECIMAL(10, 2), NULLIF({{max_price}}, ''));
     
     SELECT * FROM products
     WHERE (@category IS NULL OR category = @category)

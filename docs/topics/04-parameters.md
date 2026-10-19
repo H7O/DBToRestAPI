@@ -44,6 +44,27 @@ To read one source only, use its own marker. A name that source doesn't have is 
 
 **SQL injection protected** — parameters are bound using ADO.NET parameterization.
 
+## Value Types
+
+A value's type depends on where it comes from:
+
+| Source | Arrives as |
+|---|---|
+| A string in a JSON body | text |
+| A number in a JSON body | a double: `float` on SQL Server, `double precision` on PostgreSQL, `REAL` on SQLite. An integer from 2^53 (9007199254740992) up to 9223372036854775807, of either sign, is a 64-bit integer (`bigint`) instead, so it keeps every digit: a double can't tell such neighbouring integers apart |
+| `true` or `false` in a JSON body | a boolean (`bit` on SQL Server, `1` or `0` on SQLite) |
+| A nested object or array in a JSON body | its JSON text |
+| `null` in a JSON body | the value of the next source down, else `NULL` ([above](#parameter-sources)) |
+| A name no source sends | `NULL` |
+| A route, query-string, form or header value, a JWT claim, a `{s{}}` setting | text |
+| `{pq{column}}` | the type of the earlier query's column ([14](14-query-chaining.md)) |
+
+A double keeps about 15 significant digits, so a JSON number that needs more is rounded: an exact amount such as `1234567.890123456789`, or an integer beyond 64 bits. Send such a value as a JSON string, and convert it in SQL.
+
+On SQL Server, declare a number as a number (`DECLARE @age INT = {{age}};`), never as `NVARCHAR`: a float converted to text keeps 6 significant digits, so `1234567` becomes `'1.23457e+006'`. `OFFSET`, `FETCH` and `TOP` take only an integer, and refuse a float and text alike, so declare those `INT`. PostgreSQL's `LIMIT` and `OFFSET` take the number as it arrives.
+
+A query-string value is text even when it looks like a number, and an empty one (`?status=`) arrives as `''`, not `NULL`. Use `NULLIF({{status}}, '')` for an optional filter, and `TRY_CONVERT(INT, NULLIF({{take}}, ''))` for a number that may be missing or malformed.
+
 ## Names With Spaces and Other Characters
 
 Write a name exactly as the caller sends it, whatever characters it holds: spaces, dashes, dots, `@`, accented letters, symbols. The engine never renames an input, so `{{first_name}}` doesn't read a JSON key named `first name`: it matches nothing and is `NULL`. Spaces inside the braces are part of the name too: `{{ name }}` reads a key named ` name `, not `name`.
@@ -107,15 +128,24 @@ The check is presence-only. A name passes when it arrives from any source, inclu
 
 ## Default Values
 
-Handle optional parameters with SQL defaults:
+Handle optional parameters with SQL defaults. In the query string, a value that is present but empty arrives as `''`, so turn it into `NULL` first:
 
 ```sql
-DECLARE @take INT = ISNULL({{take}}, 100);
-DECLARE @skip INT = ISNULL({{skip}}, 0);
-DECLARE @sort NVARCHAR(50) = ISNULL({{sort}}, 'created_at');
+-- GET /items?take=20&sort=name
+DECLARE @take INT = ISNULL(TRY_CONVERT(INT, NULLIF({{take}}, '')), 100);
+DECLARE @skip INT = ISNULL(TRY_CONVERT(INT, NULLIF({{skip}}, '')), 0);
+DECLARE @sort NVARCHAR(50) = ISNULL(NULLIF({{sort}}, ''), 'created_at');
 
 -- Or use COALESCE
-DECLARE @status NVARCHAR(50) = COALESCE({{status}}, 'active');
+DECLARE @status NVARCHAR(50) = COALESCE(NULLIF({{status}}, ''), 'active');
+```
+
+In a JSON body, a missing or `null` number is `NULL` and a number is never `''`, so a default is enough:
+
+```sql
+-- POST /items/search with {"take": 20, "sort": "name"}
+DECLARE @take INT = ISNULL({{take}}, 100);
+DECLARE @sort NVARCHAR(50) = ISNULL(NULLIF({{sort}}, ''), 'created_at');
 ```
 
 ## HTTP Header Parameters

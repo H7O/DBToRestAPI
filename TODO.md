@@ -5,6 +5,18 @@ names the note that explains the background.
 
 ## Open
 
+- **A JSON number that isn't a large integer is bound as a `double`**, so a value with more than
+  about 15 significant digits is rounded (AGENTS rule 18 says to send it as a string). Binding every
+  JSON number as `decimal` was tried for 1.7.16 and dropped. It changed what existing SQL computes:
+  on SQL Server, `POWER({{x}}, 2)` takes the type of `x` (2.5 gave 6.3), a product's scale is cut
+  to 6 places, and a number compared with `''` or with a varchar column holding `''` failed; on
+  PostgreSQL, 2.5 stored in an int column became 3. Oracle's driver and the Access ODBC driver read
+  some decimal results back wrong or not at all. A number that a double would change could still go
+  as a decimal, on the providers that read one back.
+- **A value inside a JSON string of a `{http{}}` block is written in the server's culture**
+  (`EmbeddedHttpTemplate.ConvertValue` uses `ToString()`), so on a server whose culture writes a
+  decimal comma a number is sent as `19,99`, and a date takes that culture's format. Writing it in
+  the invariant culture would change the dates that existing configurations send on such servers.
 - **Idea: an opt-in `<allowed_hosts>` for outbound calls** (`{http{ … }http}` and the download
   `http` source). The configuration author chooses the hosts a route calls, and a caller can't
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
@@ -53,9 +65,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 - **`{http{}}` matching ignores SQL comments**, so AGENTS rule 15 says never to write the marker in
   one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
   `}http}`, and the SQL in between is deleted.
-- **JSON numbers are bound as `double`** (Com.H.Data.Common `DataExtensions`). On SQL Server, a
-  number declared `NVARCHAR` becomes text with 6 significant digits, so AGENTS rule 18 says to
-  declare numbers as numbers. Consider binding integral and exact numbers as `decimal`.
 - **Regex override keys are read inconsistently.** The shipped `regex.xml` sets
   `regex:query_string_variables_pattern`, `regex:route_variables_pattern` and
   `regex:form_variables_pattern`, which the code never reads. Its comments and tutorials 06 and 07
@@ -93,6 +102,12 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **A JSON integer from 2^53 on lost its last digits.** Fixed in 1.7.16 (Com.H.Data.Common
+  10.1.0.13, mirrored in Com.H 10.3.4): `GetDataModelParameters` read every JSON number as a
+  `double`, which can't tell such neighbouring integers apart, so 9007199254740993 became
+  9007199254740992, and a lookup by either id found both rows. Such an integer, of either sign and
+  up to the largest 64-bit one, is now a `long`, so the query, a `{http{}}` block and a cache key
+  get every digit. Every other number is still a double.
 - **A status raised from SQL didn't map on every database.** Fixed in 1.7.15
   (`Services/DatabaseErrors.cs`). PostgreSQL's message kept its `P0001:` prefix, and SQLite's its
   `SQLite Error 19: '...'` wrapper. Oracle's number was read as negative, though ODP.NET reports it

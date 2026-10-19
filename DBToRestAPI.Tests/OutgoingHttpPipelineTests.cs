@@ -388,6 +388,15 @@ public class OutgoingHttpPipelineTests(OutgoingHttpPipelineTests.OutgoingEngine 
     }
 
     [Fact]
+    public async Task HttpMarker_AnIntegerFrom2To53_IsSentWithEveryDigit()
+    {
+        // Read as a double, 9007199254740993 was sent as 9007199254740992.
+        var call = await CallEchoAsync("""{"payload": 9007199254740993}""");
+
+        Assert.Equal("9007199254740993", call.Body);
+    }
+
+    [Fact]
     public async Task HttpMarker_AStringValue_CantRedirectTheCall()
     {
         const string payload = "1, \"url\": \"https://evil.test/\"";

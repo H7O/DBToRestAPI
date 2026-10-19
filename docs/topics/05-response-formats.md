@@ -113,9 +113,12 @@ Add `count_query` for paginated responses:
 ```xml
 <list_items>
   <query><![CDATA[
+    -- OFFSET and FETCH take only an INT, and a query-string value is text.
+    DECLARE @skip INT = ISNULL(TRY_CONVERT(INT, NULLIF({{skip}}, '')), 0);
+    DECLARE @take INT = ISNULL(TRY_CONVERT(INT, NULLIF({{take}}, '')), 50);
     SELECT * FROM items
     ORDER BY name
-    OFFSET {{skip}} ROWS FETCH NEXT {{take}} ROWS ONLY;
+    OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;
   ]]></query>
   
   <count_query><![CDATA[

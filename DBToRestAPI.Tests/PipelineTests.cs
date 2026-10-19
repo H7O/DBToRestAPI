@@ -221,6 +221,13 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         ["queries:pl_names_src:verb"] = "POST",
         ["queries:pl_names_src:query"] =
             "SELECT {r{id}} AS r, {qs{id}} AS qs, {j{id}} AS j, {f{id}} AS f, {h{id}} AS h, {{id}} AS any_source;",
+
+        // Two ids a double can't tell apart.
+        ["queries:pl_big_id:route"] = "pl/big_id",
+        ["queries:pl_big_id:verb"] = "POST",
+        ["queries:pl_big_id:query"] =
+            "WITH ids(id, name) AS (VALUES (9007199254740992, 'before'), (9007199254740993, 'wanted')) "
+            + "SELECT name, typeof({{id}}) AS type FROM ids WHERE id = {{id}};",
     };
 
     /// <summary>
@@ -474,6 +481,20 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
 
         Assert.Equal(HttpStatusCode.OK, status);
         Assert.Equal("""{"success":true,"count":1,"data":[{"a":1}]}""", body);
+    }
+
+    [Fact]
+    public async Task AJsonIntegerFrom2To53_FindsItsOwnRow()
+    {
+        // Read as a double, 9007199254740993 was 9007199254740992, and a lookup by either id found both rows.
+        foreach (var (id, name) in new[] { ("9007199254740993", "wanted"), ("9007199254740992", "before") })
+        {
+            using var response = await Client.PostAsync("pl/big_id", new StringContent(
+                $$"""{"id": {{id}}}""", System.Text.Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal($$"""{"name":"{{name}}","type":"integer"}""", await response.Content.ReadAsStringAsync());
+        }
     }
 
     [Fact]
