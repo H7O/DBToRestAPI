@@ -1,0 +1,11 @@
+<settings>
+  <!-- run.ps1 replaces __SQLITE__ and __SQLSERVER__ and copies this file over the published engine's
+       config/settings.xml. -->
+  <ConnectionStrings>
+    <default provider="Microsoft.Data.Sqlite"><![CDATA[Data Source=__SQLITE__;]]></default>
+    <bench_sqlserver provider="Microsoft.Data.SqlClient"><![CDATA[__SQLSERVER__]]></bench_sqlserver>
+  </ConnectionStrings>
+  <additional_configurations>
+    <path>config/sql.xml</path>
+  </additional_configurations>
+</settings>

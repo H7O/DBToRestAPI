@@ -2,6 +2,7 @@ using DBToRestAPI.Settings;
 using DBToRestAPI.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Primitives;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 /// <summary>
@@ -50,6 +51,16 @@ public class QueryRouteResolver
             () => _configuration.GetSection("queries").GetReloadToken(),
             LoadRoutes);
     }
+
+    // Each route variable pattern, compiled once. Compiling one takes about a millisecond of CPU, and
+    // building one per request made it most of a request's cost. The patterns come from the
+    // configuration, so there are few of them.
+    private static readonly ConcurrentDictionary<string, Regex> _routeVariableRegexes = new(StringComparer.Ordinal);
+
+    internal static Regex RouteVariablesRegex(string? pattern) =>
+        string.IsNullOrWhiteSpace(pattern) || pattern == DefaultRegex.DefaultRouteVariablesPattern
+            ? DefaultRegex.DefaultRouteVariablesCompiledRegex
+            : _routeVariableRegexes.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled));
 
     private static readonly HashSet<string> _allVerbs = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -110,9 +121,7 @@ public class QueryRouteResolver
                     endpointSection.GetValue<string>("route_variable_pattern")
                     ?? _configuration.GetValue<string>("route_variable_pattern");
 
-                    var routeParametersRegex = string.IsNullOrWhiteSpace(routeParameterPattern) ?
-                        DefaultRegex.DefaultRouteVariablesCompiledRegex
-                        : new Regex(routeParameterPattern, RegexOptions.Compiled);
+                    var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
 
                     // Read optional host pattern (e.g., "www.example.com" or "*.example.com")
                     var hostPattern = endpointSection.GetValue<string>("host");
@@ -265,9 +274,7 @@ public class QueryRouteResolver
             var routeParameterPattern = Config.GetValue<string>("route_variable_pattern")
                 ?? _configuration.GetValue<string>("route_variable_pattern");
 
-            var routeParametersRegex = string.IsNullOrWhiteSpace(routeParameterPattern)
-                ? DefaultRegex.DefaultRouteVariablesCompiledRegex
-                : new Regex(routeParameterPattern, RegexOptions.Compiled);
+            var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
 
             // Check if this route matches (score > 0)
             var score = CalculateRouteMatchScore(urlSegments, NormalizedConfigRoute, routeParametersRegex);
@@ -304,9 +311,7 @@ public class QueryRouteResolver
         if (string.IsNullOrWhiteSpace(routeParameterPattern))
             routeParameterPattern = DefaultRegex.DefaultRouteVariablesPattern;
 
-        var routeParametersRegex = string.IsNullOrWhiteSpace(routeParameterPattern) ?
-            DefaultRegex.DefaultRouteVariablesCompiledRegex :
-            new Regex(routeParameterPattern, RegexOptions.Compiled);
+        var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
 
         Dictionary<string, string> parameters = [];
 
@@ -378,9 +383,7 @@ public class QueryRouteResolver
             var routeParameterPattern = Config.GetValue<string>("route_variable_pattern")
             ?? _configuration.GetValue<string>("route_variable_pattern");
 
-            var routeParametersRegex = string.IsNullOrWhiteSpace(routeParameterPattern) ?
-                DefaultRegex.DefaultRouteVariablesCompiledRegex :
-                new Regex(routeParameterPattern, RegexOptions.Compiled);
+            var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
 
             // Calculate the match score for the route config
             var score = CalculateRouteMatchScore(urlSegments, NormalizedConfigRoute, routeParametersRegex);

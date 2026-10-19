@@ -281,6 +281,7 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | [Multi-Query Chaining](MULTI_QUERY_CHAINING.md) | Deep dive into chaining sequential queries |
 | [Configuration Management](CONFIGURATION_MANAGEMENT.md) | Config file structure and hot-reload behavior |
 | [API Gateway Cache](API_GATEWAY_CACHE_IMPLEMENTATION.md) | Gateway caching internals |
+| [Benchmarks](benchmarks/README.md) | What a request costs against a hand-written Minimal API, with a script to re-run it |
 
 ### AI-Friendly Documentation
 

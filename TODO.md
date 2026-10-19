@@ -102,6 +102,12 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 ## Done
 
+- **Every request compiled a regular expression.** Fixed in 1.7.17 (`QueryRouteResolver.cs`):
+  reading a route's parameters fell back to the default pattern's text, not to its precompiled
+  regex, so each request compiled one (`RegexOptions.Compiled`), about a millisecond of CPU, most
+  of what a request cost. Each pattern is now compiled once. On one CPU, a `SELECT 1` endpoint went
+  from about 900 to 3,600 requests a second, and a lookup by id from about 280 to 4,900. Found by
+  the benchmarks added in the same release (`benchmarks/`).
 - **A JSON integer from 2^53 on lost its last digits.** Fixed in 1.7.16 (Com.H.Data.Common
   10.1.0.13, mirrored in Com.H 10.3.4): `GetDataModelParameters` read every JSON number as a
   `double`, which can't tell such neighbouring integers apart, so 9007199254740993 became

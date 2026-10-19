@@ -1,0 +1,75 @@
+<settings>
+  <!-- The benchmark's endpoints. benchmarks/MinimalApi/Program.cs runs the same SQL by hand. -->
+  <queries>
+
+    <bench_sqlite_ping>
+      <route>bench/sqlite/ping</route>
+      <verb>GET</verb>
+      <query><![CDATA[SELECT 1 AS ok;]]></query>
+    </bench_sqlite_ping>
+
+    <bench_sqlite_contact>
+      <route>bench/sqlite/contacts/{{id}}</route>
+      <verb>GET</verb>
+      <query><![CDATA[
+        SELECT id, name, email, city, created_at FROM contacts WHERE id = CAST({{id}} AS INTEGER);
+      ]]></query>
+    </bench_sqlite_contact>
+
+    <bench_sqlite_contacts>
+      <route>bench/sqlite/contacts</route>
+      <verb>GET</verb>
+      <response_structure>array</response_structure>
+      <query><![CDATA[
+        SELECT id, name, email, city, created_at FROM contacts
+        WHERE id > CAST({{after}} AS INTEGER) ORDER BY id LIMIT CAST({{take}} AS INTEGER);
+      ]]></query>
+    </bench_sqlite_contacts>
+
+    <bench_sqlite_write>
+      <route>bench/sqlite/writes</route>
+      <verb>POST</verb>
+      <query><![CDATA[
+        INSERT INTO writes (name, amount) VALUES ({{name}}, {{amount}});
+        SELECT last_insert_rowid() AS id;
+      ]]></query>
+    </bench_sqlite_write>
+
+    <bench_sqlserver_ping>
+      <route>bench/sqlserver/ping</route>
+      <verb>GET</verb>
+      <connection_string_name>bench_sqlserver</connection_string_name>
+      <query><![CDATA[SELECT 1 AS ok;]]></query>
+    </bench_sqlserver_ping>
+
+    <bench_sqlserver_contact>
+      <route>bench/sqlserver/contacts/{{id}}</route>
+      <verb>GET</verb>
+      <connection_string_name>bench_sqlserver</connection_string_name>
+      <query><![CDATA[
+        SELECT id, name, email, city, created_at FROM contacts WHERE id = CAST({{id}} AS int);
+      ]]></query>
+    </bench_sqlserver_contact>
+
+    <bench_sqlserver_contacts>
+      <route>bench/sqlserver/contacts</route>
+      <verb>GET</verb>
+      <connection_string_name>bench_sqlserver</connection_string_name>
+      <response_structure>array</response_structure>
+      <query><![CDATA[
+        SELECT TOP (CAST({{take}} AS int)) id, name, email, city, created_at FROM contacts
+        WHERE id > CAST({{after}} AS int) ORDER BY id;
+      ]]></query>
+    </bench_sqlserver_contacts>
+
+    <bench_sqlserver_write>
+      <route>bench/sqlserver/writes</route>
+      <verb>POST</verb>
+      <connection_string_name>bench_sqlserver</connection_string_name>
+      <query><![CDATA[
+        INSERT INTO writes (name, amount) OUTPUT INSERTED.id VALUES ({{name}}, {{amount}});
+      ]]></query>
+    </bench_sqlserver_write>
+
+  </queries>
+</settings>
