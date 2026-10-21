@@ -60,7 +60,7 @@ Both share the same `/contacts` route, but respond to different HTTP verbs.
 
 This restricts the endpoint to only respond to POST requests. A GET request to `/contacts` won't hit this endpoint — it'll hit whichever endpoint is configured for GET on the same route.
 
-Available verbs: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`
+Available verbs: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, or several separated by commas (`GET,POST`). Without `<verb>`, the endpoint answers every verb. A `HEAD` request gets the answer of the route that takes `GET`, without its body.
 
 ### Mandatory Parameters with `<mandatory_parameters>`
 
@@ -74,7 +74,8 @@ The error response looks like:
 
 ```json
 {
-  "error": "Bad request: missing mandatory parameter(s): name"
+  "success": false,
+  "message": "Missing mandatory parameters: name"
 }
 ```
 
@@ -169,6 +170,7 @@ Now let's add an endpoint to retrieve contacts. Add this to `sql.xml`:
 <search_contacts>
   <route>contacts</route>
   <verb>GET</verb>
+  <response_structure>array</response_structure>
   <query>
     <![CDATA[
     declare @name nvarchar(500) = {{name}};
@@ -237,15 +239,17 @@ curl "http://localhost:5000/contacts?name=alice"
 
 Response:
 ```json
-{
-  "id": "a1b2c3d4-...",
-  "name": "Alice Smith",
-  "phone": "555-0101",
-  "active": true
-}
+[
+  {
+    "id": "a1b2c3d4-...",
+    "name": "Alice Smith",
+    "phone": "555-0101",
+    "active": true
+  }
+]
 ```
 
-> Notice: when only one row matches, the response is a plain object instead of an array. Topic 4 shows how to always get an array.
+> Notice: one match is still an array, because of `<response_structure>array</response_structure>`. Without the tag, a single row would come back as a plain object, and a client that loops over the result would break. Set it on every endpoint that returns a list.
 
 **Search by phone:**
 ```bash
@@ -253,12 +257,14 @@ curl "http://localhost:5000/contacts?phone=0102"
 ```
 
 ```json
-{
-  "id": "b2c3d4e5-...",
-  "name": "Bob Jones",
-  "phone": "555-0102",
-  "active": true
-}
+[
+  {
+    "id": "b2c3d4e5-...",
+    "name": "Bob Jones",
+    "phone": "555-0102",
+    "active": true
+  }
+]
 ```
 
 ## Same Route, Different Verbs
@@ -274,17 +280,20 @@ This is a core concept you'll use throughout the tutorial. The combination of **
 
 ## Handling Duplicates with SQL Error Codes
 
-The sample `sql.xml` that ships with the project includes a duplicate check in `create_contact`. Let's understand how that works:
+A real API should refuse a contact that already exists. Add this check to `create_contact`'s query, after the `declare` lines and before the `insert`:
 
 ```sql
-if ((select count(*) from [contacts] where name = @name and phone = @phone) > 0)
-begin 
-    set @error_msg = 'Contact with name ' + @name 
+declare @error_msg nvarchar(1000);
+
+if exists (select 1 from [contacts] where name = @name and phone = @phone)
+begin
+    set @error_msg = 'Contact with name ' + @name
                    + ' and phone ' + @phone + ' already exists';
     throw 50409, @error_msg, 1;
-    return;
 end
 ```
+
+The message starts with fixed text, not with the caller's value: a message that starts with a number in brackets, such as `[50201]`, would choose the status itself.
 
 The magic number is **50409**. Here's the pattern:
 
@@ -295,7 +304,7 @@ The magic number is **50409**. Here's the pattern:
 | 50409          | 409 Conflict         |
 | 50500          | 500 Internal Error   |
 
-The formula: **50000 + HTTP status code**. The application strips the `50` prefix and uses the remainder as the HTTP response code.
+The formula: **50000 + HTTP status code**. The application subtracts 50000 from the error number and uses the rest as the HTTP status. Use numbers from 50400 to 50599. Any other database error, such as a constraint the insert breaks, comes back as `400` with a generic message. Every status and body is in [errors.md](../reference/errors.md).
 
 Try creating a duplicate:
 
@@ -308,7 +317,9 @@ curl -X POST http://localhost:5000/contacts \
 Response (HTTP 409 Conflict):
 ```json
 {
-  "error": "Contact with name Alice Smith and phone 555-0101 already exists"
+  "success": false,
+  "message": "Contact with name Alice Smith and phone 555-0101 already exists",
+  "error_number": 409
 }
 ```
 

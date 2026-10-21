@@ -372,9 +372,11 @@ const msalConfig = {
 
 const msalInstance = new PublicClientApplication(msalConfig);
 
-// Get token
+// Get a token for your API: request the API's own scope, as registered in B2C. With only
+// 'openid', B2C issues no access token for your API. The token's aud is then the API's client
+// id, which is the <audience> in auth_providers.xml.
 const response = await msalInstance.acquireTokenSilent({
-  scopes: ['openid'],
+  scopes: ['https://yourb2c.onmicrosoft.com/your-api/read'],
   account: msalInstance.getAllAccounts()[0]
 });
 
@@ -395,7 +397,10 @@ curl -X GET "https://api.example.com/protected" \
 
 ## CORS Integration
 
-When `<authorize>` is present, `Access-Control-Allow-Credentials: true` is automatically set.
+An `<authorize>` section on a route, or at the root of a file as in the shipped `auth_providers.xml`,
+turns `Access-Control-Allow-Credentials: true` on for every route. The default allowed headers are
+then a fixed list without the provider hint header, so a page on another origin that sends
+`X-Auth-Provider` needs it in the route's `<cors><allowed_headers>`. See [CORS](11-cors.md#rules).
 
 ## Security Best Practices
 

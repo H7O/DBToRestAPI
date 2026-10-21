@@ -174,6 +174,8 @@ spec:
 2. Encrypts and writes back to XML
 3. Continues with decrypted values in memory
 
+In a clone, `dotnet run` reads the copies under `DBToRestAPI/bin/<Configuration>/net10.0/config/`, so it encrypts those, and the file under `DBToRestAPI/config/` keeps the plain value. Never commit a real secret there: set it with an environment variable, or put it only in the copy a server reads.
+
 ### Subsequent Runs
 1. Reads encrypted values
 2. Decrypts in memory

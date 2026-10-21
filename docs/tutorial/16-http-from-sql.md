@@ -155,13 +155,14 @@ JSON document, use `"body_raw": "{{payload}}"`.
 
 ## POST with JSON Body
 
+The body is sent as `application/json`. For another type, set `"content_type"`, never a `Content-Type` in `"headers"`: that one is sent beside it, so the request carries two types. A form (`application/x-www-form-urlencoded`) goes in `"body_raw"`, as topic 17 shows in [POST with a form body](../topics/17-embedded-http-calls.md#post-with-a-form-body).
+
 ```sql
 DECLARE @result NVARCHAR(MAX) = {http{
   {
     "url": "https://api.example.com/validate",
     "method": "POST",
     "headers": {
-      "Content-Type": "application/json",
       "X-API-Key": "your-api-key"
     },
     "body": {
@@ -224,7 +225,6 @@ Validate an email address against an external service before creating a user:
         "url": "https://api.emailvalidation.com/v1/validate",
         "method": "POST",
         "headers": {
-          "Content-Type": "application/json",
           "X-API-Key": "your-validation-key"
         },
         "body": {
@@ -241,8 +241,8 @@ Validate an email address against an external service before creating a user:
       RETURN;
     END
 
-    -- Step 3: Check validation result (response body is under $.data)
-    IF JSON_VALUE(@validation, '$.data.is_valid') = 'false'
+    -- Step 3: Check validation result (response body is under $.data); a missing is_valid counts as invalid
+    IF ISNULL(JSON_VALUE(@validation, '$.data.is_valid'), 'false') <> 'true'
     BEGIN
       THROW 50400, 'Invalid email address', 1;
       RETURN;

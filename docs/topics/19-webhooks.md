@@ -93,8 +93,13 @@ Key properties:
 
   <!-- Query 1: Load the request -->
   <query><![CDATA[
-    DECLARE @id INT = {{request_id}};
-    UPDATE webhook_requests SET status = 'processing' WHERE id = @id;
+    DECLARE @id INT = TRY_CONVERT(INT, {{request_id}});
+
+    -- Only a pending request: an unknown id, or a second call for the same one, is refused
+    UPDATE webhook_requests SET status = 'processing' WHERE id = @id AND status = 'pending';
+    IF @@ROWCOUNT = 0
+      THROW 50409, 'Request not found or already processed', 1;
+
     SELECT id AS request_id, callback_url, payload
     FROM webhook_requests WHERE id = @id;
   ]]></query>
@@ -141,6 +146,7 @@ Key properties:
 
 Key properties:
 - `<api_keys_collections>internal_keys</api_keys_collections>` — only internal/trusted callers
+- The `UPDATE ... WHERE status = 'pending'` takes the request once: a repeated or unknown id gets `409` before anything is processed or any partner is called
 - `retry` — built-in exponential backoff for the callback (see [retry configuration](17-embedded-http-calls.md#retry-configuration))
 - `{pq{callback_url}}` in Query 3 reads the column Query 1 loaded from `webhook_requests`. Columns from every earlier query stay available.
 - The callback has its own query because a query's `{http{ ... }http}` calls run before its SQL. In Query 2 it would fire before the work is done, and a failure in the work would come after the partner was told `completed`.
@@ -277,15 +283,25 @@ Optional endpoint for clients to check status without waiting for a callback:
 <webhook_status>
   <route>webhooks/status/{{request_id}}</route>
   <verb>GET</verb>
-  <mandatory_parameters>request_id</mandatory_parameters>
   <query><![CDATA[
-    IF NOT EXISTS (SELECT 1 FROM webhook_requests WHERE id = {{request_id}})
+    DECLARE @id INT = TRY_CONVERT(INT, {{request_id}});
+    DECLARE @partner_key NVARCHAR(200) = {h{x-partner-key}};
+
+    -- Only the partner that sent the request may read it. Another partner's request, an unknown
+    -- id and a missing key get the same 404, so the sequential ids reveal nothing.
+    IF NOT EXISTS (SELECT 1 FROM webhook_requests r JOIN partners p ON p.id = r.partner_id
+                   WHERE r.id = @id AND p.api_key = @partner_key)
       THROW 50404, 'Request not found', 1;
+
     SELECT id AS request_id, status, created_at, processed_at
-    FROM webhook_requests WHERE id = {{request_id}};
+    FROM webhook_requests WHERE id = @id;
   ]]></query>
 </webhook_status>
 ```
+
+The ids are sequential, so without the partner check any caller could read every partner's requests
+by counting. The partner sends its key in an `x-partner-key` header, not in the URL, where proxies
+and server logs would keep it.
 
 ## Summary
 
@@ -296,6 +312,7 @@ Optional endpoint for clients to check status without waiting for a callback:
 | Internal security | `api_keys_collections` + `x-api-key` header via `{s{}}` |
 | Safe callback target | Callback URL looked up in your partner registry, never taken from the request |
 | Read earlier results | `{pq{name}}` in each chained query |
+| Status polling | Scoped to the partner's key, the same `404` for any request that isn't theirs |
 | Validate first | Place HTTP calls in later chained queries |
 | Cross-DB validation | `connection_string_name` per query in chain |
 | Progress callbacks | Embedded HTTP calls in successive chained queries |

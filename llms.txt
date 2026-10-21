@@ -52,9 +52,11 @@ Fetch only what you need:
 
 | Topic | File | When to Use |
 |-------|------|-------------|
+| Tags Reference | [tags.md](docs/reference/tags.md) | Every tag the engine reads: where it goes (endpoint, gateway route, global, provider, store), its default, which value wins; an unknown tag is ignored silently |
+| Placeholders Reference | [placeholders.md](docs/reference/placeholders.md) | Every marker ({{}}, {j{}}, {qs{}}, {r{}}, {f{}}, {h{}}, {auth{}}, {s{}}, {pq{}}, {http{}}, {fs{}}, {type{json{}}}, path markers): what it reads, where it works, what it gives when nothing matches |
 | Errors & Status Codes | [errors.md](docs/reference/errors.md) | Rejecting requests from SQL (THROW 50400 and each database's equivalent), the exact JSON body of every status, when uploaded files are rolled back, client handling |
 | Quick Start | [01-overview.md](docs/topics/01-overview.md) | Getting started, philosophy, first endpoint |
-| Configuration | [02-configuration.md](docs/topics/02-configuration.md) | settings.xml, sql.xml, connection strings |
+| Configuration | [02-configuration.md](docs/topics/02-configuration.md) | Where the files live, how they load, merge and reload (and what needs a restart), settings.xml, sql.xml, connection strings, environment variables, log levels |
 | CRUD Operations | [03-crud-operations.md](docs/topics/03-crud-operations.md) | Create, Read, Update, Delete patterns |
 | Parameters | [04-parameters.md](docs/topics/04-parameters.md) | {{param}}, value types (JSON numbers, empty query-string values), which source wins, one-source markers ({r{}}, {qs{}}, {j{}}, {f{}}, {h{}}), names with any characters, route params, mandatory params |
 | Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON, buffer_rows |
@@ -63,13 +65,13 @@ Fetch only what you need:
 | API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs |
 | File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Files plus form fields in one request (multipart or JSON base64), local/SFTP stores, validation and limits, what the query receives (is_new_upload), automatic rollback, partial updates (keep/remove/add), complete form example |
 | File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | response_structure file, `<store>`, the columns the query returns (relative_path, file_name, mime_type, base64_content, http), owner-only downloads, Content-Disposition, 404 cases |
-| CORS | [11-cors.md](docs/topics/11-cors.md) | Pattern matching, credentials, preflight |
+| CORS | [11-cors.md](docs/topics/11-cors.md) | Which pages may read an endpoint: pattern (host only, anchored) and fallback_origin, credentials (on whenever an `<authorize>` exists), allowed_headers (X-Auth-Provider), preflight |
 | Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0, multiple providers per endpoint |
 | Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
-| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | `{http{ ... }http}` syntax, full request schema, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, `query` field for caller-supplied values, automatic JSON escaping of substituted values, microservice calls from SQL |
+| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | `{http{ ... }http}` syntax, full request schema, structured response (status_code/headers/data/error), skip property, no_wait (fire-and-forget), auth, retries, `query` field for caller-supplied values, automatic JSON escaping of substituted values, the body's type in `content_type` (never a `Content-Type` header), form bodies in `body_raw`, microservice calls from SQL |
 | Rate Limiting | [18-rate-limiting.md](docs/topics/18-rate-limiting.md) | Per-endpoint `<rate_limit>` (max_requests, window_seconds, per=caller/ip/endpoint, enabled, message) with a global default under `<settings>`; 429 + Retry-After; counted per user, API key or client IP; runs after auth and before any database work; client_ip_header for reverse proxies; hot-reload; never a 500 from a config typo |
 | Webhooks | [19-webhooks.md](docs/topics/19-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
 | OpenAPI / Swagger | [20-openapi.md](docs/topics/20-openapi.md) | Auto-generated OpenAPI 3.0 spec at /openapi.json, built-in Swagger UI at /swagger, secure by default (opt-in), per-endpoint or global, enrichment tags (summary, description, tags, response_schema), hot-reload |

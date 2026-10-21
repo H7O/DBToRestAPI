@@ -153,6 +153,8 @@ So a caller can replace a value your SQL looked up, such as an owner id or a URL
 ]]></query>
 ```
 
+A `<query>` without the attribute uses the endpoint's `<connection_string_name>`, and without that, `default`. The same order holds for every query of the chain, the first included.
+
 ### Timeout
 
 ```xml

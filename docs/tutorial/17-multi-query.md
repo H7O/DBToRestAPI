@@ -33,7 +33,7 @@ single API call should return the order enriched with customer details:
 
   <!-- Query 1: look up the order (default database) -->
   <query><![CDATA[
-    DECLARE @id INT = {{order_id}};
+    DECLARE @id INT = TRY_CONVERT(INT, {{order_id}});
 
     IF NOT EXISTS (SELECT 1 FROM orders WHERE id = @id)
       THROW 50404, 'Order not found', 1;
@@ -241,7 +241,7 @@ in one database and access-control roles live in another:
 
   <!-- Query 1: fetch the contact (SQL Server, default) -->
   <query><![CDATA[
-    DECLARE @id INT = {{contact_id}};
+    DECLARE @id INT = TRY_CONVERT(INT, {{contact_id}});
 
     IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = @id)
       THROW 50404, 'Contact not found', 1;
@@ -271,13 +271,17 @@ in one database and access-control roles live in another:
     DECLARE @perms_json   NVARCHAR(MAX) = {pq{perms}};
 
     SELECT @contact_name AS name,
-           (SELECT JSON_VALUE(value, '$.permission')      AS name,
-                   JSON_VALUE(value, '$.permission_desc')  AS description
-            FROM OPENJSON(@perms_json)
-            FOR JSON PATH) AS permissions;
+           ISNULL((SELECT JSON_VALUE(value, '$.permission')      AS name,
+                          JSON_VALUE(value, '$.permission_desc')  AS description
+                   FROM OPENJSON(@perms_json)
+                   FOR JSON PATH), '[]') AS {type{json{permissions}}};
   ]]></query>
 </contact_with_permissions>
 ```
+
+`{type{json{permissions}}}` names the column `permissions` and sends its text as JSON. A plain
+`AS permissions` would send the array as an escaped string, `"[{\"name\":...}]"`. `ISNULL(..., '[]')`
+turns no permissions into an empty array: `FOR JSON` returns `NULL` for no rows.
 
 Call it:
 
@@ -305,12 +309,13 @@ If **any** query in the chain fails, execution stops immediately and the error
 is returned to the client.  The same `THROW 50xxx` pattern works:
 
 ```xml
-<!-- Query 1: validate first -->
+<!-- Query 1: validate first. On an <authorize> route, {auth{user_id}} is the signed-in user;
+     a user_id the caller sends would let anyone claim to be an admin. -->
 <query><![CDATA[
-  IF NOT EXISTS (SELECT 1 FROM admins WHERE user_id = {{user_id}})
+  IF NOT EXISTS (SELECT 1 FROM admins WHERE user_id = {auth{user_id}})
     THROW 50403, 'Access denied', 1;
 
-  SELECT {{user_id}} AS validated_user_id;
+  SELECT {auth{user_id}} AS validated_user_id;
 ]]></query>
 
 <!-- Query 2: safe to proceed -->

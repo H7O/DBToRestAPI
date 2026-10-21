@@ -72,7 +72,7 @@ Remove headers before forwarding:
 - `host` — Prevents TLS errors
 - `authorization` — Keep JWT tokens local
 
-A route without `<excluded_headers>` uses the global `<excluded_headers>` in `settings.xml` (the shipped file sets `Host`). A route's own list replaces the global one, so list `host` in it too.
+A route without `<excluded_headers>` uses the global `<excluded_headers>` in `settings.xml` (the shipped file sets `Host`). A route's own list replaces the global one, so list `host` in it too. An empty `<excluded_headers></excluded_headers>` counts as not set, so the global list applies: a route can't forward every header while the global list drops some. Separate the names with commas, spaces or line breaks. They are matched ignoring case.
 
 The gateway keeps no cookies. A caller's `Cookie` header is forwarded like any other header (exclude
 `cookie` to drop it), and the target's `Set-Cookie` goes back to that caller. A response that

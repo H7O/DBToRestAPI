@@ -162,9 +162,12 @@ waiting.
 
   <!-- Query 1: Load the original request -->
   <query><![CDATA[
-    DECLARE @id INT = {{request_id}};
+    DECLARE @id INT = TRY_CONVERT(INT, {{request_id}});
 
-    UPDATE webhook_requests SET status = 'processing' WHERE id = @id;
+    -- Only a pending request: an unknown id, or a second call for the same one, is refused
+    UPDATE webhook_requests SET status = 'processing' WHERE id = @id AND status = 'pending';
+    IF @@ROWCOUNT = 0
+      THROW 50409, 'Request not found or already processed', 1;
 
     SELECT id AS request_id,
            callback_url,
@@ -394,11 +397,14 @@ Let clients check the status of their request without waiting for a callback:
 <webhook_status>
   <route>webhooks/status/{{request_id}}</route>
   <verb>GET</verb>
-  <mandatory_parameters>request_id</mandatory_parameters>
   <query><![CDATA[
-    DECLARE @id INT = {{request_id}};
+    DECLARE @id INT = TRY_CONVERT(INT, {{request_id}});
+    DECLARE @partner_key NVARCHAR(200) = {h{x-partner-key}};
 
-    IF NOT EXISTS (SELECT 1 FROM webhook_requests WHERE id = @id)
+    -- Only the partner that sent the request may read it. Another partner's request, an unknown
+    -- id and a missing key get the same 404, so the sequential ids reveal nothing.
+    IF NOT EXISTS (SELECT 1 FROM webhook_requests r JOIN partners p ON p.id = r.partner_id
+                   WHERE r.id = @id AND p.api_key = @partner_key)
       THROW 50404, 'Request not found', 1;
 
     SELECT id AS request_id, status, created_at, processed_at
@@ -406,6 +412,10 @@ Let clients check the status of their request without waiting for a callback:
   ]]></query>
 </webhook_status>
 ```
+
+The ids are sequential, so without the partner check any caller could read every partner's requests
+by counting. The partner sends its key in an `x-partner-key` header, not in the URL, where proxies
+and server logs would keep it.
 
 ### Multiple background tasks
 
@@ -579,8 +589,12 @@ chained queries, you can notify the partner at **each stage** of processing:
 
   <!-- Query 1: Load request, notify "processing" -->
   <query><![CDATA[
-    DECLARE @id INT = {{request_id}};
-    UPDATE webhook_requests SET status = 'processing' WHERE id = @id;
+    DECLARE @id INT = TRY_CONVERT(INT, {{request_id}});
+
+    -- Only a pending request: an unknown id, or a second call for the same one, is refused
+    UPDATE webhook_requests SET status = 'processing' WHERE id = @id AND status = 'pending';
+    IF @@ROWCOUNT = 0
+      THROW 50409, 'Request not found or already processed', 1;
 
     SELECT id AS request_id, callback_url, payload
     FROM webhook_requests WHERE id = @id;

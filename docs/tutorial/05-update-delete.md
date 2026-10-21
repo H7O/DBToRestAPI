@@ -13,19 +13,13 @@ Add this endpoint to your `sql.xml`:
   <mandatory_parameters>id,name,phone</mandatory_parameters>
   <query>
     <![CDATA[
-    declare @id UNIQUEIDENTIFIER = {{id}};
+    declare @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
     declare @name nvarchar(500) = {{name}};
     declare @phone nvarchar(100) = {{phone}};
-    declare @error_msg nvarchar(500);
 
-    -- Check if contact exists
-    if ((select count(*) from [contacts] where id = @id) < 1)
-    begin 
-        set @error_msg = 'Contact with id ' 
-                       + cast(@id as nvarchar(50)) + ' does not exist';
-        throw 50404, @error_msg, 1;
-        return;
-    end
+    -- Check if contact exists (a malformed id is NULL, so it isn't found either)
+    if not exists (select 1 from [contacts] where id = @id)
+        throw 50404, 'Contact not found', 1;
 
     -- Update and return the updated contact
     update [contacts] 
@@ -53,14 +47,13 @@ The `name` and `phone` come from the request body. Since `id` is in both the rou
 **Existence check with 404:**
 
 ```sql
-if ((select count(*) from [contacts] where id = @id) < 1)
-begin 
-    throw 50404, @error_msg, 1;
-    return;
-end
+declare @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
+
+if not exists (select 1 from [contacts] where id = @id)
+    throw 50404, 'Contact not found', 1;
 ```
 
-Always check that the resource exists before updating. Return 404 if it doesn't.
+Always check that the resource exists before updating, and raise `50404` if it doesn't. `TRY_CONVERT` turns an id that isn't a GUID into `NULL`, so it gets the same 404. A plain `declare @id UNIQUEIDENTIFIER = {{id}}` would fail the conversion instead, and the caller would get a generic `400`.
 
 **OUTPUT clause returns the updated record:**
 
@@ -106,7 +99,9 @@ curl -X PUT http://localhost:5000/contacts/00000000-0000-0000-0000-000000000000 
 Response (HTTP 404):
 ```json
 {
-  "error": "Contact with id 00000000-0000-0000-0000-000000000000 does not exist"
+  "success": false,
+  "message": "Contact not found",
+  "error_number": 404
 }
 ```
 
@@ -119,16 +114,10 @@ Response (HTTP 404):
   <mandatory_parameters>id</mandatory_parameters>
   <query>
     <![CDATA[
-    declare @id UNIQUEIDENTIFIER = {{id}};
-    declare @error_msg nvarchar(500);
+    declare @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
 
-    if ((select count(*) from [contacts] where id = @id) < 1)
-    begin 
-        set @error_msg = 'Contact with id ' 
-                       + cast(@id as nvarchar(50)) + ' does not exist';
-        throw 50404, @error_msg, 1;
-        return;
-    end
+    if not exists (select 1 from [contacts] where id = @id)
+        throw 50404, 'Contact not found', 1;
 
     delete from [contacts] 
     OUTPUT DELETED.id, DELETED.name, DELETED.phone, DELETED.active
@@ -146,7 +135,7 @@ For DELETE operations, use `DELETED` (not `inserted`) to return the row that was
 
 **Default status code is 200:**
 
-Some REST APIs return HTTP 204 (No Content) for deletes. Here, since we're returning the deleted data, 200 is appropriate. If you wanted an empty response with 204, you could add `<success_status_code>204</success_status_code>` and remove the OUTPUT clause.
+Some REST APIs return HTTP 204 (No Content) for deletes. Here, since we're returning the deleted data, 200 is appropriate. For an empty `204` instead, remove the OUTPUT clause: a query that returns no rows answers `204 No Content` when the success code is the default 200.
 
 ### Test It
 
@@ -182,27 +171,16 @@ Sometimes you want a "soft delete" — marking a contact as inactive instead of 
   <mandatory_parameters>id</mandatory_parameters>
   <query>
     <![CDATA[
-    declare @id UNIQUEIDENTIFIER = {{id}};
+    declare @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
     declare @status_action nvarchar(50) = {{status_action}};
-    declare @error_msg nvarchar(500);
 
     -- Validate the action
-    if (@status_action is null or @status_action = ''
-        or @status_action not in ('activate', 'deactivate'))
-    begin
-      set @error_msg = 'Invalid status action';
-      throw 50400, @error_msg, 1;
-      return;
-    end
+    if (@status_action is null or @status_action not in ('activate', 'deactivate'))
+        throw 50400, 'Invalid status action', 1;
 
-    -- Check if contact exists
-    if ((select count(*) from [contacts] where id = @id) < 1)
-    begin 
-        set @error_msg = 'Contact with id ' 
-                       + cast(@id as nvarchar(50)) + ' does not exist';
-        throw 50404, @error_msg, 1;
-        return;
-    end
+    -- Check if contact exists (a malformed id is NULL, so it isn't found either)
+    if not exists (select 1 from [contacts] where id = @id)
+        throw 50404, 'Contact not found', 1;
 
     -- Set status based on action
     declare @status_bit bit = case 
@@ -283,7 +261,9 @@ curl -X PUT http://localhost:5000/contacts/b2c3d4e5-.../archive
 Response (HTTP 400):
 ```json
 {
-  "error": "Invalid status action"
+  "success": false,
+  "message": "Invalid status action",
+  "error_number": 400
 }
 ```
 

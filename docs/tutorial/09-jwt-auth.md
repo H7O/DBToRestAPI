@@ -167,13 +167,14 @@ curl http://localhost:5000/profile
 Response (HTTP 401):
 ```json
 {
-  "error": "Unauthorized"
+  "success": false,
+  "message": "Authorization header is required"
 }
 ```
 
 **With an expired or invalid token:**
 
-Response (HTTP 401) — the middleware rejects it before SQL runs.
+Response (HTTP 401) — the middleware rejects it before SQL runs, with `Token has expired`, `Invalid token signature` or `Invalid token` as the message. Every message is in [errors.md](../reference/errors.md).
 
 ## Accessing Claims with `{auth{claim}}`
 

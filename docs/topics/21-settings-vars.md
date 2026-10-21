@@ -29,6 +29,8 @@ Add a `<vars>` section to any of your settings files (e.g., `settings.xml`):
 
 All values are loaded once at startup and refreshed automatically via hot-reload when the file changes.
 
+An environment variable named `vars__<name>` sets or overrides a variable, with or without a `<vars>` section in any file: `vars__stripe_secret_key=sk_live_...` keeps the key out of every file. Only direct children of `<vars>` are variables: a nested element has no value of its own and is skipped.
+
 ## Syntax
 
 Reference settings variables in your queries with either syntax:
@@ -151,7 +153,7 @@ All of these resolve to the same value:
 
 ## Behavior When Variable Not Found
 
-If a query references a settings variable that doesn't exist in `<vars>`, the parameter is set to `NULL` (same behavior as any other unresolved parameter). Handle it with standard SQL:
+If a query references a settings variable that doesn't exist in `<vars>`, the parameter is set to `NULL` (same behavior as any other unresolved parameter). Inside a `{http{ ... }http}` block it is an empty string instead, so a missing key sends `"Authorization": "Bearer "` and the remote answers `401`. Handle it with standard SQL:
 
 ```sql
 DECLARE @api_key NVARCHAR(500) = {s{partner_api_key}};

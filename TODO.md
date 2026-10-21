@@ -83,30 +83,63 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   it is undocumented.
 - **CORS:** when any `<authorize>` section exists, credentials are on for every route and the
   default allowed headers leave out `X-Auth-Provider`.
+
+The items below were found on 2026-10-21 while rewriting the CORS page, each checked against a
+running engine. None has a test: nothing tests a preflight.
+
+- **CORS: `<fallback_origin>*</fallback_origin>` is sent as `https://*`.** `NormalizeFallbackOrigin`
+  puts `https://` in front of any value that doesn't start with `http`, so the value the old page
+  recommended for "allow all" blocks every origin the pattern doesn't match.
+- **CORS: a preflight to a gateway route answers `500`** (`Step 2 - CORS Check Error`). Step 1 sets
+  `sections` only for query routes, and Step 2's `OPTIONS` branch needs it.
+- **CORS: no `Vary: Origin`** when the engine sends the request's origin back, so a shared cache in
+  front of the engine can hand one origin's answer to another.
+- **CORS: a preflight ignores a route's `<allow_credentials>false</allow_credentials>`** when the
+  root has an `<authorize>` section (the preflight's `GetAllowCredentials` checks the root first),
+  while the route's own responses leave the header out.
+- **A SQL Server connection string with a SQL login, and no `provider`, goes to the Oracle
+  driver.** `DbConnectionFactory.InferProviderFromConnectionString` checks substrings in a fixed
+  order, and `User Id=` with `Data Source=` is its Oracle rule, checked before SQL Server's: every
+  request fails with `ORA-50008: 'Initial Catalog' is an invalid connection string attribute`
+  (checked against a running engine). Any string containing `.db`, such as a server named
+  `prod.db.example.com`, goes to SQLite. Parsing the keywords (an `Initial Catalog` or
+  `Integrated Security` means SQL Server, whatever else is there) would fix the common cases; the
+  docs say to set `provider` always.
+- **`{http{}}`: a `Content-Type` in `headers` is sent beside the one `content_type` sets**, so the
+  request carries `application/json; charset=utf-8, application/json` (checked against a capture
+  server). `RequestMessageBuilder.SetHeaders` adds content headers with `TryAddWithoutValidation`
+  instead of replacing the content's type, and a strict server rejects the header. Taking a
+  `Content-Type` header as the content type would fix every configuration that sets one, as the
+  docs showed before this was found.
+- **`{http{}}`: a string `body` is sent as a JSON string, quotes included** (`GetRawText`), so a form
+  written in `body`, as the docs showed for Stripe, arrives as `"amount=10&currency=usd"`. The docs
+  now use `body_raw` with `content_type`. A `form` object, encoded like `query`, would also stop a
+  caller's `&` or `=` from adding fields; today a form may hold only values the query checked or
+  built.
+- **`{http{}}`: a marker outside a JSON string that matches nothing leaves nothing**, so
+  `"body": { "doc": {{doc}} }` becomes `"doc": }`: the block isn't JSON, the call isn't made, and the
+  variable gets `status_code` 0 with an `Invalid JSON` error (checked against a running engine).
+  Writing `null` for such a marker, as for a known value that is `NULL`, would keep the block valid.
+
+The items below were found on 2026-10-21 by an inventory of every configuration key the code reads
+(for `docs/reference/tags.md`), each checked in the code or against a running engine.
+
+- **A setting that isn't a number makes every request a generic `400`.** `success_status_code`,
+  `db_command_timeout` or a cache duration of `abc`, on the route or at the root, makes the binder
+  throw inside the controller, so a configuration mistake reads as the caller's (logged at `Error`).
+  An invalid `<response_structure>` or `<buffer_rows>` is a clear `500` instead.
+- **A global `route_variable_pattern` changes how routes match, not how their values are read.**
+  `QueryRouteResolver` matches with the endpoint's pattern, else the global one, but extracts the
+  values with the endpoint's `route_variable_pattern` or `route_variables_pattern`, else the default.
+- **Upload limits: a `0` on the route counts as unset, a `0` at the root rejects every file.**
+  `max_number_of_files` and `max_file_size_in_bytes` below 1 on a route fall back to the global
+  value; the global value is used as it is.
+- **An SFTP upload store without a `password` is dropped without a log line**, so key-based SFTP
+  isn't possible and the files are not stored; a download from the same store allows an empty
+  password.
 - **Docs: finish the agent-first rewrite** ([docs/AUTHORING.md](docs/AUTHORING.md)).
-  Uploads, downloads and errors are done, and the `{auth{sub}}` examples, query chaining's error
-  format and the parameter priority order were corrected. Still to do:
-  - 02-configuration, which shows endpoints without `<queries>`;
-  - tutorials 02, 05, 07, 08 and 09, which show error bodies as `{"error": ...}`;
-  - 03-crud's `204` example with `OUTPUT`, which can't write a body;
-  - `MULTI_QUERY_CHAINING.md` (a root design note that README and tutorial 23 link as a deep dive),
-    which reads earlier queries' columns with `{{column}}` instead of `{pq{column}}`;
-  - tutorial 19, which puts a caller's value inside an `{http{}}` `"url"` string (AGENTS rule 11) and
-    says a `{s{}}` value in a block is "injected as a parameterized SQL variable";
-  - tutorial 17's contact-permissions example, whose `FOR JSON` column needs
-    `AS {type{json{permissions}}}` to come back as the nested array the page shows;
-  - topic 08 and tutorial 12: an empty route `<excluded_headers>` counts as not set, so the global
-    list applies;
-  - topic 17's and tutorial 19's form-encoded bodies built from raw caller values (`&` and `=` in a
-    value are structural there, as in a url): use `body_raw` with a content type, and encode or check
-    the values in an earlier chained query;
-  - 11-cors, whose defaults change when an `<authorize>` section exists;
-  - the webhook pages' status-polling endpoints, which are public and use sequential ids;
-  - `RateLimitCallerIdentity.cs`'s comment about an `oid` fallback that never matches.
-  - tutorials 06 and 07 on pattern overrides: an element on the endpoint, then `regex.xml`, then the
-    default (no `<query>` attribute).
-  Then add `docs/reference/tags.md` and `placeholders.md`, examples tested in CI, and docs
-  bundled in release archives.
+  The pages are rewritten or corrected, and `docs/reference/tags.md` and `placeholders.md` exist;
+  still to do: examples tested in CI, and docs bundled in release archives.
 
 ## Done
 

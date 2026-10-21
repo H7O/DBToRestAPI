@@ -14,9 +14,12 @@ If `name` or `phone` is missing, the application returns HTTP 400 **before the S
 
 ```json
 {
-  "error": "Bad request: missing mandatory parameter(s): name"
+  "success": false,
+  "message": "Missing mandatory parameters: name"
 }
 ```
+
+The check only asks whether the name exists in some source. An empty string or a JSON `null` passes it, so validate values in SQL (Layer 2).
 
 This is a quick, zero-cost check — no database round-trip needed.
 
@@ -100,15 +103,19 @@ if @email is not null and @email not like '%@%.%'
 
 if len(@errors) > 0
 begin
+  set @errors = rtrim(@errors);
   throw 50400, @errors, 1;
-  return;
 end
 ```
 
-Response:
+`THROW` takes a variable or a literal, not an expression, so the trailing space is trimmed in its own statement first.
+
+Response (HTTP 400):
 ```json
 {
-  "error": "name is required. phone is required. email format is invalid."
+  "success": false,
+  "message": "name is required. phone is required. email format is invalid.",
+  "error_number": 400
 }
 ```
 
@@ -146,7 +153,9 @@ If your SQL uses `{{` for other purposes (like SQL Server's JSON path syntax), y
 
 ### Per-Endpoint Override
 
-Use `||name||` instead of `{{name}}`:
+Each source has its own pattern: `json_variables_pattern` for the JSON body, `query_string_variables_pattern` for the query string, `route_variables_pattern`, `form_data_variables_pattern` and `headers_variables_pattern`. An element with one of those names on an endpoint replaces that source's pattern for that endpoint. Without it, the endpoint uses the one in `regex.xml`, and without that, the built-in default.
+
+Here, JSON body values are written `||name||` instead of `{{name}}`:
 
 ```xml
 <custom_delimiters>
@@ -163,6 +172,8 @@ Use `||name||` instead of `{{name}}`:
   </query>
 </custom_delimiters>
 ```
+
+Only the JSON body's pattern changed, so `||name||` reads the body alone. A `name` in the query string doesn't reach it, and `{{name}}` in this endpoint now reads every source except the body.
 
 ### Source-Specific Decorators
 
@@ -199,6 +210,8 @@ To change delimiters for all endpoints, edit `/config/regex.xml`:
   </regex>
 </settings>
 ```
+
+Edit the elements already in the shipped `regex.xml`, inside its one `<regex>` element. Here `||name||` reads the JSON body and the query string. The other sources keep `{{name}}` until you change their patterns too.
 
 > **Recommendation**: Stick with the default `{{param}}` unless you have a specific conflict. It's well-known, easy to read, and works with all examples in this tutorial.
 

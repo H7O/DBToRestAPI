@@ -223,7 +223,6 @@ Complete patterns for Create, Read, Update, and Delete operations.
   <route>contacts/{{id}}</route>
   <verb>DELETE</verb>
   <mandatory_parameters>id</mandatory_parameters>
-  <success_status_code>204</success_status_code>
   
   <query><![CDATA[
     DECLARE @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
@@ -235,11 +234,12 @@ Complete patterns for Create, Read, Update, and Delete operations.
     END
     
     DELETE FROM [contacts]
-    OUTPUT deleted.id, deleted.name
     WHERE id = @id;
   ]]></query>
 </delete_contact>
 ```
+
+The query returns no row, so a successful delete answers `204 No Content` with an empty body. To return the deleted record with `200` instead, add `OUTPUT deleted.id, deleted.name` to the `DELETE`. Don't combine a returned row with `<success_status_code>204</success_status_code>`: a `204` has no body, so the row is dropped, and nothing is logged.
 
 ### Soft Delete
 

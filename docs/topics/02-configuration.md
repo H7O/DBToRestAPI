@@ -1,105 +1,102 @@
+---
+title: Configuration
+summary: Where the configuration files live, how they are loaded, merged and reloaded, the top-level shape of each file, connection strings, environment variables and log levels.
+keywords: [settings.xml, sql.xml, api_keys.xml, api_gateway.xml, file_management.xml, auth_providers.xml, regex.xml, queries, ConnectionStrings, provider, additional_configurations, path, restart_on_path_changes, debug_mode_header_value, debug-mode, generic_error_message, success_status_code, db_command_timeout, host, verb, PATCH, HEAD, environment variables, appsettings.json, Logging__LogLevel__Default, hot reload]
+---
+
 # Configuration
 
-This document covers the configuration files that control DbToRestAPI behavior.
+> For AI agents: read [AGENTS.md](../../AGENTS.md) first. The documentation index is [llms.txt](../../llms.txt). Errors: [errors.md](../reference/errors.md).
 
-## Configuration Files Overview
+The engine reads XML files from its `config/` folder: `settings.xml` first, then each file it lists. All of them merge into one tree, which environment variables can override. This page covers where the files are, how they load and reload, and the top-level shape of each one. Each feature's own page has its tags.
 
-| File | Purpose |
+## Rules
+
+1. **Put every endpoint inside `<settings><queries>`.** An element directly under `<settings>` is not an endpoint, and a request to its route gets `404`.
+2. **Add to the container element a file already has.** Never write a second `<queries>`, `<cors>`, `<local_file_store>` or `<sftp_file_store>` beside the first: repeated siblings are numbered by the configuration reader, and everything inside them stops matching.
+3. **Give every endpoint an element name that no other loaded file uses,** and every verb and route pair too. Files merge element by element, so the same name in two files becomes one endpoint mixing both, and nothing is logged.
+4. **Set `provider` on every connection string.** It decides the SQL dialect you write. Without it the engine guesses from keywords in the string and gets common strings wrong ([13 databases](13-databases.md#provider-detection)).
+5. **In a clone, restart `dotnet run` after editing a file under `DBToRestAPI/config/`.** It serves copies of the files from the build output, and copies them again only when it starts.
+
+## Where the files are
+
+- **In a release:** `config/` next to the executable.
+- **In a clone:** `DBToRestAPI/config/`. `dotnet run` serves the copies in `DBToRestAPI/bin/<Configuration>/net10.0/config/`, and the SQLite demo database at `DBToRestAPI/bin/<Configuration>/net10.0/demo.db`. Only the files listed in `DBToRestAPI.csproj` are copied. A new file needs its own entry there, `<None Update="config\NAME.xml"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>`, or the engine fails to start once `<additional_configurations>` names it. Putting new endpoints in the existing `sql.xml` avoids this.
+
+| File | What it holds |
 |------|---------|
-| `/config/settings.xml` | Connection strings, global settings, debug mode |
-| `/config/sql.xml` | API endpoint definitions |
-| `/config/api_keys.xml` | API key collections |
-| `/config/api_gateway.xml` | Proxy route configurations |
-| `/config/file_management.xml` | File store definitions |
-| `/config/auth_providers.xml` | OIDC provider configurations |
+| `config/settings.xml` | Connection strings, global settings and defaults, and the list of the other files |
+| `config/sql.xml` | Endpoints, under `<settings><queries>` |
+| `config/api_keys.xml` | API key collections ([06](06-api-keys.md)) |
+| `config/api_gateway.xml` | Proxy routes, under `<settings><routes>` ([08](08-api-gateway.md)) |
+| `config/file_management.xml` | File stores and upload defaults ([09](09-file-uploads.md)) |
+| `config/auth_providers.xml` | OIDC providers, under `<settings><authorize><providers>` ([12](12-authentication.md)) |
+| `config/regex.xml` | The patterns that find placeholders in a query ([04](04-parameters.md)) |
 
-All configuration files support hot-reload — changes apply without restart.
+Every shipped file's root element is `<settings>`. The root's name is dropped in the merge, so a tag directly under the root of any file is a global setting.
+
+## How the files load
+
+1. The engine reads `config/settings.xml` from the executable's folder. Without it, the engine doesn't start.
+2. It reads each file listed in `<additional_configurations>`, in order, relative to the executable's folder. A file ending in `.json` is read as JSON. A listed file that doesn't exist stops the engine at start-up, and so does a file with invalid XML.
+
+   ```xml
+   <settings>
+     <additional_configurations>
+       <path>config/sql.xml</path>
+       <path>config/api_gateway.xml</path>
+       <restart_on_path_changes>false</restart_on_path_changes>
+     </additional_configurations>
+   </settings>
+   ```
+3. All the files merge into one tree. Where two files set the same value, the file read later wins. Environment variables and command-line arguments come last ([environment variables](#environment-variables)).
+4. Sibling elements with the same name become a numbered list. That is how `<path>`, `<key>` and `<header>` lists work, and why a second container element breaks (rule 2).
+
+## Reloading
+
+Saving a file the engine reads applies the change to the next request, without a restart. These need a restart:
+
+- Kestrel and TLS settings;
+- `data_protection_key_path` under `<settings_encryption>`: the engine chooses how it encrypts once, as it starts;
+- adding or removing a file under `<additional_configurations>`. The engine logs a warning and keeps the files it started with. With `<restart_on_path_changes>true</restart_on_path_changes>` it stops instead, so that a host which restarts it (IIS, a service manager, Docker with a restart policy) loads the new list.
+
+A file saved with invalid XML is ignored, and the previous version is kept. The engine writes a warning naming the file to the standard error stream, not to the log. A route with `<cache>` keeps serving its cached answer until the entry expires. If a change doesn't take effect, save the file again or restart.
 
 ## settings.xml
 
-### Connection Strings
+### Connection strings
 
 ```xml
 <settings>
   <ConnectionStrings>
-    <!-- Default connection (auto-detected provider) -->
-    <default><![CDATA[Server=.\SQLEXPRESS;Database=test;Integrated Security=True;TrustServerCertificate=True;]]></default>
-    
-    <!-- Explicit provider specification -->
-    <postgres provider="Npgsql"><![CDATA[Host=localhost;Database=mydb;Username=user;Password=pass;]]></postgres>
-    
-    <!-- Multiple databases -->
-    <analytics provider="Npgsql"><![CDATA[Host=analytics.example.com;Database=analytics;...]]></analytics>
-    <legacy provider="Oracle.ManagedDataAccess.Core"><![CDATA[Data Source=legacy:1521/ORCL;...]]></legacy>
+    <default provider="Microsoft.Data.SqlClient"><![CDATA[Server=.\SQLEXPRESS;Database=test;Integrated Security=True;TrustServerCertificate=True;]]></default>
+    <analytics provider="Npgsql"><![CDATA[Host=analytics.example.com;Database=analytics;Username=user;Password=pass;]]></analytics>
+    <legacy provider="Oracle.ManagedDataAccess.Core"><![CDATA[Data Source=legacy:1521/ORCL;User Id=user;Password=pass;]]></legacy>
   </ConnectionStrings>
 </settings>
 ```
 
-### Supported Providers
+An endpoint without `<connection_string_name>` uses `default`. The shipped `default` is the SQLite demo database. The providers, and what each one needs, are in [13 databases](13-databases.md).
 
-| Database | Provider Attribute | Auto-Detected |
-|----------|-------------------|---------------|
-| SQL Server | `Microsoft.Data.SqlClient` | ✅ Yes |
-| PostgreSQL | `Npgsql` | ✅ Yes |
-| MySQL/MariaDB | `MySqlConnector` | ✅ Yes |
-| SQLite | `Microsoft.Data.Sqlite` | ✅ Yes |
-| Oracle | `Oracle.ManagedDataAccess.Core` | ✅ Yes |
-| IBM DB2 | `Net.IBM.Data.Db2` | ✅ Yes |
-| ODBC | `System.Data.Odbc` | ✅ Yes |
-| OleDb | `System.Data.OleDb` | ✅ Yes |
-
-> **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
-
-### Debug Mode
+### Debug mode and the generic error message
 
 ```xml
 <settings>
-  <!-- Value required in debug-mode header to see SQL errors -->
-  <debug_mode_header_value>my-secret-debug-key</debug_mode_header_value>
-  
-  <!-- Custom generic error message (default: "An error occurred...") -->
-  <generic_error_message>An error occurred while processing your request.</generic_error_message>
+  <!-- <debug_mode_header_value>54321</debug_mode_header_value> -->
+  <generic_error_message><![CDATA[An error occurred while processing your request.]]></generic_error_message>
 </settings>
 ```
 
-### Global CORS
+`debug_mode_header_value` is commented out as shipped, which keeps debug mode off. A request whose `debug-mode` header equals it gets the database's error message and stack trace instead of `generic_error_message`. If you uncomment it to debug, comment it out again before deploying, or set it to a long random secret. `generic_error_message` is the message of a database error you didn't raise yourself ([errors.md](../reference/errors.md)). Without it, the message is `An error occurred while processing your request.`
 
-```xml
-<settings>
-  <cors>
-    <pattern><![CDATA[^(localhost|.*\.example\.com)$]]></pattern>
-    <fallback_origin>https://www.example.com</fallback_origin>
-    <max_age>86400</max_age>
-  </cors>
-</settings>
-```
+### Global CORS, rate limits and encryption
 
-### Rate Limiting
-
-A global default for every endpoint. Endpoints override single tags or opt out with
-`<enabled>false</enabled>`; no block anywhere means no limit.
-
-```xml
-<settings>
-  <rate_limit>
-    <max_requests>120</max_requests>
-    <window_seconds>60</window_seconds>
-    <per>caller</per>
-  </rate_limit>
-</settings>
-```
-
-See [Rate Limiting](18-rate-limiting.md) for per-endpoint overrides, who a "caller" is, and the
-reverse-proxy client-IP settings.
-### Settings Encryption
+`settings.xml` holds one `<cors>` block, the default for every route ([11 CORS](11-cors.md)), and an optional `<rate_limit>` block, the default limit for every endpoint ([18 rate limiting](18-rate-limiting.md)). `<settings_encryption>` names the values the engine encrypts in place on first run ([15 encryption](15-encryption.md)):
 
 ```xml
 <settings>
   <settings_encryption>
-    <!-- Cross-platform: specify key directory -->
     <data_protection_key_path>./keys/</data_protection_key_path>
-    
-    <!-- What to encrypt -->
     <sections_to_encrypt>
       <section>ConnectionStrings</section>
       <section>authorize:providers:azure_b2c:client_secret</section>
@@ -108,233 +105,137 @@ reverse-proxy client-IP settings.
 </settings>
 ```
 
-On first run, unencrypted values become `encrypted:CfDJ8NhY2kB...`
-
 ## sql.xml
 
-### Basic Endpoint Structure
+Each element under `<settings><queries>` is an endpoint. Its element name is its route unless `<route>` sets another. SQL Server:
 
 ```xml
 <settings>
-  <!-- Each child node is an endpoint -->
-  
-  <endpoint_name>
-    <!-- Optional: Custom route (default: node name) -->
-    <route>custom/path/{{id}}</route>
-    
-    <!-- Optional: HTTP method filter -->
-    <verb>GET</verb>
-    
-    <!-- Optional: Restrict to specific hostname -->
-    <host>www.example.com</host>
-    
-    <!-- Optional: Required parameters -->
-    <mandatory_parameters>id,name</mandatory_parameters>
-    
-    <!-- Optional: Success HTTP code (default: 200) -->
-    <success_status_code>201</success_status_code>
-    
-    <!-- Optional: Use different database -->
-    <connection_string_name>analytics</connection_string_name>
-    
-    <!-- Required: SQL query -->
-    <query><![CDATA[
-      DECLARE @id UNIQUEIDENTIFIER = {{id}};
-      SELECT * FROM table WHERE id = @id;
-    ]]></query>
-    
-    <!-- Optional: Count for pagination -->
-    <count_query><![CDATA[
-      SELECT COUNT(*) FROM table;
-    ]]></count_query>
-  </endpoint_name>
-  
+  <queries>
+
+    <get_contact>
+      <route>contacts/{{id}}</route>
+      <verb>GET</verb>
+      <query><![CDATA[
+        DECLARE @id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{id}});
+        IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = @id)
+          THROW 50404, 'Contact not found', 1;
+        SELECT id, name, phone FROM contacts WHERE id = @id;
+      ]]></query>
+    </get_contact>
+
+    <!-- every other endpoint goes here, inside the same <queries> -->
+
+  </queries>
 </settings>
 ```
 
-### All Endpoint Tags
+The tags used most:
 
-| Tag | Required | Default | Description |
-|-----|----------|---------|-------------|
-| `<route>` | No | Node name | URL path with `{{param}}` placeholders |
-| `<verb>` | No | Any | `GET`, `POST`, `PUT`, `DELETE`, or comma-separated |
-| `<host>` | No | Any host | Restrict to hostname. Exact: `www.example.com`, wildcard: `*.example.com`. Port is ignored. |
-| `<mandatory_parameters>` | No | None | Comma-separated required params |
-| `<success_status_code>` | No | `200` | HTTP status on success |
-| `<connection_string_name>` | No | `default` | Which connection string to use |
-| `<query>` | **Yes** | — | SQL in `<![CDATA[...]]>` |
-| `<count_query>` | No | None | Count query for pagination |
-| `<response_structure>` | No | Shape follows the row count | `array` (always a list) or `file` (a download). Leave it out for one record. See [Response formats](05-response-formats.md) |
-| `<api_keys_collections>` | No | None | Required API key collections |
-| `<authorize>` | No | None | JWT/OIDC configuration. `<provider>` accepts one name, a comma-separated list, or `*` (see [Authentication](12-authentication.md#multiple-providers-per-endpoint)) |
-| `<cors>` | No | Global | Endpoint-specific CORS |
-| `<cache>` | No | None | Caching configuration |
-| `<file_management>` | No | None | File upload/download config |
-| `<rate_limit>` | No | Global | Per-endpoint request limit: `<max_requests>`, `<window_seconds>`, `<per>`, `<enabled>`, `<message>`. Each tag falls back to the global block in settings.xml (see [Rate Limiting](18-rate-limiting.md)) |
+| Tag | Default | What it does |
+|-----|---------|-------------|
+| `<route>` | The element name | URL path, with route values in `{{name}}` |
+| `<verb>` | Any method | `GET`, `POST`, `PUT`, `PATCH` or `DELETE`, or several separated by commas. A `HEAD` request gets the answer of the route that takes `GET`, without its body, unless a route takes `HEAD` itself |
+| `<host>` | Any host | Only requests to this host name: exact (`www.example.com`) or a wildcard (`*.example.com`). The port is ignored |
+| `<query>` | Required | The SQL, in `<![CDATA[ ... ]]>` |
+| `<mandatory_parameters>` | None | Comma-separated names that must exist in some source, or the request gets `400` ([04](04-parameters.md)) |
+| `<connection_string_name>` | `default` | Which connection string the query uses |
+| `<success_status_code>` | `200` | The status of a successful answer. The route's value wins, then one at the root of `settings.xml` |
+| `<response_structure>` | Shape follows the row count | `array` (always a list) or `file` (a download). Leave it out for one record ([05](05-response-formats.md)) |
+| `<count_query>` | None | A second query that counts the rows, for pagination: the answer becomes `{"success":true,"count":N,"data":[...]}` ([05](05-response-formats.md)) |
+| `<api_keys_collections>` | None | Requires an API key from these collections ([06](06-api-keys.md)) |
+| `<authorize>` | None | Requires a JWT ([12](12-authentication.md)) |
+| `<cache>` | None | Caches the answer of `GET` and `HEAD` requests ([07](07-caching.md)) |
+| `<cors>` | The global block | CORS headers ([11](11-cors.md)) |
+| `<file_management>` | `file_management.xml` | Uploads and downloads ([09](09-file-uploads.md), [10](10-file-downloads.md)) |
+| `<rate_limit>` | The global block | Request limit ([18](18-rate-limiting.md)) |
 
-### Host-Based Routing
+### Host-based routing
 
-The `<host>` tag lets you restrict an endpoint to a specific hostname — useful for multi-tenant APIs or serving different content per domain.
+Endpoints may share a route and verb when their `<host>` differs. The engine picks the most specific match: an exact host, then a wildcard, then an endpoint without `<host>`. Each element below goes inside `<settings><queries>`:
 
-**Exact match:**
 ```xml
 <public_home>
   <host>www.example.com</host>
   <route>home</route>
   <query><![CDATA[ SELECT 'Welcome to Example' AS message; ]]></query>
 </public_home>
-```
 
-**Wildcard match** (`*.example.com` matches any subdomain):
-```xml
 <tenant_home>
   <host>*.example.com</host>
   <route>home</route>
   <query><![CDATA[ SELECT 'Welcome, tenant' AS message; ]]></query>
 </tenant_home>
-```
 
-**No host** (matches any hostname — the default):
-```xml
 <fallback_home>
   <route>home</route>
   <query><![CDATA[ SELECT 'Welcome' AS message; ]]></query>
 </fallback_home>
 ```
 
-When multiple endpoints share the same route and verb, the engine picks the most specific host match:
-
-| Priority | Pattern | Example |
-|----------|---------|---------|
-| Highest | Exact host | `www.example.com` |
-| Medium | Wildcard | `*.example.com` |
-| Lowest | No `<host>` tag | Matches everything |
-
-Port numbers in the request are ignored during matching.
-
-### Query Timeout
+### Query timeout
 
 ```xml
 <query db_command_timeout="120"><![CDATA[
-  -- Long-running query with 120 second timeout
   SELECT * FROM large_table;
 ]]></query>
 ```
 
 An endpoint's `<db_command_timeout>` and a global one in `settings.xml` set it too. See [Databases](13-databases.md#per-query-timeout) for which one wins and when the connection string's timeout applies.
 
-## api_keys.xml
+## The other files
+
+Each has its own page. Their top-level shape:
 
 ```xml
+<!-- api_keys.xml -->
 <settings>
   <api_keys_collections>
-    
-    <vendors>
-      <key>vendor-key-abc123</key>
-      <key>vendor-key-def456</key>
-    </vendors>
-    
-    <internal>
-      <key>internal-service-key</key>
-    </internal>
-    
+    <external_vendors>
+      <key>api key 1</key>
+      <key>api key 2</key>
+    </external_vendors>
   </api_keys_collections>
 </settings>
-```
 
-Reference in sql.xml:
-```xml
-<api_keys_collections>vendors,internal</api_keys_collections>
-```
-
-## api_gateway.xml
-
-```xml
+<!-- api_gateway.xml -->
 <settings>
   <routes>
-    
     <cat_facts>
       <url>https://catfact.ninja/fact</url>
       <excluded_headers>x-api-key,host</excluded_headers>
     </cat_facts>
-    
-    <external_api>
-      <route>external/*</route>
-      <url>https://api.example.com/</url>
-      <api_keys_collections>vendors</api_keys_collections>
-      <cache>
-        <memory>
-          <duration_in_milliseconds>60000</duration_in_milliseconds>
-        </memory>
-      </cache>
-    </external_api>
-    
   </routes>
 </settings>
-```
 
-## file_management.xml
-
-```xml
+<!-- file_management.xml -->
 <settings>
   <file_management>
-    <!-- Path structure for stored files -->
     <relative_file_path_structure>{date{yyyy}}/{date{MMM}}/{date{dd}}/{{guid}}/{file{name}}</relative_file_path_structure>
-    
-    <!-- Global restrictions -->
-    <permitted_file_extensions>.pdf,.docx,.png,.jpg</permitted_file_extensions>
-    <max_file_size_in_bytes>10485760</max_file_size_in_bytes>
-    <max_number_of_files>5</max_number_of_files>
-    
-    <!-- Local stores -->
     <local_file_store>
       <primary>
         <base_path><![CDATA[c:\uploads\]]></base_path>
       </primary>
     </local_file_store>
-    
-    <!-- SFTP stores -->
-    <sftp_file_store>
-      <remote>
-        <host>sftp.example.com</host>
-        <port>22</port>
-        <username>user</username>
-        <password>pass</password>
-        <base_path>/uploads/</base_path>
-      </remote>
-    </sftp_file_store>
   </file_management>
 </settings>
-```
 
-## auth_providers.xml
-
-```xml
+<!-- auth_providers.xml -->
 <settings>
   <authorize>
     <providers>
-      
-      <azure_b2c>
-        <authority>https://yourb2c.b2clogin.com/yourb2c.onmicrosoft.com/B2C_1_signupsignin</authority>
-        <audience>your-api-client-id</audience>
-        <validate_issuer>true</validate_issuer>
-        <validate_audience>true</validate_audience>
-        <validate_lifetime>true</validate_lifetime>
-        <clock_skew_seconds>300</clock_skew_seconds>
-        <userinfo_fallback_claims>email,name</userinfo_fallback_claims>
-      </azure_b2c>
-      
       <google>
         <authority>https://accounts.google.com</authority>
         <audience>your-client-id.apps.googleusercontent.com</audience>
       </google>
-      
     </providers>
   </authorize>
 </settings>
 ```
 
-## Environment Variables
+An `<authorize>` section at the root, as in `auth_providers.xml`, also turns CORS credentials on for every route ([11](11-cors.md#rules)).
+
+## Environment variables
 
 Any XML or JSON setting can be overridden by an environment variable. Environment variables
 take precedence over every config file; only command-line arguments
@@ -406,6 +307,11 @@ Use `__` (double underscore) as the hierarchy separator:
 > On Linux, use `__` because `:` is not valid in environment variable names on
 > some shells.
 
+An environment variable replaces only the value it names. `ConnectionStrings__default` replaces the
+string and keeps the `provider` attribute the file gives it; `ConnectionStrings__default__provider`
+sets that. A connection that exists only in the environment needs both. `vars__name` sets a
+[settings variable](21-settings-vars.md) the same way.
+
 ### Examples
 
 ```bash
@@ -433,10 +339,10 @@ Service you can set `ConnectionStrings__default` in the portal under
 See the [Production & Deployment](../tutorial/21-production.md) tutorial for more
 deployment-specific examples.
 
-## Related Topics
+## Related
 
-- [Multi-Database](13-databases.md) - Per-endpoint database connections
-- [API Keys](06-api-keys.md) - Key collection setup
-- [Authentication](12-authentication.md) - OIDC provider configuration
-- [Encryption](15-encryption.md) - Settings encryption details
-- [Rate Limiting](18-rate-limiting.md) - Global default and per-endpoint request limits
+- [13 Databases](13-databases.md): providers and per-endpoint connections.
+- [04 Parameters](04-parameters.md): what a query can read.
+- [06 API keys](06-api-keys.md), [12 Authentication](12-authentication.md): protecting endpoints.
+- [15 Encryption](15-encryption.md): encrypting settings.
+- [18 Rate limiting](18-rate-limiting.md): the global default and per-endpoint limits.

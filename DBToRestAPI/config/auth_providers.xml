@@ -60,11 +60,10 @@
         <!-- ========================================= -->
         <!-- UserInfo Fallback Configuration           -->
         <!-- ========================================= -->
-        <!-- 
-          When these claims are missing from the access token,
-          the middleware will call the UserInfo endpoint to fetch them.
-          This is common when using social logins (Google, Facebook, etc.)
-          where the access token might be opaque or have minimal claims.
+        <!--
+          When the token (a JWT) lacks one of these claims, the middleware calls the provider's
+          UserInfo endpoint to fetch it. The token itself must be a JWT: an opaque access token,
+          such as some social logins issue, can't be validated and gets 401.
         -->
         <userinfo_fallback_claims>email,name,given_name,family_name</userinfo_fallback_claims>
 
@@ -87,7 +86,8 @@
         <validate_lifetime>true</validate_lifetime>
         <clock_skew_seconds>300</clock_skew_seconds>
 
-        <!-- Google access tokens are often opaque, so UserInfo is essential -->
+        <!-- Clients send Google's ID token, a JWT whose aud is the client id above. Google's
+             access tokens are opaque, so the engine can't validate them. -->
         <userinfo_fallback_claims>email,name,given_name,family_name,picture</userinfo_fallback_claims>
         <userinfo_cache_duration_seconds>300</userinfo_cache_duration_seconds>
       </google>
@@ -103,7 +103,8 @@
         <validate_lifetime>true</validate_lifetime>
         <clock_skew_seconds>300</clock_skew_seconds>
 
-        <!-- Facebook also uses opaque tokens -->
+        <!-- Facebook's access tokens are opaque, so the engine can't validate them: only a token
+             that is a JWT, such as an OIDC ID token, works here. -->
         <userinfo_fallback_claims>email,name,first_name,last_name,picture</userinfo_fallback_claims>
         <userinfo_cache_duration_seconds>300</userinfo_cache_duration_seconds>
       </facebook>

@@ -46,10 +46,10 @@ feature.  Use them when you need quick lookups:
 
 | Resource | URL |
 |----------|-----|
-| **GitHub Repository** | [github.com/nichenqin/DBToRestAPI](https://github.com/H7O/DBToRestAPI) |
+| **GitHub Repository** | [github.com/H7O/DBToRestAPI](https://github.com/H7O/DBToRestAPI) |
 | **README** | [README.md](../../README.md) — Full project overview |
 | **LLM-Friendly Docs** | [llms.txt](../../llms.txt) / [llms.md](../../llms.md) |
-| **Multi-Query Chaining Deep Dive** | [MULTI_QUERY_CHAINING.md](../../MULTI_QUERY_CHAINING.md) |
+| **Multi-Query Chaining** | [Topic 14](../topics/14-query-chaining.md), the reference; [MULTI_QUERY_CHAINING.md](../../MULTI_QUERY_CHAINING.md), how it is built |
 | **Configuration Management** | [CONFIGURATION_MANAGEMENT.md](../../CONFIGURATION_MANAGEMENT.md) |
 | **License** | MIT — free for personal and commercial use |
 

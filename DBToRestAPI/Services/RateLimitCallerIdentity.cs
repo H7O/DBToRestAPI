@@ -24,9 +24,11 @@ public static class RateLimitCallerIdentity
     /// <summary>
     /// The caller for <see cref="RateLimitPer.Caller"/>, in this order:
     /// <list type="number">
-    /// <item>the authenticated user (<c>user_claims</c> from Step4: <c>user_id</c>, else <c>oid</c> in its
-    ///       short or long form, else a hash of <c>email</c>), prefixed with the token's issuer when
-    ///       present, else the provider name;</item>
+    /// <item>the authenticated user (<c>user_claims</c> from Step4: <c>user_id</c>; when that is the
+    ///       literal <c>Not supported</c>, which some providers send instead of a subject, <c>oid</c> in
+    ///       its short or long form, since Step4 takes <c>user_id</c> from <c>sub</c> before <c>oid</c>;
+    ///       else a hash of <c>email</c>), prefixed with the token's issuer when present, else the
+    ///       provider name;</item>
     /// <item>the validated API key (<c>api_key_hash</c> from Step3) when the endpoint declares <c>api_keys_collections</c>;</item>
     /// <item>the client IP.</item>
     /// </list>

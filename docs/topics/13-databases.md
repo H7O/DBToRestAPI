@@ -4,16 +4,18 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, and any ODBC 
 
 ## Supported Databases
 
-| Database | Provider | Auto-Detected |
-|----------|----------|---------------|
-| SQL Server | `Microsoft.Data.SqlClient` | ✅ |
-| PostgreSQL | `Npgsql` | ✅ |
-| MySQL/MariaDB | `MySqlConnector` | ✅ |
-| SQLite | `Microsoft.Data.Sqlite` | ✅ |
-| Oracle | `Oracle.ManagedDataAccess.Core` | ✅ |
-| IBM DB2 | `Net.IBM.Data.Db2` | ✅ |
-| ODBC | `System.Data.Odbc` | ✅ |
-| OleDb | `System.Data.OleDb` | ✅ |
+| Database | `provider` attribute |
+|----------|----------|
+| SQL Server | `Microsoft.Data.SqlClient` |
+| PostgreSQL | `Npgsql` |
+| MySQL/MariaDB | `MySqlConnector` |
+| SQLite | `Microsoft.Data.Sqlite` |
+| Oracle | `Oracle.ManagedDataAccess.Core` |
+| IBM DB2 | `Net.IBM.Data.Db2` |
+| ODBC | `System.Data.Odbc` |
+| OleDb | `System.Data.OleDb` |
+
+Set `provider` on every connection string. Without it, the engine guesses from keywords in the string ([provider detection](#provider-detection)), and the guess misreads common strings: a SQL Server string with a SQL login (`Data Source=...;Initial Catalog=...;User Id=...;Password=...`) goes to the Oracle driver, which fails every request.
 
 > **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
@@ -27,8 +29,8 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, and any ODBC 
 
 ```xml
 <ConnectionStrings>
-  <!-- SQL Server (default, auto-detected) -->
-  <default><![CDATA[Server=.\SQLEXPRESS;Database=app;Integrated Security=True;TrustServerCertificate=True;]]></default>
+  <!-- SQL Server -->
+  <default provider="Microsoft.Data.SqlClient"><![CDATA[Server=.\SQLEXPRESS;Database=app;Integrated Security=True;TrustServerCertificate=True;]]></default>
   
   <!-- PostgreSQL -->
   <postgres provider="Npgsql"><![CDATA[Host=localhost;Database=analytics;Username=user;Password=pass;]]></postgres>
@@ -240,17 +242,18 @@ A query's timeout, in seconds, is the first of these that is set: its `db_comman
 
 ## Provider Detection
 
-Auto-detection examines connection string patterns:
-- `Data Source=`, `Server=` → SQL Server
-- `Host=` → PostgreSQL
-- `Server=` with `SslMode=` → MySQL
-- `Data Source=*.db` → SQLite
-- `:1521` or `SERVICE_NAME` → Oracle
-- `:50000` → DB2
-- `Driver=` → ODBC
-- `Provider=` (OleDb-specific providers) → OleDb
+A connection string without a `provider` attribute gets the first rule below that matches. Each rule looks for text anywhere in the string, ignoring case:
 
-**Recommendation:** Explicitly specify `provider` attribute in production — especially for ODBC and OleDb connections.
+1. `Host=` without `Data Source=`: PostgreSQL.
+2. `SslMode=`, `AllowPublicKeyRetrieval=`, or `Server=` with `Port=3306`: MySQL.
+3. `(DESCRIPTION=`, `:1521`, or `User Id=` with `Data Source=`: Oracle.
+4. `.db`, `.sqlite` or `:memory:`: SQLite.
+5. `Database=` and `Server=` with `:50000` or `Protocol=TCPIP`, or `Database=` with `UID=` and `PWD=`: DB2.
+6. `Driver=`: ODBC.
+7. `Provider=` with `OLEDB`, `MSOLEDBSQL`, `SQLOLEDB`, `Microsoft.ACE`, `Microsoft.Jet`, `MSDAORA` or `OraOLEDB`: OleDb.
+8. Anything else: SQL Server.
+
+Because the rules match text, they misfire. A SQL Server string with a SQL login matches rule 3 and goes to the Oracle driver (`ORA-50008: 'Initial Catalog' is an invalid connection string attribute`). A server named `prod.db.example.com` matches rule 4 and goes to SQLite. So set `provider` on every connection string.
 
 ## Related Topics
 

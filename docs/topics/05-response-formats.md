@@ -1,7 +1,7 @@
 ---
 title: Response formats
 summary: The shape of a successful response (one object, an array, a count wrapper or a file), chosen with response_structure, plus nested JSON, status codes, empty results, and buffer_rows, which reads a result before writing it.
-keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, buffer_rows, "204", "{type{json{...}}}", FOR JSON]
+keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, buffer_rows, "204", "{type{json{...}}}", FOR JSON, DATE, DATETIME2, DATETIMEOFFSET, "T00:00:00", UNIQUEIDENTIFIER, VARBINARY, base64]
 ---
 
 # Response Formats
@@ -237,6 +237,8 @@ Return one of these from your query:
 </delete_item>
 ```
 
+A `204` never has a body. A row that a `204` route's query returns is dropped without a log line, so leave such a query without `OUTPUT` or `RETURNING`. A query that returns no row answers `204` anyway when the success code is the default `200`.
+
 ## Empty Results
 
 | Scenario | Response |
@@ -263,8 +265,28 @@ FROM items;
 ```
 
 ```json
-{"itemId": 1, "createdAt": "2025-01-24", "fullName": "John Doe"}
+{"itemId": 1, "createdAt": "2025-01-24T09:30:00", "fullName": "John Doe"}
 ```
+
+## How column values are written
+
+Each value is written as JSON from the type the database driver returns. SQL Server:
+
+| Column type | JSON |
+|---|---|
+| `DATE` | `"2026-01-15T00:00:00"`: a date gets a midnight time. Select `CONVERT(CHAR(10), d, 23) AS d` for `"2026-01-15"` |
+| `DATETIME`, `DATETIME2` | `"2026-01-15T10:20:30.123"`, without an offset |
+| `DATETIMEOFFSET` | `"2026-01-15T10:20:30+04:00"` |
+| `TIME` | `"12:30:05"` |
+| `INT`, `BIGINT` | a number, every digit kept: `9007199254740993` |
+| `DECIMAL`, `MONEY` | a number with the column's scale: `1.50` |
+| `FLOAT` | a number: `2.5` |
+| `BIT` | `true` or `false` |
+| `UNIQUEIDENTIFIER` | a lower-case string: `"6f9619ff-8b86-d011-b42d-00c04fc964ff"` |
+| `VARBINARY` | base64: `"AQL/"` |
+| `NULL` | `null` |
+
+SQLite has no date or boolean type: a date is the text you stored (`"2026-01-15"`), a comparison such as `active = 1` is `1` or `0`, and a decimal literal is a `REAL` (`1.5`). A JavaScript client reads a JSON number as a double, so for an id or an amount beyond about 15 digits select it as text.
 
 ## Related Topics
 

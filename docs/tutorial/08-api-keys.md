@@ -95,7 +95,8 @@ curl http://localhost:5000/api/contacts
 Response (HTTP 401):
 ```json
 {
-  "error": "Unauthorized"
+  "success": false,
+  "message": "API key was not provided"
 }
 ```
 
@@ -109,7 +110,8 @@ curl -H "x-api-key: wrong-key" \
 Response (HTTP 401):
 ```json
 {
-  "error": "Unauthorized"
+  "success": false,
+  "message": "Unauthorized client"
 }
 ```
 

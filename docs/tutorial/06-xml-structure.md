@@ -46,7 +46,9 @@ All configuration files are monitored for changes. When you save a file:
 
 **No restart required.** This applies to all config files — `sql.xml`, `api_keys.xml`, `api_gateway.xml`, etc.
 
-> **Exception**: Adding or removing `<path>` entries in `<additional_configurations>` may require a restart depending on the `<restart_on_path_changes>` setting. Content changes within existing files always reload automatically.
+> **Exceptions**: Kestrel and TLS settings, `data_protection_key_path`, and adding or removing `<path>` entries in `<additional_configurations>` need a restart. With `<restart_on_path_changes>true</restart_on_path_changes>`, the application stops by itself when the list changes, so a host that restarts it loads the new list. A file saved with invalid XML is ignored, and the previous version kept.
+
+> **Running from a clone?** `dotnet run` serves copies of the files from `DBToRestAPI/bin/`, made when it starts. After editing a file under `DBToRestAPI/config/`, stop it and start it again. See [Configuration](../topics/02-configuration.md#where-the-files-are).
 
 ## The Complete sql.xml Tag Reference
 
@@ -54,7 +56,7 @@ Here's every tag you can use inside an endpoint definition:
 
 ```xml
 <settings>
-  <queries>  <!-- Some config files use <queries>, the endpoing definitions work the same regardless -->
+  <queries>  <!-- Every endpoint goes inside this one <queries> element -->
     <endpoint_name>
 
       <!-- Routing -->
@@ -109,7 +111,7 @@ Here's every tag you can use inside an endpoint definition:
 | Tag | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `<route>` | No | XML tag name | URL path. Supports `{{param}}` placeholders. |
-| `<verb>` | No | Any verb | HTTP method: `GET`, `POST`, `PUT`, `DELETE`, `PATCH` |
+| `<verb>` | No | Any verb | HTTP method: `GET`, `POST`, `PUT`, `PATCH` or `DELETE`, or several separated by commas. A `HEAD` request gets the `GET` route's answer without its body. |
 | `<host>` | No | Any host | Restrict endpoint to a hostname. Exact (`www.example.com`) or wildcard (`*.example.com`). Port is ignored. |
 | `<mandatory_parameters>` | No | None | Comma-separated params. Missing → HTTP 400. |
 | `<connection_string_name>` | No | `default` | Which connection string from settings.xml. |
@@ -136,8 +138,8 @@ You can define multiple connection strings for different databases:
 
 ```xml
 <ConnectionStrings>
-  <!-- Default: auto-detected SQL Server -->
-  <default><![CDATA[Data Source=.\SQLEXPRESS;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></default>
+  <!-- Default: SQL Server -->
+  <default provider="Microsoft.Data.SqlClient"><![CDATA[Data Source=.\SQLEXPRESS;Initial Catalog=test;Integrated Security=True;TrustServerCertificate=True;]]></default>
 
   <!-- Named connection: PostgreSQL -->
   <analytics provider="Npgsql"><![CDATA[Host=analytics.example.com;Database=analytics;Username=user;Password=pass;]]></analytics>
@@ -159,16 +161,18 @@ Use the `<connection_string_name>` tag in your endpoint to select a specific con
 
 If omitted, the `default` connection string is used. The supported database providers are:
 
-| Database | `provider` Attribute | Auto-Detected? |
-|----------|---------------------|----------------|
-| SQL Server | `Microsoft.Data.SqlClient` | Yes |
-| PostgreSQL | `Npgsql` | Yes |
-| MySQL/MariaDB | `MySqlConnector` | Yes |
-| SQLite | `Microsoft.Data.Sqlite` | Yes |
-| Oracle | `Oracle.ManagedDataAccess.Core` | Yes |
-| IBM DB2 | `Net.IBM.Data.Db2` | Yes |
-| ODBC | `System.Data.Odbc` | Yes |
-| OleDb | `System.Data.OleDb` | Yes |
+| Database | `provider` Attribute |
+|----------|---------------------|
+| SQL Server | `Microsoft.Data.SqlClient` |
+| PostgreSQL | `Npgsql` |
+| MySQL/MariaDB | `MySqlConnector` |
+| SQLite | `Microsoft.Data.Sqlite` |
+| Oracle | `Oracle.ManagedDataAccess.Core` |
+| IBM DB2 | `Net.IBM.Data.Db2` |
+| ODBC | `System.Data.Odbc` |
+| OleDb | `System.Data.OleDb` |
+
+Always set `provider`. Without it, the application guesses from keywords in the connection string, and the guess misreads common strings: a SQL Server string with `User Id=` and `Data Source=` goes to the Oracle driver ([Provider detection](../topics/13-databases.md#provider-detection)).
 
 > **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
@@ -176,11 +180,13 @@ If omitted, the `default` connection string is used. The supported database prov
 
 ### Debug Mode
 
-In production, SQL error details are hidden. Debug mode lets you see them:
+In production, SQL error details are hidden. Debug mode lets you see them. It is off as shipped: the tag is commented out in `settings.xml`. Uncomment it while you debug:
 
 ```xml
 <debug_mode_header_value>my-secret-key</debug_mode_header_value>
 ```
+
+Anyone who sends this value gets your database's error messages and stack traces, so comment the tag out again before deploying, or set it to a long random secret.
 
 Send this header to see SQL errors in the response:
 ```bash
@@ -220,9 +226,9 @@ Define a default CORS policy for all endpoints:
 </cors>
 ```
 
-- `<pattern>` — Regex checked against the request's `Origin` header. If it matches, the origin is echoed back in `Access-Control-Allow-Origin`.
-- `<fallback_origin>` — Used when the origin doesn't match the pattern.
-- Endpoint-level `<cors>` overrides this global setting.
+- `<pattern>` — Regex checked against the host in the request's `Origin` header, without its scheme or port. Anchor it with `^` and `$`. If it matches, the origin is echoed back in `Access-Control-Allow-Origin`.
+- `<fallback_origin>` — Sent when the origin doesn't match the pattern. Without it, the answer is `*`, which lets every page read the response, so set it to your own site. Don't write `*` here: it is sent as `https://*`. To allow every origin, leave out both tags.
+- Endpoint-level `<cors>` overrides this global setting, tag by tag. See [CORS](../topics/11-cors.md), including what changes when an `<authorize>` section exists.
 
 ## Configuration Encryption
 
@@ -280,7 +286,12 @@ You're not limited to a single `sql.xml`. You can organize endpoints into multip
 </additional_configurations>
 ```
 
-Each file follows the same structure. This is useful for large projects with many endpoints — organize by domain, team, or feature.
+Each file follows the same structure: its endpoints inside `<settings><queries>`. This is useful for large projects with many endpoints — organize by domain, team, or feature.
+
+Two things to watch:
+
+- **Endpoint names must be unique across all files.** The files merge element by element, so a `<get_contact>` in two files becomes one endpoint mixing both, and nothing is logged.
+- **In a clone, a new file needs an entry in `DBToRestAPI.csproj`**, or `dotnet run` doesn't copy it and the application fails to start: `<None Update="config\contacts_api.xml"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>`.
 
 ## The regex.xml File
 
@@ -299,7 +310,7 @@ This file controls how parameters are detected in SQL queries. The defaults work
 
 The **specific decorators** (`{j{}`, `{qs{}`, etc.) are useful when you need to force a parameter to come from a specific source, avoiding conflicts when the same name exists in multiple sources.
 
-You can customize these patterns globally in `regex.xml` or per-endpoint by adding the pattern as an attribute on the `<query>` node.
+Each source has its own pattern in `regex.xml`, such as `json_variables_pattern` for the JSON body and `query_string_variables_pattern` for the query string. To change one for a single endpoint, add an element with the same name to that endpoint. The endpoint's element wins, then `regex.xml`, then the built-in default. The next topic shows an example.
 
 ---
 

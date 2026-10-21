@@ -111,16 +111,16 @@ The JSON inside `{http{...}http}` supports the full HTTP executor configuration:
 |----------|------|----------|-------------|
 | `url` | string | Yes | The HTTP endpoint URL. Constants and `{s{settings}}` values may sit in its query string; a **caller-supplied** `{{marker}}` belongs in `query` — see [Caller-Supplied Values](#caller-supplied-values-url-encoding-and-json-escaping) |
 | `method` | string | No | HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS (default: GET) |
-| `headers` | object | No | Custom headers to include. A header whose name or value contains a line break is dropped, never sent |
+| `headers` | object | No | Custom headers to include. A header whose name or value contains a line break is dropped, never sent. Don't put `Content-Type` here: it is sent beside the one `content_type` sets, so the request carries two types (`application/json; charset=utf-8, application/json`) |
 | `query` | object | No | Query-string parameters, percent-encoded and appended to `url` (with `&` when `url` already has a `?`). The right place for caller-supplied values |
-| `body` | object/array | No | JSON body, serialized automatically (for POST/PUT/PATCH). A marker used outside a string (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string |
-| `body_raw` | string | No | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document |
-| `content_type` | string | No | Content-Type header (default: `application/json`) |
+| `body` | object/array | No | JSON body, sent as written (for POST/PUT/PATCH). A marker used outside a string (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string. A string `body` is sent as a JSON string, quotes included: for a form or any other text, use `body_raw` |
+| `body_raw` | string | No | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document, and `body_raw` with `content_type` for a form ([POST with a form body](#post-with-a-form-body)) |
+| `content_type` | string | No | The body's `Content-Type` (default: `application/json`), sent with a `charset=utf-8` |
 | `timeout_seconds` | number | No | Request timeout in seconds (default: 30). `timeout` is accepted as an alias |
 | `ignore_certificate_errors` | bool | No | Skip TLS certificate validation (default: `false`; development only) |
 | `follow_redirects` | bool | No | Follow HTTP redirects automatically (default: `true`) |
 | `auth` | object | No | Authentication configuration — `basic`, `bearer` or `api_key` (see [Authentication Options](#authentication-options)) |
-| `retry` | object | No | Retry policy: `max_attempts` (default 3), `delay_ms` (1000), `exponential_backoff` (true), `retry_status_codes` ([500, 502, 503, 504]) |
+| `retry` | object | No | Retry policy: `max_attempts` (default 3), `delay_ms` (1000), `exponential_backoff` (true), `retry_status_codes` ([500, 502, 503, 504]). Without `retry`, the call is made once. Don't retry a call that creates something (a payment, an order) unless the API takes an idempotency key: a retried POST can create it twice |
 | `skip` | bool/string/number | No | When truthy (`true`, `"true"`, `"1"`, `"yes"`, non-zero), the call is **not executed** and the SQL variable receives `NULL` instead of structured JSON. See [Skipping HTTP Calls](#skipping-http-calls). |
 | `no_wait` | bool/string/number | No | When truthy, the call starts in the background before the query runs, nothing waits for it, and the SQL variable receives `NULL`. It can still be running after the response is sent, and it goes out even if the query then fails. See [Fire-and-Forget](../tutorial/16-http-from-sql.md#fire-and-forget-with-no_wait) in the tutorial. |
 
@@ -138,8 +138,7 @@ Parameters from the incoming HTTP request (query string, body, headers, route) c
         "url": "https://api.emailvalidation.com/v1/validate",
         "method": "POST",
         "headers": {
-          "Content-Type": "application/json",
-          "X-API-Key": "your-api-key"
+          "X-API-Key": "{s{email_validation_key}}"
         },
         "body": {
           "email": "{{email}}"
@@ -151,7 +150,8 @@ Parameters from the incoming HTTP request (query string, body, headers, route) c
     IF JSON_VALUE(@validation, '$.status_code') != '200'
       THROW 50502, 'Email validation service unavailable', 1;
     
-    IF JSON_VALUE(@validation, '$.data.is_valid') = 'false'
+    -- A missing is_valid counts as invalid
+    IF ISNULL(JSON_VALUE(@validation, '$.data.is_valid'), 'false') <> 'true'
       THROW 50400, 'Invalid email address', 1;
     
     INSERT INTO users (email, name, email_verified)
@@ -195,43 +195,82 @@ that block needs splitting into two markers.
 **Header injection — blocked.** A header whose name or value contains a carriage return or line feed
 is dropped rather than sent, so a substituted value cannot start a second header or a body.
 
-## POST with JSON Body
+**A marker that matches nothing.** Inside a JSON string, in `query` and in `headers`, it becomes an
+empty string: `"q": "{{city}}"` sends `q=` when the request has no `city`. Outside a string it
+leaves nothing, so `"body": { "doc": {{doc}} }` becomes `"doc": }`, which isn't JSON: the call isn't
+made, and the variable gets `status_code` `0` with an `Invalid JSON` error. So use a marker outside
+a string only for a value that always exists, and check `status_code` for `0` ([error handling](#error-handling)).
+
+## POST with a form body
+
+Some APIs, such as Stripe's, take `application/x-www-form-urlencoded` instead of JSON. Send the form
+as `body_raw` and set `content_type`. A `body` string would be sent as a JSON string in quotes.
+
+A value in `body_raw` is inserted as written, and `&` and `=` in it add or change fields: a caller who
+sends `10&currency=eur` as the amount adds a second `currency`. The engine has no form encoding, so
+fill a form only with values you checked or built yourself. Here the amount and the customer come
+from the database, looked up by an earlier [chained query](14-query-chaining.md), and the second
+query, which makes the call, runs only when the first one succeeded (SQL Server):
 
 ```xml
-<create_order_with_payment>
-  <route>orders</route>
+<pay_for_order>
+  <route>orders/{{order_id}}/payment</route>
   <verb>POST</verb>
+  <authorize><provider>my_provider</provider></authorize>
+
+  <!-- Query 1: the order must be the caller's and unpaid. The amount and the customer come from
+       the database, never from the request. -->
+  <query><![CDATA[
+    DECLARE @order_id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{order_id}});
+
+    IF NOT EXISTS (SELECT 1 FROM orders o JOIN customers c ON c.id = o.customer_id
+                   WHERE o.id = @order_id AND c.owner_id = {auth{user_id}})
+      THROW 50404, 'Order not found', 1;
+    IF NOT EXISTS (SELECT 1 FROM orders WHERE id = @order_id AND status = 'unpaid')
+      THROW 50409, 'Only an unpaid order can be paid', 1;
+
+    SELECT o.id AS order_id, o.amount_cents, c.stripe_customer_id
+    FROM orders o JOIN customers c ON c.id = o.customer_id
+    WHERE o.id = @order_id;
+  ]]></query>
+
+  <!-- Query 2: the call, with the values query 1 returned -->
   <query><![CDATA[
     DECLARE @payment NVARCHAR(MAX) = {http{
       {
         "url": "https://api.stripe.com/v1/payment_intents",
         "method": "POST",
-        "headers": {
-          "Authorization": "Bearer sk_test_YOUR_STRIPE_KEY",
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        "body": "amount={{amount}}&currency=usd&customer={{customer_id}}"
+        "headers": { "Authorization": "Bearer {s{stripe_secret_key}}" },
+        "content_type": "application/x-www-form-urlencoded",
+        "body_raw": "amount={pq{amount_cents}}&currency=usd&customer={pq{stripe_customer_id}}"
       }
     }http};
-    
-    -- Check payment API responded successfully
-    IF JSON_VALUE(@payment, '$.status_code') != '200'
+
+    IF JSON_VALUE(@payment, '$.status_code') = '0'
+      THROW 50503, 'Payment service unreachable', 1;
+    IF JSON_VALUE(@payment, '$.status_code') <> '200'
       THROW 50502, 'Payment service error', 1;
-    
-    INSERT INTO orders (customer_id, amount, payment_intent_id, status)
-    VALUES (
-      {{customer_id}},
-      {{amount}},
-      JSON_VALUE(@payment, '$.data.id'),
-      'pending_payment'
-    );
-    
-    SELECT 
+
+    -- Only while the order is still unpaid: of two requests at once, the second gets 409
+    UPDATE orders
+    SET payment_intent_id = JSON_VALUE(@payment, '$.data.id'), status = 'pending_payment'
+    WHERE id = {pq{order_id}} AND status = 'unpaid';
+    IF @@ROWCOUNT = 0
+      THROW 50409, 'This order is already being paid', 1;
+
+    SELECT
       JSON_VALUE(@payment, '$.data.id') AS payment_intent_id,
       JSON_VALUE(@payment, '$.data.client_secret') AS client_secret;
   ]]></query>
-</create_order_with_payment>
+</pay_for_order>
 ```
+
+`{pq{amount_cents}}` reads query 1's column only: an `amount_cents` the caller sends doesn't reach
+it. `stripe_secret_key` is a [settings variable](21-settings-vars.md), kept encrypted in `<vars>`.
+Two requests for one order can both pass query 1, and both create a PaymentIntent; the
+`UPDATE ... AND status = 'unpaid'` lets only the first one store its own. The second one's
+PaymentIntent is never confirmed, so it charges nothing. The call has no `retry`, so a timeout never
+creates a second PaymentIntent.
 
 ## Authentication Options
 
@@ -574,63 +613,71 @@ Every call is logged with its status code and timing: at `Debug` when it succeed
 
 ## Real-World Example: KYC Verification
 
+The first query checks the request, so the provider is called only for a customer of the caller's
+with a valid document type. The provider's key is a settings variable, never a value the caller
+sends (SQL Server):
+
 ```xml
 <verify_customer_kyc>
   <route>customers/{{customer_id}}/verify</route>
   <verb>POST</verb>
-  <authorize>true</authorize>
+  <authorize><provider>my_provider</provider></authorize>
+  <mandatory_parameters>id_number,id_type</mandatory_parameters>
+
+  <!-- Query 1: validate before anything is sent to the provider -->
   <query><![CDATA[
-    DECLARE @customer_id UNIQUEIDENTIFIER = {{customer_id}};
-    DECLARE @id_number NVARCHAR(50) = {{id_number}};
+    DECLARE @customer_id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{customer_id}});
     DECLARE @id_type NVARCHAR(20) = {{id_type}};
-    
+
+    IF NOT EXISTS (SELECT 1 FROM customers WHERE id = @customer_id AND owner_id = {auth{user_id}})
+      THROW 50404, 'Customer not found', 1;
+    IF @id_type IS NULL OR @id_type NOT IN ('passport', 'national_id')
+      THROW 50400, 'id_type must be passport or national_id', 1;
+
+    SELECT @customer_id AS customer_id, @id_type AS id_type;
+  ]]></query>
+
+  <!-- Query 2: the call, then the result -->
+  <query><![CDATA[
     DECLARE @kyc_result NVARCHAR(MAX) = {http{
       {
-        "url": "https://kyc-provider.com/api/v1/verify",
+        "url": "https://kyc-provider.example.com/api/v1/verify",
         "method": "POST",
-        "headers": {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer {h{X-KYC-API-Key}}"
-        },
+        "headers": { "Authorization": "Bearer {s{kyc_api_key}}" },
         "body": {
           "document_number": "{{id_number}}",
-          "document_type": "{{id_type}}",
+          "document_type": "{pq{id_type}}",
           "country": "AE"
         },
-        "timeout": 60,
-        "retry": {
-          "max_attempts": 2,
-          "delay_ms": 5000
-        }
+        "timeout_seconds": 60,
+        "retry": { "max_attempts": 2, "delay_ms": 5000 }
       }
     }http};
-    
-    DECLARE @kyc_status_code INT = CAST(JSON_VALUE(@kyc_result, '$.status_code') AS INT);
-    IF @kyc_status_code = 0
-    BEGIN
-      DECLARE @kyc_err NVARCHAR(500) = JSON_VALUE(@kyc_result, '$.error.message');
-      THROW 50503, @kyc_err, 1;
-    END
-    IF @kyc_status_code >= 500
+
+    DECLARE @customer_id UNIQUEIDENTIFIER = {pq{customer_id}};
+    DECLARE @kyc_status_code INT = TRY_CONVERT(INT, JSON_VALUE(@kyc_result, '$.status_code'));
+
+    IF @kyc_status_code = 0 OR @kyc_status_code >= 500
       THROW 50503, 'KYC service temporarily unavailable', 1;
-    IF @kyc_status_code = 401 OR @kyc_status_code = 403
-      THROW 50401, 'KYC service authentication failed', 1;
-    
+    IF @kyc_status_code <> 200
+      THROW 50502, 'KYC service rejected the request', 1;
+
     DECLARE @kyc_status NVARCHAR(50) = JSON_VALUE(@kyc_result, '$.data.status');
-    DECLARE @kyc_score INT = JSON_VALUE(@kyc_result, '$.data.confidence_score');
-    
-    IF @kyc_status != 'VERIFIED' OR @kyc_score < 80
-      THROW 50400, 'KYC verification failed', 1;
-    
+    DECLARE @kyc_score INT = TRY_CONVERT(INT, JSON_VALUE(@kyc_result, '$.data.confidence_score'));
+
+    -- A missing status or score fails the check too: NULL <> 'VERIFIED' is not true.
+    IF @kyc_status IS NULL OR @kyc_status <> 'VERIFIED' OR @kyc_score IS NULL OR @kyc_score < 80
+      THROW 50422, 'KYC verification failed', 1;
+
     UPDATE customers
-    SET 
+    SET
       kyc_verified = 1,
-      kyc_verified_at = GETDATE(),
+      kyc_verified_at = SYSUTCDATETIME(),
       kyc_reference = JSON_VALUE(@kyc_result, '$.data.reference_id'),
       kyc_score = @kyc_score
     WHERE id = @customer_id;
-    
-    SELECT 
+
+    SELECT
       @customer_id AS customer_id,
       'KYC verification successful' AS message,
       @kyc_score AS confidence_score;
@@ -655,4 +702,4 @@ Every call is logged with its status code and timing: at `Debug` when it succeed
 - Calls keep no cookies: a cookie the remote sets is never sent with a later call, for this caller or another, nor with the next hop of a redirect the call follows. Send one in `headers` when an API needs it. When a remote sets the cookie on a redirect, set `"follow_redirects": false` and make the second call yourself, with the cookie from the first response's headers.
 - The log shows a url without its query string: a key in the query string stays out of it, but the path is logged, so a webhook URL whose path is the secret (Slack, Discord) appears in full when a call to it fails, and on every call at `Debug`. Headers are logged by name only, at `Debug` (see [Log level](02-configuration.md#log-level)).
 - Sensitive credentials in HTTP configurations should use [settings variables](21-settings-vars.md) with encryption — e.g., `{s{api_key}}` instead of hardcoding secrets (see [Settings Encryption](15-encryption.md))
-- Consider using header parameters (`{h{Header-Name}}`) to pass API keys from request headers rather than hardcoding
+- Keep the engine's own credentials for a remote API in `<vars>` (`{s{api_key}}`), not in a header the caller sends: any caller can send any value. Pass a caller's header on (`{h{Header-Name}}`) only when the remote should act as that caller, such as the caller's own token

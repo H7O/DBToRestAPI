@@ -15,7 +15,8 @@ Consider this embedded HTTP call from Topic 16:
 ```sql
 DECLARE @result NVARCHAR(MAX) = {http{
   {
-    "url": "https://api.weatherapi.com/v1/current.json?key=YOUR_KEY&q={{city}}",
+    "url": "https://api.weatherapi.com/v1/current.json?key=YOUR_KEY",
+    "query": { "q": "{{city}}" },
     "method": "GET"
   }
 }http};
@@ -66,7 +67,8 @@ Use `{s{name}}` (short) or `{settings{name}}` (long) — both work identically:
   <query><![CDATA[
     DECLARE @weather NVARCHAR(MAX) = {http{
       {
-        "url": "{s{weather_api_url}}/current.json?key={s{weather_api_key}}&q={{city}}",
+        "url": "{s{weather_api_url}}/current.json?key={s{weather_api_key}}",
+        "query": { "q": "{{city}}" },
         "method": "GET"
       }
     }http};
@@ -78,9 +80,13 @@ Use `{s{name}}` (short) or `{settings{name}}` (long) — both work identically:
 </weather_lookup>
 ```
 
-The `{s{weather_api_key}}` reference is resolved during parameter processing —
-the actual value from `<vars>` is injected as a parameterized SQL variable, just
-like `{{param}}` values from the request.
+Inside a `{http{...}http}` block, a `{s{...}}` value is written into the call's
+JSON before the call is made, escaped like any value inside a JSON string. Your
+own values, such as the key, can sit in `"url"`. The caller's `{{city}}` goes in
+`"query"`, which percent-encodes it: in `"url"`, a city such as `a&key=other`
+would add a parameter of its own. Outside a block, in the SQL itself, a
+`{s{...}}` value is bound as a SQL parameter, like `{{param}}`, so it never
+becomes SQL text.
 
 ---
 
@@ -117,55 +123,38 @@ engine decrypts the value transparently at runtime.
 
 ## Practical Example: Secure Microservice Integration
 
-Here's a realistic pattern — calling a partner payment API with credentials
-stored safely in config:
+Here's a realistic pattern — calling a payment API with credentials stored
+safely in config:
 
 ```xml
 <!-- settings.xml -->
 <vars>
   <payment_api_url>https://api.stripe.com/v1</payment_api_url>
-  <payment_api_key>sk_live_abc123</payment_api_key>
+  <stripe_secret_key>sk_live_abc123</stripe_secret_key>
 </vars>
 ```
 
-```xml
-<!-- sql.xml -->
-<create_payment>
-  <route>payments</route>
-  <verb>POST</verb>
-  <mandatory_parameters>amount,currency,customer_id</mandatory_parameters>
-  <query><![CDATA[
-    DECLARE @payment NVARCHAR(MAX) = {http{
-      {
-        "url": "{s{payment_api_url}}/payment_intents",
-        "method": "POST",
-        "headers": {
-          "Authorization": "Bearer {s{payment_api_key}}",
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        "body": "amount={{amount}}&currency={{currency}}&customer={{customer_id}}"
-      }
-    }http};
+The call sits in the second query of a [chain](17-multi-query.md), whose first
+query looked up the order's amount and customer in the database:
 
-    DECLARE @status INT = CAST(JSON_VALUE(@payment, '$.status_code') AS INT);
-    IF @status = 0 OR @status >= 500
-      THROW 50502, 'Payment service unavailable', 1;
-
-    INSERT INTO payments (intent_id, amount, currency, customer_id, status)
-    VALUES (
-      JSON_VALUE(@payment, '$.data.id'),
-      {{amount}},
-      {{currency}},
-      {{customer_id}},
-      'pending'
-    );
-
-    SELECT
-      JSON_VALUE(@payment, '$.data.id') AS payment_intent_id,
-      JSON_VALUE(@payment, '$.data.client_secret') AS client_secret;
-  ]]></query>
-</create_payment>
+```sql
+DECLARE @payment NVARCHAR(MAX) = {http{
+  {
+    "url": "{s{payment_api_url}}/payment_intents",
+    "method": "POST",
+    "headers": { "Authorization": "Bearer {s{stripe_secret_key}}" },
+    "content_type": "application/x-www-form-urlencoded",
+    "body_raw": "amount={pq{amount_cents}}&currency=usd&customer={pq{stripe_customer_id}}"
+  }
+}http};
 ```
+
+The form goes in `body_raw`, with its type in `content_type`. A form body
+string in `body` would be sent as a JSON string, quotes included, and a
+`Content-Type` in `headers` would be sent beside `content_type`'s. The values in
+the form come from the database, not the request: `&` or `=` in a caller's
+value would add fields. The whole endpoint is in topic 17,
+[POST with a form body](../topics/17-embedded-http-calls.md#post-with-a-form-body).
 
 The Stripe secret key never appears in `sql.xml` — it lives in `settings.xml`
 and can be encrypted at rest.

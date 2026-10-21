@@ -94,6 +94,8 @@ Remove headers before forwarding to the external API:
 - **`x-api-key`** — Your local API key shouldn't leak to external APIs
 - **`authorization`** — Keep JWT tokens local
 
+A route without `<excluded_headers>` uses the global list in `settings.xml`, which drops `Host` as shipped. A route's own list replaces the global one, not adds to it, so keep `host` in it. An empty `<excluded_headers></excluded_headers>` counts as not set, and the global list applies.
+
 ### Adding/Overriding Headers
 
 Inject headers into the forwarded request:
