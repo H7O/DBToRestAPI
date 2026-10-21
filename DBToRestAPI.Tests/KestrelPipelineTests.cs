@@ -26,6 +26,17 @@ public class KestrelPipelineTests(KestrelPipelineTests.KestrelEngine engine, ITe
     }
 
     [Fact]
+    public async Task AHeadRequest_GetsTheGetsStatusAndHeaders_WithoutABody()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Head, "pl/ok");
+        using var response = await engine.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
     public async Task AGetWithoutABody_ParsesNoJson()
     {
         // A request without a Content-Type counts as JSON. Its empty body used to be parsed, which threw

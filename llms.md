@@ -135,7 +135,7 @@ An error numbered `50000 + status`, for a status from 200 to 599, becomes that H
 | Tag | Purpose |
 |-----|---------|
 | `<route>` | URL path with params: `users/{{id}}/orders` |
-| `<verb>` | HTTP method: `GET`, `POST`, `PUT`, `DELETE` |
+| `<verb>` | HTTP method: `GET`, `POST`, `PUT`, `PATCH` or `DELETE`, or several separated by commas. Left out, any method. A `HEAD` request gets the answer of the route that takes `GET`, without its body, unless a route takes `HEAD` itself. |
 | `<host>` | Restrict to hostname: `www.example.com` or `*.example.com`. Priority: exact > wildcard > no constraint |
 | `<mandatory_parameters>` | Required params (returns 400 if missing) |
 | `<success_status_code>` | Success HTTP code (default: 200) |

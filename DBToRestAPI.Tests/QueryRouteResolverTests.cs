@@ -595,4 +595,29 @@ public class QueryRouteResolverTests
         Assert.Null(resolver.ResolveRoute("users/7/orders", "GET"));
         Assert.NotNull(resolver.ResolveRoute("users/[[id]]/orders", "GET"));
     }
+
+    [Fact]
+    public void AHeadRequest_IsAnsweredByAGetRoute_UnlessARouteTakesHeadItself()
+    {
+        var resolver = BuildResolver(new Dictionary<string, string?>
+        {
+            ["queries:get_items:route"] = "items",
+            ["queries:get_items:verb"] = "GET",
+            ["queries:get_items:query"] = "SELECT 'get'",
+            ["queries:head_items:route"] = "items/{{id}}",
+            ["queries:head_items:verb"] = "HEAD",
+            ["queries:head_items:query"] = "SELECT 'head'",
+            ["queries:get_item:route"] = "items/{{id}}",
+            ["queries:get_item:verb"] = "GET",
+            ["queries:get_item:query"] = "SELECT 'get one'",
+            ["queries:post_only:route"] = "orders",
+            ["queries:post_only:verb"] = "POST",
+            ["queries:post_only:query"] = "SELECT 'post'",
+        });
+
+        Assert.Equal("SELECT 'get'", resolver.ResolveRoute("items", "HEAD")?.GetValue<string>("query"));
+        Assert.Equal("SELECT 'head'", resolver.ResolveRoute("items/7", "HEAD")?.GetValue<string>("query"));
+        Assert.Equal("SELECT 'get one'", resolver.ResolveRoute("items/7", "GET")?.GetValue<string>("query"));
+        Assert.Null(resolver.ResolveRoute("orders", "HEAD"));
+    }
 }

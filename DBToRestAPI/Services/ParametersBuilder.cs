@@ -145,9 +145,9 @@ public class ParametersBuilder
         }
         catch (RequestValidationException ex)
         {
-            // The message can quote a caller-supplied file name, so no control character (line break,
-            // ANSI escape) reaches the log as is.
-            var forLog = string.Concat(ex.Message.Select(c => char.IsControl(c) ? '?' : c));
+            // The message can quote a caller-supplied file name, so nothing in it that could start a new
+            // log line (a line break, a line separator, an ANSI escape) reaches the log as is.
+            var forLog = LogText.Escape(ex.Message);
             _logger.LogDebug("{Time}: Request rejected while reading its parameters: {Message}",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), forLog);
             return (null, new ObjectResult(new { success = false, message = ex.Message }) { StatusCode = 400 });
@@ -1546,6 +1546,11 @@ public class ParametersBuilder
         var formDataVarRegex = section.GetValue<string>("form_data_variables_pattern");
         if (string.IsNullOrWhiteSpace(formDataVarRegex))
             formDataVarRegex = _config.GetValue<string>("form_data_variables_pattern");
+        // Under <regex>, as regex.xml sets it; form_variables_pattern is the name older copies of it use.
+        if (string.IsNullOrWhiteSpace(formDataVarRegex))
+            formDataVarRegex = _config.GetValue<string>("regex:form_data_variables_pattern");
+        if (string.IsNullOrWhiteSpace(formDataVarRegex))
+            formDataVarRegex = _config.GetValue<string>("regex:form_variables_pattern");
         if (string.IsNullOrWhiteSpace(formDataVarRegex))
             formDataVarRegex = DefaultRegex.DefaultFormDataVariablesPattern;
         var nullProtectionParams = () =>
@@ -1691,6 +1696,8 @@ public class ParametersBuilder
         if (string.IsNullOrWhiteSpace(queryStringVarRegex))
             queryStringVarRegex = _config.GetValue<string>("query_string_variables_pattern");
         if (string.IsNullOrWhiteSpace(queryStringVarRegex))
+            queryStringVarRegex = _config.GetValue<string>("regex:query_string_variables_pattern");
+        if (string.IsNullOrWhiteSpace(queryStringVarRegex))
             queryStringVarRegex = DefaultRegex.DefaultQueryStringPattern;
 
         if (context.Request.Query?.Count > 0 == true)
@@ -1720,6 +1727,8 @@ public class ParametersBuilder
         var routeVarRegex = section.GetValue<string>("route_variables_pattern");
         if (string.IsNullOrWhiteSpace(routeVarRegex))
             routeVarRegex = _config.GetValue<string>("route_variables_pattern");
+        if (string.IsNullOrWhiteSpace(routeVarRegex))
+            routeVarRegex = _config.GetValue<string>("regex:route_variables_pattern");
         if (string.IsNullOrWhiteSpace(routeVarRegex))
             routeVarRegex = DefaultRegex.DefaultRouteVariablesPattern;
         if (context.Items["route_parameters"] is Dictionary<string, string> routeParameters && routeParameters?.Count > 0)

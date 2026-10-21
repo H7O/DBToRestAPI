@@ -158,6 +158,8 @@ namespace DBToRestAPI.Controllers
         [HttpPost]
         [HttpDelete]
         [HttpPut]
+        [HttpPatch]
+        [HttpHead]
         [Route("{*route}")]
         public async Task<IActionResult> Index()
         {
@@ -273,11 +275,12 @@ namespace DBToRestAPI.Controllers
                     return new EmptyResult();
 
                 // Log the exception with timestamp for easier debugging
-                _logger.LogError(ex,
-                    "{Time}: Exception in ApiController.Index. Route: {Route}, ResponseHasStarted: {HasStarted}",
+                _logger.LogError(LogText.Loggable(ex),
+                    "{Time}: Exception in ApiController.Index. Route: {Route}, ResponseHasStarted: {HasStarted}{EscapedException}",
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
                     HttpContext.Items.TryGetValue("route", out var r) ? r : "unknown",
-                    Response.HasStarted);
+                    Response.HasStarted,
+                    LogText.ExceptionText(ex));
 
                 // If response has already started, we cannot return any IActionResult
                 // Just log and return an empty result to avoid the "StatusCode cannot be set" exception

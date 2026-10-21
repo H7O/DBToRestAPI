@@ -51,8 +51,6 @@ against the code. Each was read in the code; none has a test yet.
   wait until it ends, however long that takes (a 3-second query made every joined caller wait about
   3.5 s). A maximum join wait, after which a waiting caller runs its own query, would bound it. Not
   requested; recorded from the downstream's measurement of the 1.7.11 fix.
-- **Step8 small bugs:** the `response_type` fallback reads `file_management:file_management:response_type`,
-  and the `regex:file_variables_pattern` lookup discards its result.
 - **OpenAPI:** upload endpoints have no request schema.
 - **A constant subject gives every user the same `user_id`.** An Azure AD B2C user flow with the
   subject claim turned off sends `Not supported`. Ignore that value and fall back to `oid` (the
@@ -70,12 +68,6 @@ against the code. Each was read in the code; none has a test yet.
   would follow it straight to the target.
 - **CORS:** the engine sends no `Access-Control-Expose-Headers`, so cross-origin pages can't read
   `Content-Disposition` on downloads.
-- **An upload's file name can reach the log with U+2028 or U+2029.** The upload rejection line
-  (Debug) and Step7's path lines replace control characters only. Use `LogText.Escape`.
-- **Database error messages are logged as the driver wrote them.** The controller's catch-all and
-  Step6 log the exception at Error, and some drivers repeat a caller's value in the message (SQLite's
-  bad JSON path, a SQL Server conversion error), so a caller can put control characters into the log.
-  Escape the message, or log the exception type and number only.
 
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
@@ -86,13 +78,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 - **`{http{}}` matching ignores SQL comments**, so AGENTS rule 15 says never to write the marker in
   one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
   `}http}`, and the SQL in between is deleted.
-- **Regex override keys are read inconsistently.** The shipped `regex.xml` sets
-  `regex:query_string_variables_pattern`, `regex:route_variables_pattern` and
-  `regex:form_variables_pattern`, which the code never reads. Its comments and tutorials 06 and 07
-  also say a `<query>` attribute (`variables_pattern` and the like) overrides a pattern; the code reads
-  only the endpoint's own elements, then the `regex:` keys.
-- **`PATCH` is accepted by routing, CORS and OpenAPI, but `ApiController` has no `[HttpPatch]`**,
-  so a PATCH probably ends in 405. Not run-tested.
 - **A body with another content type** (`text/plain`, `application/*+json`) gives `NULL` for every
   body parameter and a success, never `415`. The `json/` route prefix is the only workaround, and
   it is undocumented.
@@ -118,11 +103,25 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   - 11-cors, whose defaults change when an `<authorize>` section exists;
   - the webhook pages' status-polling endpoints, which are public and use sequential ids;
   - `RateLimitCallerIdentity.cs`'s comment about an `oid` fallback that never matches.
+  - tutorials 06 and 07 on pattern overrides: an element on the endpoint, then `regex.xml`, then the
+    default (no `<query>` attribute).
   Then add `docs/reference/tags.md` and `placeholders.md`, examples tested in CI, and docs
   bundled in release archives.
 
 ## Done
 
+- **PATCH and HEAD didn't reach their routes, and four settings or log lines were wrong.** Fixed in
+  1.7.19. A PATCH answered `405`: routing, CORS and OpenAPI accepted it, but the controller had no
+  `[HttpPatch]`. A HEAD to a GET route answered `404`, and to any route `405`, though the cache
+  docs describe HEAD; it now gets the GET route's answer without its body, unless a route takes
+  HEAD itself. `regex.xml` set `regex:query_string_variables_pattern`, `regex:route_variables_pattern`
+  and `regex:form_variables_pattern`, which nothing read: they are read now, after the keys at the
+  root that were read before, so nothing that worked changes, and `regex.xml` names the form one
+  `form_data_variables_pattern`. The download step dropped `regex:file_variables_pattern`, and read
+  a `response_type` fallback at a path nobody can set (`file_management:file_management:`), which is
+  gone. And log lines kept a caller's text as it was: an upload's file name with U+2028 or U+2029
+  (escaped now), and a database error that repeats a caller's value (an exception whose message could
+  start a new line is logged as escaped text, without the exception object).
 - **A request spent CPU on work it didn't need.** Fixed in 1.7.18, found by profiling the engine
   under load. Each middleware step formatted the time for a Debug log line even with Debug off;
   every connection parsed its connection string again; `GetSection` on a configuration section

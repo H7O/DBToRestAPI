@@ -130,6 +130,14 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         ["queries:pl_verbs:verb"] = "post, get ,Post",
         ["queries:pl_verbs:query"] = "SELECT 1 AS a;",
 
+        ["queries:pl_patch:route"] = "pl/patch",
+        ["queries:pl_patch:verb"] = "PATCH",
+        ["queries:pl_patch:query"] = "SELECT {{a}} AS a;",
+
+        ["queries:pl_bad_path:route"] = "pl/bad_path",
+        ["queries:pl_bad_path:verb"] = "GET",
+        ["queries:pl_bad_path:query"] = "SELECT json_extract('{}', {{path}}) AS v;",
+
         ["queries:pl_window:route"] = "pl/window/{{n}}",
         ["queries:pl_window:verb"] = "GET",
         ["queries:pl_window:response_structure"] = "array",
@@ -757,6 +765,34 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
     }
 
     [Fact]
+    public async Task APatchRequest_RunsTheRoute_WithItsBody()
+    {
+        var context = await engine.Server.SendAsync(c =>
+        {
+            c.Request.Method = "PATCH";
+            c.Request.Path = "/pl/patch";
+            c.Request.ContentType = "application/json";
+            c.Request.Body = new MemoryStream("{\"a\": 5}"u8.ToArray());
+        });
+
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.Equal("""{"a":5}""", new StreamReader(context.Response.Body).ReadToEnd());
+    }
+
+    [Fact]
+    public async Task AHeadRequest_IsAnsweredByTheRoutesGet()
+    {
+        var context = await engine.Server.SendAsync(c =>
+        {
+            c.Request.Method = "HEAD";
+            c.Request.Path = "/pl/ok";
+        });
+
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.StartsWith("application/json", context.Response.ContentType);
+    }
+
+    [Fact]
     public async Task ARequest_IsTracedAtDebug_ThroughEachStep()
     {
         // These lines are written only when Debug is on, as it is here: their arguments aren't worked out otherwise.
@@ -792,6 +828,40 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
     public void LogTextEscape_KeepsALogLineOneLine(string? text, string expected)
     {
         Assert.Equal(expected, DBToRestAPI.Services.LogText.Escape(text));
+    }
+
+    [Fact]
+    public void LogTextLoggable_LeavesOutAnExceptionWhoseMessageCouldStartALogLine()
+    {
+        var plain = new InvalidOperationException("100% failed");
+        Assert.Same(plain, DBToRestAPI.Services.LogText.Loggable(plain));
+        Assert.Equal("", DBToRestAPI.Services.LogText.ExceptionText(plain));
+
+        foreach (var forged in new Exception[]
+        {
+            new InvalidOperationException("bad value 'x\nfail: forged'"),
+            new InvalidOperationException("wrapped", new FormatException("a\u2028b")),
+            new AggregateException(new FormatException("\u001b[2Kx")),
+        })
+        {
+            Assert.Null(DBToRestAPI.Services.LogText.Loggable(forged));
+            var text = DBToRestAPI.Services.LogText.ExceptionText(forged);
+            Assert.StartsWith(" System.", text);
+            Assert.DoesNotContain(text, c => char.IsControl(c) || c == '\u2028');
+        }
+    }
+
+    [Fact]
+    public async Task ADatabaseErrorThatRepeatsTheCallersValue_IsLoggedOnOneLine()
+    {
+        // SQLite repeats a bad JSON path in its message, so a caller can put a line break in it.
+        var (status, _) = await GetAsync("pl/bad_path?path=%24%0Afail%3A%20forged");
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        var entry = Assert.Single(engine.Logs.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("pl/bad_path"));
+        Assert.Null(entry.Exception);
+        Assert.Contains("%0Afail: forged", entry.Message);
+        Assert.DoesNotContain("\nfail: forged", entry.Text);
     }
 
     [Fact]

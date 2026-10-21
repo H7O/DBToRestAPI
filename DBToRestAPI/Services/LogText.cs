@@ -55,5 +55,31 @@ namespace DBToRestAPI.Services
 
         private static bool NeedsEscape(char c)
             => c == '%' || char.IsControl(c) || c == '\u2028' || c == '\u2029';
+
+        /// <summary>
+        /// The exception to hand the logger with an entry, or null when its message, or an inner
+        /// exception's, holds a character that could start a new log line: a driver can repeat a caller's
+        /// value in its message (a failed conversion, a bad JSON path). The entry then carries
+        /// <see cref="ExceptionText"/> instead.
+        /// </summary>
+        public static Exception? Loggable(Exception ex) => MessagesNeedEscape(ex) ? null : ex;
+
+        /// <summary>
+        /// For an exception <see cref="Loggable"/> leaves out: a space, then the whole exception escaped
+        /// (see <see cref="Escape"/>), on one line. Empty for any other exception.
+        /// </summary>
+        public static string ExceptionText(Exception ex) => MessagesNeedEscape(ex) ? " " + Escape(ex.ToString()) : string.Empty;
+
+        private static bool MessagesNeedEscape(Exception ex)
+        {
+            for (Exception? e = ex; e != null; e = e.InnerException)
+            {
+                if (e.Message.Any(c => c != '%' && NeedsEscape(c)))
+                    return true;
+                if (e is AggregateException aggregate && aggregate.InnerExceptions.Any(MessagesNeedEscape))
+                    return true;
+            }
+            return false;
+        }
     }
 }

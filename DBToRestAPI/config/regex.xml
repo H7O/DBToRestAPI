@@ -1,86 +1,35 @@
 ﻿<settings>
   <regex>
 
-    <!-- the default regex that detects json payload variable delimiters in sql queries
-    is `(?<open_marker>\{\{|\{j\{)(?<param>.*?)?(?<close_marker>\}\})` 
-    even if you delete the `json_variables_pattern` node, 
-    the system will use the default regex above.
-    You can also change it to something else if you want to, 
-    for example, if you want to have the variable delimiters to be
-    double pipes `||`, you can use the following regex
-    `(?<open_marker>\|\|)(?<param>.*?)?(?<close_marker>\|\|)`.
-    Also, you can override the default regex for each query in sql.xml
-    by just simply adding the `variables_pattern` attribute to the `query` node
-    and adding your preferred regex there. The precidence order is: sql.xml query node override > global setting here -> default regex in code.
-    -->
+    <!-- The patterns that find each request input's placeholders in the SQL. Each one shown here is
+    the default: delete it, and the engine uses the same pattern. To change one for every endpoint,
+    change it here. To change it for one endpoint, add the element with the same name to that
+    endpoint in sql.xml: the endpoint's element wins, then this file, then the default. For example,
+    to write ||name|| instead of {{name}} for JSON body values:
+    `(?<open_marker>\|\|)(?<param>.*?)?(?<close_marker>\|\|)`. -->
+
+    <!-- JSON body values: {{name}} or {j{name}}. -->
     <json_variables_pattern><![CDATA[(?<open_marker>\{\{|\{j\{)(?<param>.*?)?(?<close_marker>\}\})]]></json_variables_pattern>
 
+    <!-- Query string values (`?name=John&phone=123`): {{name}} or {qs{name}}. -->
+    <query_string_variables_pattern><![CDATA[(?<open_marker>\{\{|\{qs\{)(?<param>.*?)?(?<close_marker>\}\})]]></query_string_variables_pattern>
 
+    <!-- Header values (`x-api-key`): {{name}} or {h{name}}. -->
+    <headers_variables_pattern><![CDATA[(?<open_marker>\{\{|\{h\{)(?<param>.*?)?(?<close_marker>\}\})]]></headers_variables_pattern>
 
+    <!-- Route values in the SQL: {{userId}} or {r{userId}}. The variables in the route itself
+    (`users/{{userId}}/details`) are found with `route_variable_pattern`, set on the endpoint or at
+    the root of the configuration, not here. -->
+    <route_variables_pattern><![CDATA[(?<open_marker>\{\{|\{r\{)(?<param>.*?)?(?<close_marker>\}\})]]></route_variables_pattern>
 
-    <!-- the default regex that detects query string variables (e.g., the `?name=John&phone=123` in `https://example.com/your_api_call?name=John&phone=123` ) in sql queries
-    is `(?<open_marker>\{\{|\{qs\{)(?<param>.*?)?(?<close_marker>\}\})`
-    even if you delete the `query_string_variables_pattern` node,
-    the system will use the default regex above.
-    You can override the default regex for each query in sql.xml
-    by just simply adding the `query_string_variables_pattern` attribute to the `query` node
-    and adding your preferred regex there. The precidence order is: sql.xml query node override > global setting here -> default regex in code.
-    -->
-    <query_string_variables_pattern>
-      <![CDATA[(?<open_marker>\{\{|\{qs\{)(?<param>.*?)?(?<close_marker>\}\})]]>
-    </query_string_variables_pattern>
+    <!-- Form field values: {{name}} or {f{name}}. -->
+    <form_data_variables_pattern><![CDATA[(?<open_marker>\{\{|\{f\{)(?<param>.*?)?(?<close_marker>\}\})]]></form_data_variables_pattern>
 
+    <!-- The signed-in caller's claims: {auth{name}}. -->
+    <auth_variables_pattern><![CDATA[(?<open_marker>\{auth\{)(?<param>.*?)?(?<close_marker>\}\})]]></auth_variables_pattern>
 
-
-    <!-- the default regex that detects header variables (e.g., the `x-api-key` in HTTP headers) in sql queries
-    is `(?<open_marker>\{\{|\{h\{)(?<param>.*?)?(?<close_marker>\}\})`
-    even if you delete the `headers_variables_pattern` node,
-    the system will use the default regex above.
-    You can override the default regex for each query in sql.xml
-    by just simply adding the `headers_variables_pattern` attribute to the `query` node
-    -->
-    <headers_variables_pattern>
-      <![CDATA[(?<open_marker>\{\{|\{h\{)(?<param>.*?)?(?<close_marker>\}\})]]>
-    </headers_variables_pattern>
-
-
-
-
-    <!-- 
-    `route_variables_pattern` with default regex of `(?<open_marker>\{\{|\{r\{)(?<param>.*?)?(?<close_marker>\}\})` 
-    even if you delete the `route_variables_pattern` node,
-    with the same logic as the headers regex above but for route variables 
-    (e.g., found in route endpoint string `/api/{userId}/details`, `userId` is a route variable)
-    and also can be overridden per query in sql.xml using `route_variables_pattern` attribute
-    -->
-    <route_variables_pattern>
-      <![CDATA[(?<open_marker>\{\{|\{r\{)(?<param>.*?)?(?<close_marker>\}\})]]>
-    </route_variables_pattern>
-
-
-
-
-
-    <!--
-    `form_variables_pattern` with default regex of `(?<open_marker>\{\{|\{f\{)(?<param>.*?)?(?<close_marker>\}\})`
-    even if you delete the `form_variables_pattern` node,
-    with the same logic as above headers and route regexes but for form variables (e.g., in form field `username`, `phone`, `address`, etc..)
-    and also can be overridden per query in sql.xml using `form_variables_pattern` attribute
-    -->
-    <form_variables_pattern>
-      <![CDATA[(?<open_marker>\{\{|\{f\{)(?<param>.*?)?(?<close_marker>\}\})]]>
-    </form_variables_pattern>
-
-
-    <auth_variables_pattern>
-      <![CDATA[(?<open_marker>\{auth\{)(?<param>.*?)?(?<close_marker>\}\})]]>
-    </auth_variables_pattern>
-
-    <http_variable_pattern>
-      <![CDATA[(?s)(?<open_marker>\{http\{)(?<param>.*?)?(?<close_marker>\}http\})]]>
-    </http_variable_pattern>
-
-
+    <!-- Calls to other APIs from the SQL: {http{ ... }http}. -->
+    <http_variable_pattern><![CDATA[(?s)(?<open_marker>\{http\{)(?<param>.*?)?(?<close_marker>\}http\})]]></http_variable_pattern>
 
     <!--
     NOTE: the variable pattern in default regex strings allows for using 

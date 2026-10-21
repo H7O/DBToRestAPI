@@ -215,13 +215,13 @@ namespace DBToRestAPI.Middlewares
                 }
                 else
                 {
-                    _logger.LogError(ex,
+                    _logger.LogError(Services.LogText.Loggable(ex),
                         "{Time}: Exception in Step6MandatoryFieldsCheck pipeline. " +
                         "Route: {Route}, ServiceType: {ServiceType}, " +
                         "ResponseHasStarted: {HasStarted}, CurrentStatusCode: {StatusCode}, " +
-                        "ExceptionType: {ExceptionType}, Message: {Message}",
+                        "ExceptionType: {ExceptionType}, Message: {Message}{EscapedException}",
                         timestamp, route, serviceType, hasResponseStarted, currentStatusCode,
-                        ex.GetType().Name, ex.Message);
+                        ex.GetType().Name, Services.LogText.Escape(ex.Message), Services.LogText.ExceptionText(ex));
                 }
 
                 if (canWriteError)
@@ -239,7 +239,7 @@ namespace DBToRestAPI.Middlewares
                         _logger.LogError(writeEx,
                             "{Time}: Failed to write error response in Step6MandatoryFieldsCheck. " +
                             "Route: {Route}, Original exception: {OriginalMessage}",
-                            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, ex.Message);
+                            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, Services.LogText.Escape(ex.Message));
                     }
                 }
                 else

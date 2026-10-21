@@ -84,6 +84,18 @@ public class FileStorePipelineTests(FileStorePipelineTests.StoreEngine engine) :
     }
 
     [Fact]
+    public async Task AFileNameWithALineSeparator_IsStored_AndLoggedEscaped()
+    {
+        // U+2028 is no control character, so the name is valid; in the log it could start a new line.
+        await UploadAsync(new StringContent(
+            """{"attachments": [{"name": "a\u2028b.txt", "content_base64": "aGVsbG8="}]}""", Encoding.UTF8, "application/json"));
+
+        Assert.Contains(StoredFiles(), f => f.EndsWith("a\u2028b.txt", StringComparison.Ordinal));
+        Assert.Contains(engine.Logs.Entries, e => e.Message.Contains("a%E2%80%A8b.txt"));
+        Assert.DoesNotContain(engine.Logs.Entries, e => e.Text.Contains('\u2028'));
+    }
+
+    [Fact]
     public async Task JsonUpload_IsStored_AndDownloadsBack()
     {
         var (id, path) = await UploadAsync(new StringContent(

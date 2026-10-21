@@ -255,7 +255,7 @@ namespace DBToRestAPI.Middlewares
                                 await sftpClient.DeleteAsync(path);
                                 this._logger.LogDebug("{time}: Deleted file '{file}' from SFTP store ({sftp_store_name}) during rollback in Step6FileManagement middleware",
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                    path,
+                                    LogText.Escape(path),
                                     storeName);
                             }
                             catch (FileNotFoundException)
@@ -272,7 +272,7 @@ namespace DBToRestAPI.Middlewares
                                         + " error: {errorMessage}"
                                         ,
                                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                        path,
+                                        LogText.Escape(path),
                                         storeName,
                                         ex2.Message
                                         );
@@ -290,7 +290,7 @@ namespace DBToRestAPI.Middlewares
                                     File.Delete(path);
                                     this._logger.LogDebug("{time}: Deleted file '{file}' from local store ({local_store_name}) during rollback in Step6FileManagement middleware",
                                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                        path,
+                                        LogText.Escape(path),
                                         storeName);
                                 }
                             }
@@ -301,7 +301,7 @@ namespace DBToRestAPI.Middlewares
                                     + " error: {errorMessage}"
                                     ,
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                    path,
+                                    LogText.Escape(path),
                                     storeName,
                                     ex2.Message
                                     );
@@ -349,8 +349,8 @@ namespace DBToRestAPI.Middlewares
                                 + " error: {errorMessage}"
                                 ,
                                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                asidePath,
-                                path,
+                                LogText.Escape(asidePath),
+                                LogText.Escape(path),
                                 storeName,
                                 ex2.Message
                                 );
@@ -375,7 +375,7 @@ namespace DBToRestAPI.Middlewares
                     File.Move(asidePath, path, overwrite: replace);
                     this._logger.LogDebug("{time}: Restored file '{file}' in local store ({local_store_name}) in Step6FileManagement middleware",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                        path,
+                        LogText.Escape(path),
                         storeName);
                 }
                 catch (Exception ex2)
@@ -386,9 +386,9 @@ namespace DBToRestAPI.Middlewares
                         + " error: {errorMessage}"
                         ,
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                        path,
+                        LogText.Escape(path),
                         storeName,
-                        asidePath,
+                        LogText.Escape(asidePath),
                         ex2.Message
                         );
                 }
@@ -402,7 +402,7 @@ namespace DBToRestAPI.Middlewares
                     await sftpClient.RenameAsync(asidePath, path);
                     this._logger.LogDebug("{time}: Restored file '{file}' in SFTP store ({sftp_store_name}) in Step6FileManagement middleware",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                        path,
+                        LogText.Escape(path),
                         storeName);
                 }
                 catch (Exception ex2)
@@ -416,9 +416,9 @@ namespace DBToRestAPI.Middlewares
                         + " error: {errorMessage}"
                         ,
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                        path,
+                        LogText.Escape(path),
                         storeName,
-                        asidePath,
+                        LogText.Escape(asidePath),
                         ex2.Message
                         );
                 }
@@ -445,7 +445,7 @@ namespace DBToRestAPI.Middlewares
                         + " error: {errorMessage}"
                         ,
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                        writingPath,
+                        LogText.Escape(writingPath),
                         storeName,
                         ex2.Message
                         );
@@ -596,7 +596,7 @@ namespace DBToRestAPI.Middlewares
                                         + " error: {errorMessage}"
                                         ,
                                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                        writingPath,
+                                        LogText.Escape(writingPath),
                                         entry.Config.Key,
                                         ex2.Message
                                         );
@@ -605,9 +605,9 @@ namespace DBToRestAPI.Middlewares
 
                             this._logger.LogDebug("{time}: Copied temp file '{tempFile}' to local store ({local_store_name})  at '{destinationPath}' in Step6FileManagement middleware",
                                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                file.Key,
+                                LogText.Escape(file.Key),
                                 entry.Config.Key,
-                                destinationPath);
+                                LogText.Escape(destinationPath));
                         }
 
                         entry.WasSuccessful = true;
@@ -716,9 +716,9 @@ namespace DBToRestAPI.Middlewares
                                                         + " error: {errorMessage}"
                                                         ,
                                                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                                        destinationPath,
+                                                        LogText.Escape(destinationPath),
                                                         entry.Config.Key,
-                                                        asidePath,
+                                                        LogText.Escape(asidePath),
                                                         ex2.Message
                                                         );
                                                 throw;
@@ -765,9 +765,9 @@ namespace DBToRestAPI.Middlewares
 
                                 this._logger.LogDebug("{time}: Uploaded temp file '{tempFile}' to SFTP store ({sftp_store_name}) at '{destinationPath}' in Step6FileManagement middleware",
                                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                                    file.Key,
+                                    LogText.Escape(file.Key),
                                     entry.Config.Key,
-                                    destinationPath);
+                                    LogText.Escape(destinationPath));
                             }
 
                             entry.WasSuccessful = true;
@@ -831,7 +831,7 @@ namespace DBToRestAPI.Middlewares
                 {
                     this._logger.LogError(ex, "{errorCode}: An exception occurred in Step6FileManagement middleware: {message}",
                         _errorCode,
-                        ex.Message);
+                        LogText.Escape(ex.Message));
                 }
 
                 await RollbackUploadedFilesAsync(callerLeft ? "the caller left" : ex.Message);
@@ -842,7 +842,7 @@ namespace DBToRestAPI.Middlewares
                 {
                     this._logger.LogWarning("{time}: File already exists error: {message}",
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"),
-                        ex.Message);
+                        LogText.Escape(ex.Message));
                     await context.Response.DeferredWriteAsJsonAsync(
                         new ObjectResult(
                             new

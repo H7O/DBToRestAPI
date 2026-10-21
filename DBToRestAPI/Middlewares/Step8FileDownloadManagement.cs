@@ -90,11 +90,8 @@ namespace DBToRestAPI.Middlewares
             #endregion
 
             #region check if `response_structure` is set to `file`
-            // Resolved as the controller resolves it. The older file_management response_type
-            // fallback is kept as it was.
+            // Resolved as the controller resolves it: from the route's own setting only.
             var routeStructure = section.GetValue<string>("response_structure");
-            if (string.IsNullOrWhiteSpace(routeStructure))
-                routeStructure = defaultFileStoresSettings.GetValue<string>("file_management:response_type");
             var responseStructure = ApiController.ResolveResponseStructure(routeStructure);
 
             if (responseStructure != "file")
@@ -119,7 +116,7 @@ namespace DBToRestAPI.Middlewares
 
             var fileVariablesPattern = fileManagementSection.GetValue<string>("file_variables_pattern");
             if (string.IsNullOrWhiteSpace(fileVariablesPattern))
-                _configuration.GetValue<string>("regex:file_variables_pattern");
+                fileVariablesPattern = _configuration.GetValue<string>("regex:file_variables_pattern");
             if (string.IsNullOrWhiteSpace(fileVariablesPattern))
                 fileVariablesPattern = DefaultRegex.DefaultFileVariablesPattern;
 

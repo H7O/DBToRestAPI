@@ -219,6 +219,16 @@ public class QueryRouteResolver
 
     public IConfigurationSection? ResolveRoute(string urlRoute, string verb, string? requestHost = null)
     {
+        // A HEAD request is a GET whose answer has no body: a route that takes GET answers it, unless a
+        // route takes HEAD itself.
+        return ResolveRouteForVerb(urlRoute, verb, requestHost)
+            ?? (string.Equals(verb, "HEAD", StringComparison.OrdinalIgnoreCase)
+                ? ResolveRouteForVerb(urlRoute, "GET", requestHost)
+                : null);
+    }
+
+    private IConfigurationSection? ResolveRouteForVerb(string urlRoute, string verb, string? requestHost)
+    {
         if (string.IsNullOrWhiteSpace(urlRoute) || string.IsNullOrWhiteSpace(verb))
             return null;
         // Normalize inputs - remove leading/trailing slashes for consistent comparison

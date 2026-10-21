@@ -305,30 +305,31 @@ namespace DBToRestAPI.Cache
         private static bool HasOldSeparator(string name) => name.IndexOfAny(_oldInvalidatorSeparators) >= 0;
 
         // The settings that change the delimiters of a request-input marker, as ParametersBuilder
-        // reads them: on the route, else globally (some under regex:, some at the root).
-        private static readonly (string Route, string Global)[] _markerPatternKeys =
+        // reads them: on the route, else globally, in this order (some under regex:, some at the root).
+        private static readonly (string Route, string[] Globals)[] _markerPatternKeys =
         [
-            ("json_variables_pattern", "regex:json_variables_pattern"),
-            ("headers_variables_pattern", "regex:headers_variables_pattern"),
-            ("auth_variables_pattern", "regex:auth_variables_pattern"),
-            ("settings_variables_pattern", "regex:settings_variables_pattern"),
-            ("form_data_variables_pattern", "form_data_variables_pattern"),
-            ("query_string_variables_pattern", "query_string_variables_pattern"),
-            ("route_variables_pattern", "route_variables_pattern"),
+            ("json_variables_pattern", ["regex:json_variables_pattern"]),
+            ("headers_variables_pattern", ["regex:headers_variables_pattern"]),
+            ("auth_variables_pattern", ["regex:auth_variables_pattern"]),
+            ("settings_variables_pattern", ["regex:settings_variables_pattern"]),
+            ("form_data_variables_pattern", ["form_data_variables_pattern", "regex:form_data_variables_pattern", "regex:form_variables_pattern"]),
+            ("query_string_variables_pattern", ["query_string_variables_pattern", "regex:query_string_variables_pattern"]),
+            ("route_variables_pattern", ["route_variables_pattern", "regex:route_variables_pattern"]),
         ];
 
         // The marker patterns configured for the route and globally, one slot per setting (empty
         // where unset), so two reads of the same configuration give equal arrays.
         private static string[] MarkerPatterns(IConfigurationSection serviceSection, IConfiguration? root)
         {
-            var patterns = new string[_markerPatternKeys.Length * 2];
-            for (var i = 0; i < _markerPatternKeys.Length; i++)
+            var patterns = new List<string>();
+            foreach (var (route, globals) in _markerPatternKeys)
             {
                 // Through GetSection, as ParametersBuilder reads them (see QueryTexts).
-                patterns[2 * i] = serviceSection.GetSection(_markerPatternKeys[i].Route).Value ?? string.Empty;
-                patterns[2 * i + 1] = root?.GetSection(_markerPatternKeys[i].Global).Value ?? string.Empty;
+                patterns.Add(serviceSection.GetSection(route).Value ?? string.Empty);
+                foreach (var global in globals)
+                    patterns.Add(root?.GetSection(global).Value ?? string.Empty);
             }
-            return patterns;
+            return patterns.ToArray();
         }
 
         // The names the route's queries use in markers, found with the default marker patterns
