@@ -15,7 +15,7 @@ The engine reads XML files from its `config/` folder: `settings.xml` first, then
 1. **Put every endpoint inside `<settings><queries>`.** An element directly under `<settings>` is not an endpoint, and a request to its route gets `404`.
 2. **Add to the container element a file already has.** Never write a second `<queries>`, `<cors>`, `<local_file_store>` or `<sftp_file_store>` beside the first: repeated siblings are numbered by the configuration reader, and everything inside them stops matching.
 3. **Give every endpoint an element name that no other loaded file uses,** and every verb and route pair too. Files merge element by element, so the same name in two files becomes one endpoint mixing both, and nothing is logged.
-4. **Set `provider` on every connection string.** It decides the SQL dialect you write. Without it the engine guesses from keywords in the string and gets common strings wrong ([13 databases](13-databases.md#provider-detection)).
+4. **Set `provider` on every connection string.** It decides the SQL dialect you write. Without it the engine guesses from keywords in the string, and can't tell every string apart ([13 databases](13-databases.md#provider-detection)).
 5. **In a clone, restart `dotnet run` after editing a file under `DBToRestAPI/config/`.** It serves copies of the files from the build output, and copies them again only when it starts.
 
 ## Where the files are

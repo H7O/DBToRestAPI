@@ -64,8 +64,14 @@ internal static class RequestMessageBuilder
 
         if (request.Body != null)
         {
-            // Serialize the body to JSON
-            if (request.Body is JsonElement jsonElement)
+            // Serialize the body to JSON. A string body sent as another type (a form, say) is
+            // that text, so it is sent as written, like body_raw, not as a JSON string in quotes.
+            if (request.Body is JsonElement { ValueKind: JsonValueKind.String } textElement
+                && !IsJson(EffectiveContentType(request)))
+            {
+                contentString = textElement.GetString()!;
+            }
+            else if (request.Body is JsonElement jsonElement)
             {
                 contentString = jsonElement.GetRawText();
             }
@@ -80,6 +86,19 @@ internal static class RequestMessageBuilder
         }
 
         httpRequest.Content = new StringContent(contentString, Encoding.UTF8, request.ContentType);
+    }
+
+    /// <summary>The body's type: a Content-Type in headers, which replaces content_type, else content_type.</summary>
+    private static string EffectiveContentType(HttpExecutorRequest request)
+        => request.Headers?.FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value
+           ?? request.ContentType;
+
+    private static bool IsJson(string? contentType)
+    {
+        var mediaType = contentType?.Split(';')[0].Trim();
+        return string.IsNullOrEmpty(mediaType)
+            || mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+            || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void SetHeaders(HttpRequestMessage httpRequest, HttpExecutorRequest request)
@@ -101,7 +120,9 @@ internal static class RequestMessageBuilder
 
             if (ContentHeaderNames.Contains(header.Key))
             {
-                // Content headers must be set on the content
+                // Content headers must be set on the content. The header replaces the content's
+                // own value: added beside it, a Content-Type would be sent as two types.
+                httpRequest.Content?.Headers.Remove(header.Key);
                 httpRequest.Content?.Headers.TryAddWithoutValidation(header.Key, header.Value);
             }
             else

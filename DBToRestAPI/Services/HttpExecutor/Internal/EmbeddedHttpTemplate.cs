@@ -345,6 +345,81 @@ internal static class EmbeddedHttpTemplate
     }
 
     /// <summary>
+    /// A text to fill NULL values with (a missing name included), which <see cref="ReplaceNullValues"/>
+    /// then replaces by position: the fill writes one text for every NULL and calls no converter for
+    /// it. It starts and ends with a control character, which no filled value can hold unescaped.
+    /// </summary>
+    public static string NewNullStandIn() => "\u0001null-" + Guid.NewGuid().ToString("N") + "\u0001";
+
+    /// <summary>
+    /// Replaces each NULL stand-in in a filled block: with JSON <c>null</c> outside a string, so
+    /// <c>"doc": {{doc}}</c> stays valid JSON when the request has no <c>doc</c>, and with nothing
+    /// inside a string or a comment, where a NULL has always been an empty text.
+    /// </summary>
+    public static string ReplaceNullValues(string filled, string standIn)
+    {
+        if (string.IsNullOrEmpty(filled) || filled.IndexOf(standIn, StringComparison.Ordinal) < 0)
+            return filled;
+
+        var sb = new StringBuilder(filled.Length);
+        var inString = false;
+        for (var i = 0; i < filled.Length; i++)
+        {
+            if (string.CompareOrdinal(filled, i, standIn, 0, standIn.Length) == 0)
+            {
+                if (!inString)
+                    sb.Append("null");
+                i += standIn.Length - 1;
+                continue;
+            }
+
+            var c = filled[i];
+
+            if (inString)
+            {
+                sb.Append(c);
+                // A backslash escapes the next character, unless a stand-in starts there: the
+                // stand-in is replaced, and the backslash then escapes what follows, as before.
+                if (c == '\\' && i + 1 < filled.Length
+                    && string.CompareOrdinal(filled, i + 1, standIn, 0, standIn.Length) != 0)
+                    sb.Append(filled[++i]);
+                else if (c == '"')
+                    inString = false;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = true;
+                sb.Append(c);
+                continue;
+            }
+
+            // A comment, as the block parser skips it: a stand-in in it is removed.
+            if (c == '/' && i + 1 < filled.Length && (filled[i + 1] == '/' || filled[i + 1] == '*'))
+            {
+                int end;
+                if (filled[i + 1] == '/')
+                {
+                    end = filled.IndexOf('\n', i);
+                    if (end < 0) end = filled.Length;
+                }
+                else
+                {
+                    end = filled.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    end = end < 0 ? filled.Length : end + 2;
+                }
+                sb.Append(filled, i, end - i).Replace(standIn, string.Empty, sb.Length - (end - i), end - i);
+                i = end - 1;
+                continue;
+            }
+
+            sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Parses the text as exactly one JSON value, as leniently as the block parser does, and
     /// returns it as compact JSON with no comments or trailing commas.
     /// </summary>

@@ -416,9 +416,15 @@ namespace DBToRestAPI.Controllers
                         string.Join(", ", mixedContextMarkers));
                 }
 
+                // A NULL value (a name nothing sends included) becomes JSON null outside a string and
+                // stays an empty text inside one: the fill gives every NULL one text, so it is placed
+                // by position afterwards.
+                var nullStandIn = EmbeddedHttpTemplate.NewNullStandIn();
                 httpRequestDetails = httpRequestDetails.Fill(
                     qParams,
+                    nullReplacementString: nullStandIn,
                     valueConverter: (name, value) => EmbeddedHttpTemplate.ConvertValue(markerContexts, name, value));
+                httpRequestDetails = EmbeddedHttpTemplate.ReplaceNullValues(httpRequestDetails, nullStandIn);
                 // Not the filled JSON itself: its url, headers and body can hold keys and caller values.
                 _logger.LogDebug(
                     "{Time}: [EmbeddedHTTP] Route: {Route} — Prepared call #{Index} ({Length} characters)",

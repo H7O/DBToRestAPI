@@ -182,6 +182,9 @@ public class Step1ServiceTypeChecks(
             // %0A in it would start a new line.
             context.Items["route"] = LogText.Escape(route);
             context.Items["section"] = routeConfig;
+            // A preflight is answered from the routes it lists (Step2): a gateway path has one.
+            if (context.Request.Method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
+                context.Items["sections"] = new List<IConfigurationSection> { routeConfig };
             context.Items["service_type"] = "api_gateway";
             context.Items["remaining_path"] = this._routeConfigResolver.GetRemainingPath(route, routeConfig);
             context.Items["content_type"] = contentType;

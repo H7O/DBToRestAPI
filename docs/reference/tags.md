@@ -84,7 +84,7 @@ Each tag goes in `<cors>`: the endpoint's or gateway route's, then the global on
 | Tag | Default | Notes |
 |---|---|---|
 | `<pattern>` | none: no origin matches | Matched against the origin's host only, ignoring case. Anchor it with `^` and `$`. |
-| `<fallback_origin>` | `*` | Sent when the origin doesn't match. Don't write `*`: it is sent as `https://*`. |
+| `<fallback_origin>` | `*` | Sent when the origin doesn't match, and when there's no `Origin` header. |
 | `<allowed_headers>` | the default list with credentials on, `*` with them off | Replaces the default list. |
 | `<allow_credentials>` | `true` when an `<authorize>` exists on the route or at the root, else `false` | `true` or `false`. |
 | `<max_age>` | `86400` | Seconds. |

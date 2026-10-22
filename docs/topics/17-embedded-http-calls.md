@@ -111,9 +111,9 @@ The JSON inside `{http{...}http}` supports the full HTTP executor configuration:
 |----------|------|----------|-------------|
 | `url` | string | Yes | The HTTP endpoint URL. Constants and `{s{settings}}` values may sit in its query string; a **caller-supplied** `{{marker}}` belongs in `query` — see [Caller-Supplied Values](#caller-supplied-values-url-encoding-and-json-escaping) |
 | `method` | string | No | HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS (default: GET) |
-| `headers` | object | No | Custom headers to include. A header whose name or value contains a line break is dropped, never sent. Don't put `Content-Type` here: it is sent beside the one `content_type` sets, so the request carries two types (`application/json; charset=utf-8, application/json`) |
+| `headers` | object | No | Custom headers to include. A header whose name or value contains a line break is dropped, never sent. A `Content-Type` here replaces the one `content_type` sets |
 | `query` | object | No | Query-string parameters, percent-encoded and appended to `url` (with `&` when `url` already has a `?`). The right place for caller-supplied values |
-| `body` | object/array | No | JSON body, sent as written (for POST/PUT/PATCH). A marker used outside a string (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string. A string `body` is sent as a JSON string, quotes included: for a form or any other text, use `body_raw` |
+| `body` | object/array | No | JSON body, sent as written (for POST/PUT/PATCH). A marker used outside a string (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string. A string `body` is sent as its text when the body's type isn't JSON (a form), and as a JSON string when it is |
 | `body_raw` | string | No | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document, and `body_raw` with `content_type` for a form ([POST with a form body](#post-with-a-form-body)) |
 | `content_type` | string | No | The body's `Content-Type` (default: `application/json`), sent with a `charset=utf-8` |
 | `timeout_seconds` | number | No | Request timeout in seconds (default: 30). `timeout` is accepted as an alias |
@@ -195,16 +195,14 @@ that block needs splitting into two markers.
 **Header injection — blocked.** A header whose name or value contains a carriage return or line feed
 is dropped rather than sent, so a substituted value cannot start a second header or a body.
 
-**A marker that matches nothing.** Inside a JSON string, in `query` and in `headers`, it becomes an
-empty string: `"q": "{{city}}"` sends `q=` when the request has no `city`. Outside a string it
-leaves nothing, so `"body": { "doc": {{doc}} }` becomes `"doc": }`, which isn't JSON: the call isn't
-made, and the variable gets `status_code` `0` with an `Invalid JSON` error. So use a marker outside
-a string only for a value that always exists, and check `status_code` for `0` ([error handling](#error-handling)).
+**A marker that matches nothing, or a `NULL` value.** Inside a JSON string, in `query` and in
+`headers`, it becomes an empty string: `"q": "{{city}}"` sends `q=` when the request has no `city`.
+Outside a string it becomes JSON `null`: `"body": { "doc": {{doc}} }` sends `{ "doc": null }`.
 
 ## POST with a form body
 
 Some APIs, such as Stripe's, take `application/x-www-form-urlencoded` instead of JSON. Send the form
-as `body_raw` and set `content_type`. A `body` string would be sent as a JSON string in quotes.
+as `body_raw` and set `content_type`. A `body` string with that type is sent the same way.
 
 A value in `body_raw` is inserted as written, and `&` and `=` in it add or change fields: a caller who
 sends `10&currency=eur` as the amount adds a second `currency`. The engine has no form encoding, so

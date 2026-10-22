@@ -149,9 +149,7 @@ DECLARE @payment NVARCHAR(MAX) = {http{
 }http};
 ```
 
-The form goes in `body_raw`, with its type in `content_type`. A form body
-string in `body` would be sent as a JSON string, quotes included, and a
-`Content-Type` in `headers` would be sent beside `content_type`'s. The values in
+The form goes in `body_raw`, with its type in `content_type`. The values in
 the form come from the database, not the request: `&` or `=` in a caller's
 value would add fields. The whole endpoint is in topic 17,
 [POST with a form body](../topics/17-embedded-http-calls.md#post-with-a-form-body).

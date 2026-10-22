@@ -49,6 +49,28 @@ public class DbConnectionFactoryTests
         Assert.Equal("SqlConnection", ProviderConnectionType(factory, "main"));
     }
 
+    [Theory]
+    // A SQL Server login has User Id and Data Source, which the Oracle rule matched first.
+    [InlineData("Data Source=db1;Initial Catalog=app;User Id=sa;Password=x;", "SqlConnection")]
+    [InlineData("Data Source=db1;Integrated Security=True;User Id=sa;", "SqlConnection")]
+    // A server named like a file matched the SQLite rule.
+    [InlineData("Server=prod.db.example.com;Database=app;Integrated Security=True;", "SqlConnection")]
+    [InlineData("Server=prod.db.example.com;Database=app;TrustServerCertificate=True;", "SqlConnection")]
+    // What already worked keeps working.
+    [InlineData("Data Source=app.db", "SqliteConnection")]
+    [InlineData("Data Source=:memory:", "SqliteConnection")]
+    [InlineData("Data Source=file:app.db?mode=ro", "SqliteConnection")]
+    [InlineData("Data Source=orcl:1521/XE;User Id=app;Password=x;", "OracleConnection")]
+    [InlineData("Data Source=orcl;User Id=app;Password=x;", "OracleConnection")]
+    [InlineData("Host=db.example.com;Database=app;Username=app", "NpgsqlConnection")]
+    [InlineData("Server=.;Database=shop;Trusted_Connection=True;", "SqlConnection")]
+    public void TheProviderGuess_ReadsWhatEachDatabaseAloneUses(string connectionString, string connectionType)
+    {
+        var (_, factory) = FactoryFor(new() { ["ConnectionStrings:main"] = connectionString });
+
+        Assert.Equal(connectionType, ProviderConnectionType(factory, "main"));
+    }
+
     private static string ProviderConnectionString(DbConnectionFactory factory, string name)
     {
         using var connection = factory.Create(name);

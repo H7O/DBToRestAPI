@@ -1,7 +1,7 @@
 ---
 title: CORS
 summary: The Access-Control-* headers the engine sends so that a browser page on another origin can read an endpoint's answer, their defaults, and how an <authorize> section anywhere changes them.
-keywords: [cors, pattern, fallback_origin, max_age, allow_credentials, allowed_headers, Origin, Access-Control-Allow-Origin, Access-Control-Allow-Credentials, Access-Control-Allow-Headers, Access-Control-Allow-Methods, Access-Control-Max-Age, OPTIONS, preflight, 204, X-Auth-Provider, "https://*", "Step 2 - CORS Check Error"]
+keywords: [cors, pattern, fallback_origin, max_age, allow_credentials, allowed_headers, Origin, Access-Control-Allow-Origin, Access-Control-Allow-Credentials, Access-Control-Allow-Headers, Access-Control-Allow-Methods, Access-Control-Max-Age, OPTIONS, preflight, 204, X-Auth-Provider, Vary]
 ---
 
 # CORS
@@ -14,7 +14,7 @@ CORS headers tell a browser whether a page from another origin may read an endpo
 
 1. **Anchor the pattern with `^` and `$`.** `<pattern>` is a .NET regular expression matched against the host of the request's `Origin` only, without its scheme or port, ignoring case. Unanchored, `example\.com` also matches `example.com.attacker.net`. A pattern with a scheme or a port in it (`^https://app\.example\.com$`, `^localhost:3000$`) matches nothing.
 2. **Set `<fallback_origin>` to your own origin, or the pattern restricts nothing.** An origin the pattern doesn't match gets `fallback_origin`, and without one `*`, which lets a page on any origin read the answer unless it sends cookies. The shipped `settings.xml` has a pattern and no fallback.
-3. **To allow every origin, leave out both `<pattern>` and `<fallback_origin>`.** Never write `<fallback_origin>*</fallback_origin>`: the engine puts `https://` in front of a value that doesn't start with `http`, so it sends `https://*`, which matches no page.
+3. **To allow every origin, leave out both `<pattern>` and `<fallback_origin>`,** or set `<fallback_origin>*</fallback_origin>`.
 4. **Expect credentials to be on.** When an `<authorize>` section exists on the route or at the root of any loaded file, every response says `Access-Control-Allow-Credentials: true`. The shipped `auth_providers.xml` has one at its root, so in the shipped config every route does. `<allow_credentials>false</allow_credentials>` turns it off.
 5. **With credentials on, list in `<allowed_headers>` every request header the page sends that's outside the default list.** The default is then `Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key`, not `*`. A page that sends `X-Auth-Provider`, the header that picks the token's provider on a route with several ([12](12-authentication.md#how-a-provider-is-selected)), or a header of its own fails the preflight, and the browser never sends the request. `<allowed_headers>` replaces the default list, so repeat the defaults the page needs.
 6. **A page that sends cookies (`credentials: 'include'`) needs a pattern that matches its origin.** For such a request the browser accepts only its own origin in `Access-Control-Allow-Origin`, never `*` or a fallback for another site.
@@ -30,14 +30,15 @@ CORS headers tell a browser whether a page from another origin may read an endpo
    - `Access-Control-Allow-Credentials: true` when credentials are on (rule 4). When they are off, the header is left out.
    - `Access-Control-Allow-Headers`: `allowed_headers`. Without it, the default list when credentials are on, and `*` when they are off.
    - `Access-Control-Max-Age`: `max_age`, `86400` without it.
+   - `Vary: Origin`, when a pattern applies: the answer then depends on the request's origin, so a shared cache in front of the engine, such as a CDN, keeps one copy per origin.
 4. An `OPTIONS` request is a preflight. The engine answers it `204`, without a body, before API keys, tokens and rate limits, and runs no query. It combines every route with the request's path and host, whatever their verbs:
    - methods: all their verbs plus `OPTIONS`, or the default list when none has a `<verb>`;
    - origin: the request's origin when one route's pattern matches it, otherwise the fallback of the first route that has one, otherwise `*`;
    - allowed headers: those of the first route that sets them, otherwise the default;
-   - credentials: on when one of the routes has them on, and always on when the root has an `<authorize>` section;
+   - credentials: on when one of the routes has them on, each deciding as it does for its own responses;
    - max age: the shortest.
 
-   A path that no route has gets `404`. A gateway route's preflight gets `500` ([known issues](#known-issues)).
+   A path that no route has gets `404`. A gateway route's preflight is answered the same way, from that route's `<cors>`.
 5. On a [gateway](08-api-gateway.md) route, a response header the target sends replaces the engine's: a target that sends its own `Access-Control-Allow-Origin` decides it.
 
 ## Complete example: a page on another origin calls a protected route
@@ -110,7 +111,7 @@ Each one goes in `<cors>` on a route or at the root of `settings.xml`. The route
 | Tag | Default | Notes |
 |---|---|---|
 | `pattern` | none: no origin matches | .NET regular expression matched against the origin's host, ignoring case, with a one-second limit. An invalid pattern is logged at `Error` and matches nothing. |
-| `fallback_origin` | `*` | Sent when the origin doesn't match, and when there's no `Origin` header. A value that doesn't start with `http` gets `https://` in front. |
+| `fallback_origin` | `*` | Sent when the origin doesn't match, and when there's no `Origin` header. A value that doesn't start with `http`, other than `*`, gets `https://` in front. |
 | `allow_credentials` | `true` when an `<authorize>` section exists on the route or at the root, otherwise `false` | `true` or `false`. Anything else counts as not set. |
 | `allowed_headers` | `Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key` with credentials on, `*` with them off | Comma-separated. Replaces the default list. |
 | `max_age` | `86400` | Seconds a browser may keep a preflight's answer. A value that isn't a whole number of 0 or more counts as not set. |
@@ -119,18 +120,16 @@ Each one goes in `<cors>` on a route or at the root of `settings.xml`. The route
 
 ## Errors
 
-The body is `{"success":false,"message":"..."}`, with each backtick in the message written as ```.
+The body is `{"success":false,"message":"..."}`, with each backtick in the message written as `\u0060`.
 
 | Request | Status | Message |
 |---|---|---|
 | A preflight to a path that no route has | `404` | ``API Endpoint `PATH` not found`` |
-| A preflight to a gateway route | `500` | ``Improper service setup. (Contact your service provider support and provide them with error code `Step 2 - CORS Check Error`)`` |
 
 Silent failures, where the engine answers as usual and logs nothing:
 
 - An unanchored pattern lets a lookalike host through (rule 1).
 - A pattern without a fallback lets every page read the answers (rule 2).
-- `*` as the fallback blocks every page whose origin the pattern doesn't match (rule 3).
 - A request header outside the allowed list makes the browser drop the request after the preflight (rule 5). The engine sees only the preflight.
 - A pattern with a scheme or a port in it matches nothing, so every origin gets the fallback.
 
@@ -146,13 +145,10 @@ Silent failures, where the engine answers as usual and logs nothing:
 ```
 
 ```xml
-<!-- Do: allow every origin by leaving both tags out -->
+<!-- Do: allow every origin, by leaving both tags out or with a * fallback -->
 <cors>
-  <max_age>3600</max_age>
+  <fallback_origin>*</fallback_origin>
 </cors>
-
-<!-- Don't: sent as https://* -->
-<fallback_origin>*</fallback_origin>
 ```
 
 Keep `localhost` out of a production pattern. The pattern can't check the scheme or the port, so `localhost` in it lets any page served from `localhost` on a visitor's own computer read the answers. Set the development pattern per machine instead, with an environment variable such as `cors__pattern=^(app\.example\.com|localhost)$` ([environment variables](02-configuration.md#environment-variables)).
@@ -161,11 +157,7 @@ Keep `localhost` out of a production pattern. The pattern can't check the scheme
 
 These are recorded in [TODO.md](../../TODO.md).
 
-- `<fallback_origin>*</fallback_origin>` is sent as `https://*` (rule 3).
-- A preflight to a gateway route answers `500`, so a page on another origin can call a gateway route only with a request that needs no preflight.
-- When it sends the request's origin back, the engine doesn't send `Vary: Origin`, so a shared cache in front of it, such as a CDN or a proxy, can hand one origin's answer to another. The engine's own [`<cache>`](07-caching.md) is not affected: it sets the headers on each response.
 - The engine sends no `Access-Control-Expose-Headers`, so a page on another origin can't read response headers outside the CORS-safelisted ones, such as `Content-Disposition` on a [download](10-file-downloads.md).
-- When the root has an `<authorize>` section, a preflight says `Access-Control-Allow-Credentials: true` even for a route with `<allow_credentials>false</allow_credentials>`.
 
 ## Related
 

@@ -84,42 +84,9 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 - **CORS:** when any `<authorize>` section exists, credentials are on for every route and the
   default allowed headers leave out `X-Auth-Provider`.
 
-The items below were found on 2026-10-21 while rewriting the CORS page, each checked against a
-running engine. None has a test: nothing tests a preflight.
-
-- **CORS: `<fallback_origin>*</fallback_origin>` is sent as `https://*`.** `NormalizeFallbackOrigin`
-  puts `https://` in front of any value that doesn't start with `http`, so the value the old page
-  recommended for "allow all" blocks every origin the pattern doesn't match.
-- **CORS: a preflight to a gateway route answers `500`** (`Step 2 - CORS Check Error`). Step 1 sets
-  `sections` only for query routes, and Step 2's `OPTIONS` branch needs it.
-- **CORS: no `Vary: Origin`** when the engine sends the request's origin back, so a shared cache in
-  front of the engine can hand one origin's answer to another.
-- **CORS: a preflight ignores a route's `<allow_credentials>false</allow_credentials>`** when the
-  root has an `<authorize>` section (the preflight's `GetAllowCredentials` checks the root first),
-  while the route's own responses leave the header out.
-- **A SQL Server connection string with a SQL login, and no `provider`, goes to the Oracle
-  driver.** `DbConnectionFactory.InferProviderFromConnectionString` checks substrings in a fixed
-  order, and `User Id=` with `Data Source=` is its Oracle rule, checked before SQL Server's: every
-  request fails with `ORA-50008: 'Initial Catalog' is an invalid connection string attribute`
-  (checked against a running engine). Any string containing `.db`, such as a server named
-  `prod.db.example.com`, goes to SQLite. Parsing the keywords (an `Initial Catalog` or
-  `Integrated Security` means SQL Server, whatever else is there) would fix the common cases; the
-  docs say to set `provider` always.
-- **`{http{}}`: a `Content-Type` in `headers` is sent beside the one `content_type` sets**, so the
-  request carries `application/json; charset=utf-8, application/json` (checked against a capture
-  server). `RequestMessageBuilder.SetHeaders` adds content headers with `TryAddWithoutValidation`
-  instead of replacing the content's type, and a strict server rejects the header. Taking a
-  `Content-Type` header as the content type would fix every configuration that sets one, as the
-  docs showed before this was found.
-- **`{http{}}`: a string `body` is sent as a JSON string, quotes included** (`GetRawText`), so a form
-  written in `body`, as the docs showed for Stripe, arrives as `"amount=10&currency=usd"`. The docs
-  now use `body_raw` with `content_type`. A `form` object, encoded like `query`, would also stop a
-  caller's `&` or `=` from adding fields; today a form may hold only values the query checked or
-  built.
-- **`{http{}}`: a marker outside a JSON string that matches nothing leaves nothing**, so
-  `"body": { "doc": {{doc}} }` becomes `"doc": }`: the block isn't JSON, the call isn't made, and the
-  variable gets `status_code` 0 with an `Invalid JSON` error (checked against a running engine).
-  Writing `null` for such a marker, as for a known value that is `NULL`, would keep the block valid.
+- **Idea: a `form` object in `{http{}}` calls**, encoded like `query`, so a form body could hold a
+  caller's value: in `body_raw`, or a `body` string with a form type, `&` and `=` in a value add
+  fields, so today a form may hold only values the query checked or built.
 
 The items below were found on 2026-10-21 by an inventory of every configuration key the code reads
 (for `docs/reference/tags.md`), each checked in the code or against a running engine.
@@ -143,6 +110,19 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **CORS, embedded HTTP calls and the provider guess got eight things wrong.** Fixed in 1.7.20, each
+  found while the docs were checked against a running engine. CORS: `<fallback_origin>*</fallback_origin>`
+  was sent as `https://*`; a preflight to a gateway route answered `500` (Step 1 gave it no route
+  list); a preflight said credentials were allowed for a route with `allow_credentials` false
+  whenever the root had an `<authorize>`; and an answer that depends on the origin had no
+  `Vary: Origin`. `{http{}}` calls: a `Content-Type` in `headers` was sent beside the default type,
+  as two types; a string `body` was sent as a JSON string in quotes, so a form never arrived (it is
+  now sent as its text when the body's type isn't JSON, and unchanged under JSON); and a marker
+  outside a JSON string that matched nothing left the block invalid, so the call wasn't made (a
+  NULL is now `null` there). And without `provider`, a SQL Server string with a SQL login went to
+  the Oracle driver, and one naming a server such as `prod.db.example.com` went to SQLite: ODBC and
+  OLE DB are now recognised first, SQL Server's own keywords before Oracle's and SQLite's rules,
+  and SQLite only from the data source itself.
 - **PATCH and HEAD didn't reach their routes, and four settings or log lines were wrong.** Fixed in
   1.7.19. A PATCH answered `405`: routing, CORS and OpenAPI accepted it, but the controller had no
   `[HttpPatch]`. A HEAD to a GET route answered `404`, and to any route `405`, though the cache

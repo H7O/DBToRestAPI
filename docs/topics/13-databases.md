@@ -15,7 +15,7 @@ Connect to SQL Server, PostgreSQL, MySQL, SQLite, Oracle, IBM DB2, and any ODBC 
 | ODBC | `System.Data.Odbc` |
 | OleDb | `System.Data.OleDb` |
 
-Set `provider` on every connection string. Without it, the engine guesses from keywords in the string ([provider detection](#provider-detection)), and the guess misreads common strings: a SQL Server string with a SQL login (`Data Source=...;Initial Catalog=...;User Id=...;Password=...`) goes to the Oracle driver, which fails every request.
+Set `provider` on every connection string. Without it, the engine guesses from keywords in the string ([provider detection](#provider-detection)), and the guess can't tell every string apart: a SQL Server string with only `Data Source`, `User Id` and `Password` goes to the Oracle driver, which fails every request.
 
 > **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
@@ -242,18 +242,19 @@ A query's timeout, in seconds, is the first of these that is set: its `db_comman
 
 ## Provider Detection
 
-A connection string without a `provider` attribute gets the first rule below that matches. Each rule looks for text anywhere in the string, ignoring case:
+A connection string without a `provider` attribute gets the first rule below that matches. Each rule looks for text in the string, ignoring case:
 
-1. `Host=` without `Data Source=`: PostgreSQL.
-2. `SslMode=`, `AllowPublicKeyRetrieval=`, or `Server=` with `Port=3306`: MySQL.
-3. `(DESCRIPTION=`, `:1521`, or `User Id=` with `Data Source=`: Oracle.
-4. `.db`, `.sqlite` or `:memory:`: SQLite.
-5. `Database=` and `Server=` with `:50000` or `Protocol=TCPIP`, or `Database=` with `UID=` and `PWD=`: DB2.
-6. `Driver=`: ODBC.
-7. `Provider=` with `OLEDB`, `MSOLEDBSQL`, `SQLOLEDB`, `Microsoft.ACE`, `Microsoft.Jet`, `MSDAORA` or `OraOLEDB`: OleDb.
-8. Anything else: SQL Server.
+1. `Driver=`: ODBC.
+2. `Provider=` with `OLEDB`, `MSOLEDBSQL`, `SQLOLEDB`, `Microsoft.ACE`, `Microsoft.Jet`, `MSDAORA` or `OraOLEDB`: OleDb.
+3. `Host=` without `Data Source=`: PostgreSQL.
+4. `SslMode=`, `AllowPublicKeyRetrieval=`, or `Server=` with `Port=3306`: MySQL.
+5. `Initial Catalog=`, `Integrated Security=`, `TrustServerCertificate=`, `Trusted_Connection=` or `MultipleActiveResultSets=`: SQL Server.
+6. `(DESCRIPTION=`, `:1521`, or `User Id=` with `Data Source=`: Oracle.
+7. A data source (`Data Source`, `DataSource` or `Filename`) that holds `.db`, `.sqlite` or `:memory:`: SQLite.
+8. `Database=` and `Server=` with `:50000` or `Protocol=TCPIP`, or `Database=` with `UID=` and `PWD=`: DB2.
+9. Anything else: SQL Server.
 
-Because the rules match text, they misfire. A SQL Server string with a SQL login matches rule 3 and goes to the Oracle driver (`ORA-50008: 'Initial Catalog' is an invalid connection string attribute`). A server named `prod.db.example.com` matches rule 4 and goes to SQLite. So set `provider` on every connection string.
+The rules can't tell every string apart. `Data Source=db1;User Id=app;Password=x`, with no other keyword, is valid for both SQL Server and Oracle, and goes to Oracle (on SQL Server, add `Initial Catalog` or `TrustServerCertificate`). So set `provider` on every connection string.
 
 ## Related Topics
 

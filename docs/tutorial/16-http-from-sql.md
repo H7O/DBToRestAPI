@@ -155,7 +155,7 @@ JSON document, use `"body_raw": "{{payload}}"`.
 
 ## POST with JSON Body
 
-The body is sent as `application/json`. For another type, set `"content_type"`, never a `Content-Type` in `"headers"`: that one is sent beside it, so the request carries two types. A form (`application/x-www-form-urlencoded`) goes in `"body_raw"`, as topic 17 shows in [POST with a form body](../topics/17-embedded-http-calls.md#post-with-a-form-body).
+The body is sent as `application/json`. For another type, set `"content_type"`, or a `Content-Type` in `"headers"`, which replaces it. A form (`application/x-www-form-urlencoded`) goes in `"body_raw"`, as topic 17 shows in [POST with a form body](../topics/17-embedded-http-calls.md#post-with-a-form-body).
 
 ```sql
 DECLARE @result NVARCHAR(MAX) = {http{

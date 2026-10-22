@@ -172,7 +172,7 @@ If omitted, the `default` connection string is used. The supported database prov
 | ODBC | `System.Data.Odbc` |
 | OleDb | `System.Data.OleDb` |
 
-Always set `provider`. Without it, the application guesses from keywords in the connection string, and the guess misreads common strings: a SQL Server string with `User Id=` and `Data Source=` goes to the Oracle driver ([Provider detection](../topics/13-databases.md#provider-detection)).
+Always set `provider`. Without it, the application guesses from keywords in the connection string, and the guess can't tell every string apart: a SQL Server string with only `Data Source`, `User Id` and `Password` goes to the Oracle driver ([Provider detection](../topics/13-databases.md#provider-detection)).
 
 > **ODBC & OleDb**: These providers natively use positional `?` parameters. DBToRestAPI transparently converts your `{{named}}` parameters into correctly ordered positional parameters — same friendly syntax for all databases.
 
@@ -227,7 +227,7 @@ Define a default CORS policy for all endpoints:
 ```
 
 - `<pattern>` — Regex checked against the host in the request's `Origin` header, without its scheme or port. Anchor it with `^` and `$`. If it matches, the origin is echoed back in `Access-Control-Allow-Origin`.
-- `<fallback_origin>` — Sent when the origin doesn't match the pattern. Without it, the answer is `*`, which lets every page read the response, so set it to your own site. Don't write `*` here: it is sent as `https://*`. To allow every origin, leave out both tags.
+- `<fallback_origin>` — Sent when the origin doesn't match the pattern. Without it, the answer is `*`, which lets every page read the response, so set it to your own site. To allow every origin, leave out both tags, or set this one to `*`.
 - Endpoint-level `<cors>` overrides this global setting, tag by tag. See [CORS](../topics/11-cors.md), including what changes when an `<authorize>` section exists.
 
 ## Configuration Encryption

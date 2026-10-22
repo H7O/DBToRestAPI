@@ -126,8 +126,9 @@ public class Step2CorsCheck(
         string? allowedHeaders = GetAllowedHeaders(section);
         string allowCredentials = GetAllowCredentials(section);
         long maxAge = GetMaxAge(section);
+        bool variesByOrigin = !string.IsNullOrWhiteSpace(GetCorsValue(section, "pattern"));
 
-        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge);
+        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge, variesByOrigin);
     }
 
     /// <summary>
@@ -143,8 +144,9 @@ public class Step2CorsCheck(
         string? allowedHeaders = GetAllowedHeaders(sections);
         string allowCredentials = GetAllowCredentials(sections);
         long maxAge = GetMaxAge(sections);
+        bool variesByOrigin = sections.Any(section => !string.IsNullOrWhiteSpace(GetCorsValue(section, "pattern")));
 
-        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge);
+        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge, variesByOrigin);
     }
 
     /// <summary>
@@ -156,9 +158,15 @@ public class Step2CorsCheck(
         string allowedMethods,
         string? allowedHeaders,
         string allowCredentials,
-        long maxAge)
+        long maxAge,
+        bool variesByOrigin)
     {
         context.Response.Headers["Access-Control-Allow-Origin"] = allowedOrigin;
+
+        // With a pattern, the answer depends on the request's Origin (sent back, or the fallback), so a
+        // shared cache in front of the engine must keep one copy per origin.
+        if (variesByOrigin)
+            context.Response.Headers.Append("Vary", "Origin");
         context.Response.Headers["Access-Control-Allow-Methods"] = allowedMethods;
 
         if (allowCredentials.Equals("true"))
@@ -273,6 +281,10 @@ public class Step2CorsCheck(
 
     private static string NormalizeFallbackOrigin(string fallbackOrigin)
     {
+        // `*` allows every origin, as no fallback does; with https:// in front it would match none.
+        if (fallbackOrigin.Trim() == "*")
+            return "*";
+
         return fallbackOrigin.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? fallbackOrigin
             : $"https://{fallbackOrigin}";
@@ -477,32 +489,11 @@ public class Step2CorsCheck(
 
     /// <summary>
     /// Gets the allow credentials value by checking ALL sections.
-    /// Returns "true" if ANY section has explicit allow_credentials=true OR has an authorize section.
+    /// Returns "true" if ANY section allows credentials, decided for each section as its own
+    /// responses decide it, so a route's explicit allow_credentials=false holds for its preflight too.
     /// </summary>
     private string GetAllowCredentials(List<IConfigurationSection> sections)
-    {
-        // Check global config for authorize first
-        if (_configuration.GetSection("authorize").Exists())
-            return "true";
-
-        foreach (var section in sections)
-        {
-            // Check explicit allow_credentials setting
-            var allowCredentials = GetCorsValue(section, "allow_credentials");
-            if (!string.IsNullOrWhiteSpace(allowCredentials)
-                && bool.TryParse(allowCredentials, out var allowCredentialsBool)
-                && allowCredentialsBool)
-            {
-                return "true";
-            }
-
-            // Check for authorize section
-            if (section.GetSection("authorize").Exists())
-                return "true";
-        }
-
-        return "false";
-    }
+        => sections.Any(section => GetAllowCredentials(section) == "true") ? "true" : "false";
 
     #endregion
 

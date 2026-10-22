@@ -146,6 +146,16 @@ public class DbConnectionFactory
     {
         var cs = connectionString.ToLowerInvariant();
 
+        // ODBC and OLE DB name their driver. Checked first: the driver's own keywords (a SQL
+        // Server driver's TrustServerCertificate, an Oracle one's User Id) match other rules too.
+        if (cs.Contains("driver="))
+            return "System.Data.Odbc";
+
+        if (cs.Contains("provider=") && (cs.Contains("oledb") || cs.Contains("msoledbsql") ||
+            cs.Contains("sqloledb") || cs.Contains("microsoft.ace") || cs.Contains("microsoft.jet") ||
+            cs.Contains("msdaora") || cs.Contains("oraoledb")))
+            return "System.Data.OleDb";
+
         // PostgreSQL
         if (cs.Contains("host=") && !cs.Contains("data source="))
             return "Npgsql";
@@ -155,13 +165,22 @@ public class DbConnectionFactory
             (cs.Contains("server=") && cs.Contains("port=3306")))
             return "MySqlConnector";
 
+        // SQL Server: keywords only it uses. Checked before Oracle, whose rule (User Id with Data
+        // Source) a SQL Server login matches too, and before SQLite, whose rule a server named
+        // prod.db.example.com would match.
+        if (cs.Contains("initial catalog=") || cs.Contains("integrated security=") ||
+            cs.Contains("trustservercertificate=") || cs.Contains("trusted_connection=") ||
+            cs.Contains("multipleactiveresultsets="))
+            return "Microsoft.Data.SqlClient";
+
         // Oracle
         if (cs.Contains("(description=") || cs.Contains(":1521") ||
             (cs.Contains("user id=") && cs.Contains("data source=")))
             return "Oracle.ManagedDataAccess.Core";
 
-        // SQLite
-        if (cs.Contains(".db") || cs.Contains(".sqlite") || cs.Contains(":memory:"))
+        // SQLite: a database file, or memory, named as the data source itself
+        if (SqliteDataSource(connectionString) is { } dataSource
+            && (dataSource.Contains(".db") || dataSource.Contains(".sqlite") || dataSource.Contains(":memory:")))
             return "Microsoft.Data.Sqlite";
 
         // DB2 - detect by typical DB2 connection string patterns
@@ -170,22 +189,29 @@ public class DbConnectionFactory
             (cs.Contains("database=") && cs.Contains("uid=") && cs.Contains("pwd=")))
             return "Net.IBM.Data.Db2";
 
-        // ODBC - detect by Driver= keyword
-        if (cs.Contains("driver="))
-            return "System.Data.Odbc";
-
-        // OleDb - detect by Provider= keyword with known OleDb providers
-        if (cs.Contains("provider=") && (cs.Contains("oledb") || cs.Contains("msoledbsql") ||
-            cs.Contains("sqloledb") || cs.Contains("microsoft.ace") || cs.Contains("microsoft.jet") ||
-            cs.Contains("msdaora") || cs.Contains("oraoledb")))
-            return "System.Data.OleDb";
-
-        // SQL Server (most common)
-        if (cs.Contains("initial catalog=") || cs.Contains("integrated security=") ||
-            cs.Contains("trustservercertificate="))
-            return "Microsoft.Data.SqlClient";
-
         return null;
+    }
+
+    /// <summary>
+    /// The value of the keyword SQLite reads its database from (Data Source, DataSource or Filename),
+    /// in lower case. A string that doesn't parse is looked at whole, as before.
+    /// </summary>
+    private static string? SqliteDataSource(string connectionString)
+    {
+        try
+        {
+            var builder = new DbConnectionStringBuilder { ConnectionString = connectionString };
+            foreach (var key in new[] { "data source", "datasource", "filename" })
+            {
+                if (builder.TryGetValue(key, out var value) && value is not null)
+                    return value.ToString()!.ToLowerInvariant();
+            }
+            return null;
+        }
+        catch (ArgumentException)
+        {
+            return connectionString.ToLowerInvariant();
+        }
     }
 }
 
