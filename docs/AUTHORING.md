@@ -57,6 +57,8 @@ Sections in this order. [09 file uploads](topics/09-file-uploads.md) follows it 
 
 To show a mistake on purpose, put a comment that starts with `Don't` before it: the elements after it are skipped up to the next comment. When the engine reads a new tag, add it to `ConfigGrammar.cs` as well as to [tags.md](reference/tags.md).
 
+Some pages' examples also run, on SQL Server, as the page shows them: `UploadsExampleTests` (09), `DownloadsExampleTests` (10), `ChainingExampleTests` (14) and `HttpCallsExampleTests` (17). Each reads its page's endpoint and `CREATE TABLE` blocks from the page itself, creates a database for them, sends the page's requests and checks the answers the page documents. So a change to one of those examples must still answer as its page says. They need `DBTOREST_TEST_SQLSERVER`, a connection string to a server without a database (`Server=localhost;Integrated Security=true;TrustServerCertificate=true`); CI runs a SQL Server container for it, and without it they are skipped. To cover another page's example, follow those files: `SqlServerExample` finds the example by its section's heading.
+
 ## Testing docs with agents
 
 Run docs-only agents on real tasks before and after changing a page:

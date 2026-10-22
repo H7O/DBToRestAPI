@@ -98,7 +98,7 @@ Read a value from an earlier query with `{pq{name}}`. It looks only at the resul
 - the earlier query returned zero rows
 - the earlier query returned several rows, so its columns are only in the JSON variable
 
-So a caller can replace a value your SQL looked up, such as an owner id or a URL, by sending a field with the same name. `{pq{name}}` takes the value from the latest earlier query that returned a column `name`, even a `NULL` one. When none did, it is `NULL`: test it with `IS NULL` before you use it. `{pq{name}}` works inside `{http{ ... }http}` blocks too, where a missing value is inserted as an empty string.
+So a caller can replace a value your SQL looked up, such as an owner id or a URL, by sending a field with the same name. `{pq{name}}` takes the value from the latest earlier query that returned a column `name`, even a `NULL` one. When none did, it is `NULL`: test it with `IS NULL` before you use it. `{pq{name}}` works inside `{http{ ... }http}` blocks too, where a missing value is an empty string inside a JSON string and `null` outside one ([17](17-embedded-http-calls.md#caller-supplied-values-url-encoding-and-json-escaping)).
 
 ## Cross-Database Example
 

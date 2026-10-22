@@ -12,7 +12,7 @@ namespace DBToRestAPI.Tests;
 /// </summary>
 public partial class DocsExamplesTests
 {
-    private static readonly string Root = FindRoot();
+    internal static readonly string Root = FindRoot();
 
     private static string FindRoot()
     {
@@ -50,7 +50,7 @@ public partial class DocsExamplesTests
     [GeneratedRegex(@"\{(?<kind>[a-z_]+)\{")]
     private static partial Regex Placeholder();
 
-    private static IEnumerable<(string Lang, string Code, int Line)> Blocks(string text)
+    internal static IEnumerable<(string Lang, string Code, int Line)> Blocks(string text)
     {
         foreach (Match block in CodeBlock().Matches(text))
         {

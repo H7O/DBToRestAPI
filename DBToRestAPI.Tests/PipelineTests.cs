@@ -280,7 +280,12 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
         /// Answer the engine's outgoing HTTP calls with <see cref="Http"/>. Off, they go to the real
         /// handlers, for tests that serve their own upstream on a loopback port.
         /// </param>
-        protected PipelineEngine(Func<string, Dictionary<string, string?>>? extraSettings, bool kestrel = false, bool fakeHttp = true)
+        /// <param name="routesDatabase">
+        /// The connection the routes get instead of the temporary SQLite database, such as a SQL
+        /// Server database a test created.
+        /// </param>
+        protected PipelineEngine(Func<string, Dictionary<string, string?>>? extraSettings, bool kestrel = false, bool fakeHttp = true,
+            (string ConnectionString, string Provider)? routesDatabase = null)
         {
             Folder = Path.Combine(Path.GetTempPath(), "dbtorest-pipeline-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Folder);
@@ -308,8 +313,8 @@ public class PipelineTests(PipelineTests.PipelineEngine engine) : IClassFixture<
             foreach (var key in settings.Keys.Where(k => k.StartsWith("queries:", StringComparison.Ordinal)
                                                          && k.EndsWith(":route", StringComparison.Ordinal)).ToList())
                 settings[key[..^":route".Length] + ":connection_string_name"] = "pipeline";
-            settings["ConnectionStrings:pipeline"] = $"Data Source={database}";
-            settings["ConnectionStrings:pipeline:provider"] = "Microsoft.Data.Sqlite";
+            settings["ConnectionStrings:pipeline"] = routesDatabase?.ConnectionString ?? $"Data Source={database}";
+            settings["ConnectionStrings:pipeline:provider"] = routesDatabase?.Provider ?? "Microsoft.Data.Sqlite";
 
             var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             {

@@ -13,6 +13,21 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    # The docs' SQL Server examples run against this server (DBTOREST_TEST_SQLSERVER below); without
+    # the variable, those tests are skipped. They wait for it to accept connections, so the service
+    # needs no health check. The password only guards this job's own container.
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Docs_Examples_2026"
+        ports:
+          - 1433:1433
+
+    env:
+      DBTOREST_TEST_SQLSERVER: "Server=localhost,1433;User Id=sa;Password=Docs_Examples_2026;TrustServerCertificate=true"
+
     steps:
       - uses: actions/checkout@v6
 
