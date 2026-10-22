@@ -30,7 +30,7 @@ Sections in this order. [09 file uploads](topics/09-file-uploads.md) follows it 
 8. **Contract:** what the query receives and must return, and a settings table with name, scope, default and notes.
 9. **Errors:** exact messages and statuses, and a "silent failures" list of mistakes that return success.
 10. **Do and don't:** short code pairs.
-11. **Known issues:** linked to `TODO.md`.
+11. **Known issues:** linked to `TODO.md` on GitHub (`https://github.com/H7O/DBToRestAPI/blob/master/TODO.md`): the release archives hold the docs, not `TODO.md`.
 12. **Related:** links one level deep.
 
 ## Writing rules

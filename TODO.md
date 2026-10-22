@@ -95,10 +95,11 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 - **Docs: finish the agent-first rewrite** ([docs/AUTHORING.md](docs/AUTHORING.md)).
   The pages are rewritten or corrected, and `docs/reference/tags.md` and `placeholders.md` exist.
   `DocsExamplesTests` checks every XML example's tags, CDATA and placeholders in CI, and the
-  examples of 09, 10, 14 and 17 run on SQL Server in CI. Still to do: docs bundled in release
-  archives; the other pages' examples (several use PostgreSQL, DB2 or SQLite, which CI doesn't
-  run). Topics 14 and 17 don't follow the page template: they show no tables, so their tests build
-  them from the columns the queries use, and 14 has no complete example of its own.
+  examples of 09, 10, 14 and 17 run on SQL Server in CI. A published build (every release archive)
+  holds the docs next to the executable. Still to do: the other pages' examples (several use
+  PostgreSQL, DB2 or SQLite, which CI doesn't run). Topics 14 and 17 don't follow the page
+  template: they show no tables, so their tests build them from the columns the queries use, and 14
+  has no complete example of its own.
 
 ## Done
 

@@ -22,16 +22,61 @@ public partial class DocsExamplesTests
         return folder?.FullName ?? throw new InvalidOperationException("DBToRestAPI.sln not found above the test folder");
     }
 
-    /// <summary>The pages agents read: the docs folder, AGENTS.md, llms.txt and the README.</summary>
+    // The pages a published build holds next to the executable, laid out as in the repository: the
+    // list in DBToRestAPI.csproj ("The docs"), which this one must match.
+    private static readonly string[] ShippedFiles = ["AGENTS.md", "CLAUDE.md", "llms.txt", "llms.md", "README.md", "LICENSE", "docs/AUTHORING.md"];
+    private static readonly string[] ShippedFolders = ["docs/reference", "docs/topics", "docs/tutorial"];
+
+    private static bool Shipped(string path)
+        => ShippedFiles.Contains(path)
+           || ShippedFolders.Any(folder => path.StartsWith(folder + "/", StringComparison.Ordinal) && path.EndsWith(".md", StringComparison.Ordinal));
+
+    /// <summary>The pages agents read, from the repository's root, as a published build holds them.</summary>
+    internal static IEnumerable<string> ShippedPages()
+        => ShippedFolders
+            .SelectMany(folder => Directory.GetFiles(Path.Combine(Root, folder), "*.md", SearchOption.AllDirectories))
+            .Select(p => Path.GetRelativePath(Root, p).Replace('\\', '/'))
+            .Concat(ShippedFiles.Where(f => f.EndsWith(".md") || f.EndsWith(".txt")))
+            .Order(StringComparer.Ordinal);
+
     public static TheoryData<string> Pages()
     {
         var pages = new TheoryData<string>();
-        foreach (var page in Directory.GetFiles(Path.Combine(Root, "docs"), "*.md", SearchOption.AllDirectories)
-                     .Concat(new[] { "AGENTS.md", "llms.txt", "README.md" }.Select(f => Path.Combine(Root, f)))
-                     .Select(p => Path.GetRelativePath(Root, p).Replace('\\', '/'))
-                     .Order(StringComparer.Ordinal))
+        foreach (var page in ShippedPages())
             pages.Add(page);
         return pages;
+    }
+
+    [GeneratedRegex(@"``[^\n]*?``|`[^`\n]*`")]
+    private static partial Regex InlineCode();
+
+    [GeneratedRegex(@"\]\((?<target>[^)\s]+)\)")]
+    private static partial Regex Link();
+
+    [Fact]
+    public void EveryLinkInTheShippedPages_ReachesAShippedFile()
+    {
+        // A link that works in a clone but not in a release folder, such as one to TODO.md or to the
+        // engine's source, is broken for an agent that has only the release.
+        var broken = new List<string>();
+        foreach (var page in ShippedPages())
+        {
+            var text = File.ReadAllText(Path.Combine(Root, page)).Replace("\r\n", "\n");
+            text = InlineCode().Replace(CodeBlock().Replace(text, ""), "");
+            foreach (Match link in Link().Matches(text))
+            {
+                var target = link.Groups["target"].Value.Split('#')[0];
+                if (target.Length == 0 || target.Contains(':'))
+                    continue;   // an anchor on the same page, or a URL
+                var full = Path.GetFullPath(Path.Combine(Root, Path.GetDirectoryName(page)!, target));
+                var path = Path.GetRelativePath(Root, full).Replace('\\', '/').TrimEnd('/');
+                var reaches = File.Exists(full) ? Shipped(path) : Directory.Exists(full) && (path == "docs" || ShippedFolders.Contains(path));
+                if (!reaches)
+                    broken.Add($"{page}: `{link.Groups["target"].Value}` is not in a release folder");
+            }
+        }
+
+        Assert.True(broken.Count == 0, string.Join(Environment.NewLine, broken));
     }
 
     /// <summary>XML that isn't the engine's configuration: a project file, IIS's web.config, a page.</summary>

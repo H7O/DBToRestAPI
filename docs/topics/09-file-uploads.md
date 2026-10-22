@@ -474,7 +474,7 @@ IF NOT EXISTS (
 
 ## Known issues
 
-Tracked in [TODO.md](../../TODO.md):
+Tracked in [TODO.md](https://github.com/H7O/DBToRestAPI/blob/master/TODO.md):
 
 - The OpenAPI document has no request schema for upload endpoints.
 

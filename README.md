@@ -61,6 +61,8 @@ Grab the latest release from the [Releases page](https://github.com/H7O/DBToRest
 | macOS (x64) | `DBToRestAPI-osx-x64.tar.gz` |
 | macOS (ARM64) | `DBToRestAPI-osx-arm64.tar.gz` |
 
+Each archive also holds the documentation next to the executable: `AGENTS.md`, `llms.txt` and `docs/`, so a coding agent working in the extracted folder can read every page without the repository.
+
 > **Recommended: the self-contained archive above.** The .NET runtime is bundled, so there's nothing to install *and* the engine is pinned to the exact runtime it was tested against — a later system `dotnet` upgrade can't silently change its behavior. **Prefer it even if .NET is already installed**, unless you deliberately want a single shared runtime across apps — in which case the smaller **`DBToRestAPI-portable`** archive (~60 MB, needs the [ASP.NET Core 10 runtime](https://dotnet.microsoft.com/download)) is the framework-dependent alternative.
 
 ### Step 2 — Extract and run
@@ -278,10 +280,10 @@ The **[Tutorial](docs/tutorial/index.md)** walks you through building a complete
 | Document | Description |
 | --- | --- |
 | [Modular Topics](docs/topics) | Focused reference files for each feature area |
-| [Multi-Query Chaining](MULTI_QUERY_CHAINING.md) | How query chaining is built (design note; to write a chain, read [topic 14](docs/topics/14-query-chaining.md)) |
-| [Configuration Management](CONFIGURATION_MANAGEMENT.md) | Config file structure and hot-reload behavior |
-| [API Gateway Cache](API_GATEWAY_CACHE_IMPLEMENTATION.md) | Gateway caching internals |
-| [Benchmarks](benchmarks/README.md) | What a request costs against a hand-written Minimal API, with a script to re-run it |
+| [Multi-Query Chaining](https://github.com/H7O/DBToRestAPI/blob/master/MULTI_QUERY_CHAINING.md) | How query chaining is built (design note; to write a chain, read [topic 14](docs/topics/14-query-chaining.md)) |
+| [Configuration Management](https://github.com/H7O/DBToRestAPI/blob/master/CONFIGURATION_MANAGEMENT.md) | Config file structure and hot-reload behavior |
+| [API Gateway Cache](https://github.com/H7O/DBToRestAPI/blob/master/API_GATEWAY_CACHE_IMPLEMENTATION.md) | Gateway caching internals |
+| [Benchmarks](https://github.com/H7O/DBToRestAPI/blob/master/benchmarks/README.md) | What a request costs against a hand-written Minimal API, with a script to re-run it |
 
 ### AI-Friendly Documentation
 
