@@ -66,8 +66,6 @@ against the code. Each was read in the code; none has a test yet.
   second call. Fixes: follow redirects in the engine with a cookie jar per request; for the gateway,
   pass the `3xx` through, which needs its `Location` rewritten to the gateway route, or the caller
   would follow it straight to the target.
-- **CORS:** the engine sends no `Access-Control-Expose-Headers`, so cross-origin pages can't read
-  `Content-Disposition` on downloads.
 
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
@@ -91,25 +89,29 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 The items below were found on 2026-10-21 by an inventory of every configuration key the code reads
 (for `docs/reference/tags.md`), each checked in the code or against a running engine.
 
-- **A setting that isn't a number makes every request a generic `400`.** `success_status_code`,
-  `db_command_timeout` or a cache duration of `abc`, on the route or at the root, makes the binder
-  throw inside the controller, so a configuration mistake reads as the caller's (logged at `Error`).
-  An invalid `<response_structure>` or `<buffer_rows>` is a clear `500` instead.
-- **A global `route_variable_pattern` changes how routes match, not how their values are read.**
-  `QueryRouteResolver` matches with the endpoint's pattern, else the global one, but extracts the
-  values with the endpoint's `route_variable_pattern` or `route_variables_pattern`, else the default.
-- **Upload limits: a `0` on the route counts as unset, a `0` at the root rejects every file.**
-  `max_number_of_files` and `max_file_size_in_bytes` below 1 on a route fall back to the global
-  value; the global value is used as it is.
-- **An SFTP upload store without a `password` is dropped without a log line**, so key-based SFTP
-  isn't possible and the files are not stored; a download from the same store allows an empty
-  password.
+- **SFTP stores sign in with a password only**, so key-based SFTP isn't possible. An upload store
+  without a `password` fails the upload (or is skipped, when optional); a download from the same
+  store connects with an empty password.
 - **Docs: finish the agent-first rewrite** ([docs/AUTHORING.md](docs/AUTHORING.md)).
   The pages are rewritten or corrected, and `docs/reference/tags.md` and `placeholders.md` exist;
   still to do: examples tested in CI, and docs bundled in release archives.
 
 ## Done
 
+- **Five settings were read wrong or not checked.** Fixed in 1.7.21, each found by the inventory of
+  configuration keys or the docs pass. A setting that takes a number or `true`/`false` and held
+  something else (`success_status_code` of `created`, `db_command_timeout` of `soon`, a cache
+  duration, an upload limit, a gateway timeout, `<authorize><enabled>yes`) failed the request with
+  the generic `400`, the generic `500` or an empty `500`, and a query's `db_command_timeout`
+  attribute was ignored: each is now a `500` naming the setting, its value and the route. A global
+  `route_variable_pattern` matched routes but their values were read with the default pattern. A
+  global upload limit of `0` rejected every file; below 1 is now no limit, as on a route. An upload
+  store missing a setting it needs (an SFTP store's `password`, a local store's `base_path`) was
+  skipped without a log line, so the request succeeded with nothing stored; it now fails like a
+  store that can't be reached, before any file is written. And the engine sent no
+  `Access-Control-Expose-Headers`, so a page on another origin couldn't read a download's
+  `Content-Disposition`: `<exposed_headers>` in `<cors>` sets them, `Content-Disposition, Retry-After`
+  by default.
 - **CORS, embedded HTTP calls and the provider guess got eight things wrong.** Fixed in 1.7.20, each
   found while the docs were checked against a running engine. CORS: `<fallback_origin>*</fallback_origin>`
   was sent as `https://*`; a preflight to a gateway route answered `500` (Step 1 gave it no route

@@ -88,7 +88,7 @@ namespace DBToRestAPI.Middlewares
             }
 
             // Check if authorization is explicitly disabled
-            var enabled = routeAuthorizeSection.GetValue<bool?>("enabled") ?? true;
+            var enabled = routeAuthorizeSection.GetSetting<bool>("enabled") ?? true;
             if (!enabled)
             {
                 _logger.LogDebug($"Authorization explicitly disabled for route `{route}`");
@@ -251,26 +251,26 @@ namespace DBToRestAPI.Middlewares
                          // ?? _configuration.GetValue<string>("authorize:issuer")
                          ?? authority;
 
-            var validateIssuer = routeOverrides?.GetValue<bool?>("validate_issuer")
-                                 ?? providerSection?.GetValue<bool?>("validate_issuer")
+            var validateIssuer = routeOverrides?.GetSetting<bool>("validate_issuer")
+                                 ?? providerSection?.GetSetting<bool>("validate_issuer")
                                  // global failover removed as it might be confusing for users to understand how to set it
                                  // ?? _configuration.GetValue<bool?>("authorize:validate_issuer")
                                  ?? true;
 
-            var validateAudience = routeOverrides?.GetValue<bool?>("validate_audience")
-                                   ?? providerSection?.GetValue<bool?>("validate_audience")
+            var validateAudience = routeOverrides?.GetSetting<bool>("validate_audience")
+                                   ?? providerSection?.GetSetting<bool>("validate_audience")
                                    // global failover removed as it might be confusing for users to understand how to set it
                                    // ?? _configuration.GetValue<bool?>("authorize:validate_audience")
                                    ?? true;
 
-            var validateLifetime = routeOverrides?.GetValue<bool?>("validate_lifetime")
-                                   ?? providerSection?.GetValue<bool?>("validate_lifetime")
+            var validateLifetime = routeOverrides?.GetSetting<bool>("validate_lifetime")
+                                   ?? providerSection?.GetSetting<bool>("validate_lifetime")
                                    // global failover removed as it might be confusing for users to understand how to set it
                                    // ?? _configuration.GetValue<bool?>("authorize:validate_lifetime")
                                    ?? true;
 
-            var clockSkewSeconds = routeOverrides?.GetValue<int?>("clock_skew_seconds")
-                                   ?? providerSection?.GetValue<int?>("clock_skew_seconds")
+            var clockSkewSeconds = routeOverrides?.GetSetting<int>("clock_skew_seconds")
+                                   ?? providerSection?.GetSetting<int>("clock_skew_seconds")
                                    // global failover removed as it might be confusing for users to understand how to set it
                                    // ?? _configuration.GetValue<int?>("authorize:clock_skew_seconds")
                                    ?? 300;
@@ -282,16 +282,16 @@ namespace DBToRestAPI.Middlewares
                                          // ?? _configuration.GetValue<string>("authorize:userinfo_fallback_claims")
                                          ?? "email,name,given_name,family_name";
 
-            var userInfoCacheDuration = routeOverrides?.GetValue<int?>("userinfo_cache_duration_seconds")
-                                        ?? providerSection?.GetValue<int?>("userinfo_cache_duration_seconds");
+            var userInfoCacheDuration = routeOverrides?.GetSetting<int>("userinfo_cache_duration_seconds")
+                                        ?? providerSection?.GetSetting<int>("userinfo_cache_duration_seconds");
             // global failover removed as it might be confusing for users to understand how to set it
             // ?? _configuration.GetValue<int?>("authorize:userinfo_cache_duration_seconds");
             // Note: If null, cache will default to token expiration time
 
-            var userInfoTimeoutSeconds = routeOverrides?.GetValue<int?>("userinfo_timeout_seconds")
-                                         ?? providerSection?.GetValue<int?>("userinfo_timeout_seconds")
-                                         ?? _configuration.GetValue<int?>("authorize:userinfo_timeout_seconds")
-                                         ?? _configuration.GetValue<int?>("userinfo_timeout_seconds")
+            var userInfoTimeoutSeconds = routeOverrides?.GetSetting<int>("userinfo_timeout_seconds")
+                                         ?? providerSection?.GetSetting<int>("userinfo_timeout_seconds")
+                                         ?? _configuration.GetSetting<int>("authorize:userinfo_timeout_seconds")
+                                         ?? _configuration.GetSetting<int>("userinfo_timeout_seconds")
                                          ?? 30;
             if (userInfoTimeoutSeconds < 1)
                 userInfoTimeoutSeconds = 30;

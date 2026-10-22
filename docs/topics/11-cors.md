@@ -1,7 +1,7 @@
 ---
 title: CORS
 summary: The Access-Control-* headers the engine sends so that a browser page on another origin can read an endpoint's answer, their defaults, and how an <authorize> section anywhere changes them.
-keywords: [cors, pattern, fallback_origin, max_age, allow_credentials, allowed_headers, Origin, Access-Control-Allow-Origin, Access-Control-Allow-Credentials, Access-Control-Allow-Headers, Access-Control-Allow-Methods, Access-Control-Max-Age, OPTIONS, preflight, 204, X-Auth-Provider, Vary]
+keywords: [cors, pattern, fallback_origin, max_age, allow_credentials, allowed_headers, exposed_headers, Origin, Access-Control-Allow-Origin, Access-Control-Allow-Credentials, Access-Control-Allow-Headers, Access-Control-Allow-Methods, Access-Control-Max-Age, Access-Control-Expose-Headers, Content-Disposition, Retry-After, OPTIONS, preflight, 204, X-Auth-Provider, Vary]
 ---
 
 # CORS
@@ -30,6 +30,7 @@ CORS headers tell a browser whether a page from another origin may read an endpo
    - `Access-Control-Allow-Credentials: true` when credentials are on (rule 4). When they are off, the header is left out.
    - `Access-Control-Allow-Headers`: `allowed_headers`. Without it, the default list when credentials are on, and `*` when they are off.
    - `Access-Control-Max-Age`: `max_age`, `86400` without it.
+   - `Access-Control-Expose-Headers`: `exposed_headers`, `Content-Disposition, Retry-After` without it. These are the response headers a page may read besides the few every browser shows, such as `Content-Type`: a [download](10-file-downloads.md)'s file name and a `429`'s wait. A `429` exposes `Retry-After` only.
    - `Vary: Origin`, when a pattern applies: the answer then depends on the request's origin, so a shared cache in front of the engine, such as a CDN, keeps one copy per origin.
 4. An `OPTIONS` request is a preflight. The engine answers it `204`, without a body, before API keys, tokens and rate limits, and runs no query. It combines every route with the request's path and host, whatever their verbs:
    - methods: all their verbs plus `OPTIONS`, or the default list when none has a `<verb>`;
@@ -38,7 +39,7 @@ CORS headers tell a browser whether a page from another origin may read an endpo
    - credentials: on when one of the routes has them on, each deciding as it does for its own responses;
    - max age: the shortest.
 
-   A path that no route has gets `404`. A gateway route's preflight is answered the same way, from that route's `<cors>`.
+   A preflight sends no `Access-Control-Expose-Headers`: only the answer that follows needs it. A path that no route has gets `404`. A gateway route's preflight is answered the same way, from that route's `<cors>`.
 5. On a [gateway](08-api-gateway.md) route, a response header the target sends replaces the engine's: a target that sends its own `Access-Control-Allow-Origin` decides it.
 
 ## Complete example: a page on another origin calls a protected route
@@ -90,7 +91,7 @@ const res = await fetch('https://api.example.com/my/orders', {
 | Request | Answer |
 |---|---|
 | The browser's preflight from `https://app.example.com`, asking for `authorization,x-auth-provider` | `204` with `Access-Control-Allow-Origin: https://app.example.com`, `Access-Control-Allow-Credentials: true`, `Access-Control-Allow-Headers: Authorization, Content-Type, X-Auth-Provider`, `Access-Control-Allow-Methods: GET, OPTIONS`, `Access-Control-Max-Age: 600` |
-| The `GET` that follows | `200` with the orders and the same headers |
+| The `GET` that follows | `200` with the orders, the same headers, and `Access-Control-Expose-Headers: Content-Disposition, Retry-After` |
 | The same page served from `https://other.example.org` | The preflight gets `Access-Control-Allow-Origin: https://app.example.com`, so the browser doesn't send the `GET` |
 | `curl` without an `Origin` header | `200` with the orders. `Access-Control-Allow-Origin` is the fallback, and curl ignores it |
 | The route without its `<allowed_headers>` | The preflight lists the default headers, without `X-Auth-Provider`: the browser reports a CORS error and doesn't send the `GET`. The engine logs nothing |
@@ -115,6 +116,7 @@ Each one goes in `<cors>` on a route or at the root of `settings.xml`. The route
 | `allow_credentials` | `true` when an `<authorize>` section exists on the route or at the root, otherwise `false` | `true` or `false`. Anything else counts as not set. |
 | `allowed_headers` | `Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key` with credentials on, `*` with them off | Comma-separated. Replaces the default list. |
 | `max_age` | `86400` | Seconds a browser may keep a preflight's answer. A value that isn't a whole number of 0 or more counts as not set. |
+| `exposed_headers` | `Content-Disposition, Retry-After` | Comma-separated. The response headers a page may read besides `Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified` and `Pragma`, which every browser shows. Replaces the default list, so keep `Content-Disposition` on a route that serves downloads. Not sent on a preflight. |
 
 `Access-Control-Allow-Methods` comes from the route's `<verb>` and has no setting of its own.
 
@@ -132,6 +134,7 @@ Silent failures, where the engine answers as usual and logs nothing:
 - A pattern without a fallback lets every page read the answers (rule 2).
 - A request header outside the allowed list makes the browser drop the request after the preflight (rule 5). The engine sees only the preflight.
 - A pattern with a scheme or a port in it matches nothing, so every origin gets the fallback.
+- A response header the page reads that is neither in `exposed_headers` nor shown by every browser, such as a gateway target's `X-Total-Count`, is `null` in the page.
 
 ## Do and don't
 
@@ -152,12 +155,6 @@ Silent failures, where the engine answers as usual and logs nothing:
 ```
 
 Keep `localhost` out of a production pattern. The pattern can't check the scheme or the port, so `localhost` in it lets any page served from `localhost` on a visitor's own computer read the answers. Set the development pattern per machine instead, with an environment variable such as `cors__pattern=^(app\.example\.com|localhost)$` ([environment variables](02-configuration.md#environment-variables)).
-
-## Known issues
-
-These are recorded in [TODO.md](../../TODO.md).
-
-- The engine sends no `Access-Control-Expose-Headers`, so a page on another origin can't read response headers outside the CORS-safelisted ones, such as `Content-Disposition` on a [download](10-file-downloads.md).
 
 ## Related
 

@@ -357,7 +357,7 @@ WHERE f.request_id = @request_id
 
 ## Settings
 
-Route settings go inside the route's `<file_management>`. Global defaults go in `config/file_management.xml` under `<settings><file_management>`. A route value wins. A blank route string, or a route number below 1, falls back to the global value. A route boolean that is present always wins.
+Route settings go inside the route's `<file_management>`. Global defaults go in `config/file_management.xml` under `<settings><file_management>`. A route value wins. A blank route string, or a route number below 1, falls back to the global value, and a global number below 1 is no limit. A route boolean that is present always wins.
 
 | Setting | Scope | Default | Notes |
 |---|---|---|---|
@@ -385,7 +385,7 @@ Stores are defined only globally, in `file_management.xml`. A route lists them b
 | Local disk or share | `<local_file_store><NAME>` | `base_path` (required; a UNC path like `\\server\share\uploads\` works), `optional` (default `false`) |
 | SFTP | `<sftp_file_store><NAME>` | `host`, `username`, `password` (all required), `port` (default 22), `base_path` (default: the account's home folder), `optional` |
 
-An `optional` store that fails is skipped, with a warning in the log. A non-optional store that fails makes the request a `500`, and the files are rolled back. Encrypt SFTP passwords with [settings encryption](15-encryption.md).
+An `optional` store that fails is skipped, with a warning in the log. A non-optional store that fails makes the request a `500`, and the files are rolled back. A store without a setting it needs (a local store's `base_path`, an SFTP store's `host`, `username` or `password`) fails the same way, before any file is written, and the log names the setting. Encrypt SFTP passwords with [settings encryption](15-encryption.md).
 
 ## Path structure variables
 
@@ -420,14 +420,14 @@ Upload refusals are `400` with `{"success":false,"message":"..."}`, sent before 
 | `The form data could not be read.` | Malformed or cut-off form body, or a form over an ASP.NET Core limit (a field value over 4 MiB, more than 1024 fields) |
 | File name rules | Empty; not valid Unicode; longer than 150 characters; `..`, `/`, `\` or `:`; control characters or invisible ones (U+200B-U+200F, U+FEFF); characters invalid on the server's OS (on Windows `<` `>` `"` `|` `?` `*`; on Linux only NUL); Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`); only dots; starting or ending with a dot or space; starting with `-` |
 
-Other upload statuses: `409` when a target file exists in a non-optional store and overwriting is off, `413` for an oversized body, and `500` when a non-optional store fails. All statuses are listed in [errors.md](../reference/errors.md#statuses-you-will-meet).
+Other upload statuses: `409` when a target file exists in a non-optional store and overwriting is off, `413` for an oversized body, and `500` when a non-optional store fails or lacks a setting it needs. All statuses are listed in [errors.md](../reference/errors.md#statuses-you-will-meet).
 
 ### Silent failures
 
 Each of these returns success, and the request stores nothing:
 
 - **No `files_json_field_or_form_field_name`.** File parts are ignored, and a JSON body's files array reaches the query unprocessed, client-set `is_new_upload` included.
-- **No `stores` (on the route or globally), or only unknown names.** Files are validated but never written, yet the query still gets `is_new_upload` entries with a `relative_path`, so it records files that don't exist. An unknown name logs a warning. A local store without `base_path` and an SFTP store missing credentials are skipped without one.
+- **No `stores` (on the route or globally), or only unknown names.** Files are validated but never written, yet the query still gets `is_new_upload` entries with a `relative_path`, so it records files that don't exist. An unknown name logs a warning.
 - **A second `<local_file_store>` or `<sftp_file_store>` element.** Every store in either element becomes unknown ([store](#store)).
 - **A content field name that doesn't match the config, in a JSON body.** Every entry looks like an existing file.
 - **A Content-Type other than `application/json`, `multipart/form-data` or `application/x-www-form-urlencoded`.** For example `text/plain`, which `fetch` sends for a string body when no `Content-Type` header is set. The body is ignored, so every body parameter is `NULL` and no file is processed.

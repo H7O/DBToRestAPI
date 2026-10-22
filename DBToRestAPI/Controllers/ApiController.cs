@@ -249,7 +249,7 @@ namespace DBToRestAPI.Controllers
                 return response;
 
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not InvalidSettingException)
             {
                 // A status the query raised (50000 + status), from any supported database. Once the
                 // response has started, the status can't reach the client, so that case is logged in
@@ -794,8 +794,8 @@ namespace DBToRestAPI.Controllers
             }
 
             // Fallback timeouts from section and global config
-            int? sectionTimeout = serviceQuerySection.GetValue<int?>("db_command_timeout");
-            int? globalTimeout = _configuration.GetValue<int?>("db_command_timeout");
+            int? sectionTimeout = serviceQuerySection.GetSetting<int>("db_command_timeout");
+            int? globalTimeout = _configuration.GetSetting<int>("db_command_timeout");
 
             // Ensure the chained query parameter regex pattern is registered in qParams.
             // Com.H.Data.Common requires at least one entry with a given regex pattern to recognize
@@ -912,7 +912,7 @@ namespace DBToRestAPI.Controllers
                         await result.CloseReaderAsync();
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not InvalidSettingException)
                 {
                     // A connection the database closed during the query (SQL Server after a fatal
                     // error, PostgreSQL's terminated session) means the database is unavailable, not
@@ -962,8 +962,8 @@ namespace DBToRestAPI.Controllers
             // Check if count query is defined
             var countQuery = serviceQuerySection.GetSection("count_query")?.Value;
 
-            var customSuccessStatusCode = serviceQuerySection.GetValue<int?>("success_status_code") ??
-                _configuration.GetValue<int?>("success_status_code") ?? 200;
+            var customSuccessStatusCode = serviceQuerySection.GetSetting<int>("success_status_code") ??
+                _configuration.GetSetting<int>("success_status_code") ?? 200;
 
             string? rootNodeName = serviceQuerySection.GetValue<string?>("root_node")
                 ?? _configuration.GetValue<string?>("root_node") ?? null;
@@ -1457,7 +1457,7 @@ namespace DBToRestAPI.Controllers
                             });
                         }
 
-                        int port = sftpStoreSection.GetValue<int?>("port") ?? 22;
+                        int port = sftpStoreSection.GetSetting<int>("port") ?? 22;
                         string username = sftpStoreSection.GetValue<string>("username") ?? string.Empty;
                         if (string.IsNullOrWhiteSpace(username))
                         {

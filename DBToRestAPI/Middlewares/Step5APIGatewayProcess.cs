@@ -275,7 +275,8 @@ namespace DBToRestAPI.Middlewares
                 // Response came from cache or was buffered - write it to the client
                 await WriteHttpResponseFromCache(context, cachedResponse);
             }
-            catch (Exception ex)
+            // Step1ServiceTypeChecks answers an invalid setting.
+            catch (Exception ex) when (ex is not InvalidSettingException)
             {
                 await context.Response.DeferredWriteAsJsonAsync(_settings.GetExceptionResponse(context.Request, ex));
             }
@@ -436,12 +437,12 @@ namespace DBToRestAPI.Middlewares
             Action<CachableHttpResponseContainer> handBackNotStored)
         {
             #region check if the target route certificate errors should be ignored
-            var ignoreCertificateErrors = section.GetValue<bool?>("ignore_target_route_certificate_errors");
+            var ignoreCertificateErrors = section.GetSetting<bool>("ignore_target_route_certificate_errors");
             // if no ignore certificate errors for this route, check if there are default ignore certificate errors for all routes
-            ignoreCertificateErrors ??= _configuration.GetValue<bool?>("ignore_target_route_certificate_errors");
+            ignoreCertificateErrors ??= _configuration.GetSetting<bool>("ignore_target_route_certificate_errors");
 
-            var targetRouteTimeoutSeconds = section.GetValue<int?>("target_route_timeout_seconds")
-                ?? _configuration.GetValue<int?>("target_route_timeout_seconds")
+            var targetRouteTimeoutSeconds = section.GetSetting<int>("target_route_timeout_seconds")
+                ?? _configuration.GetSetting<int>("target_route_timeout_seconds")
                 ?? 30;
             if (targetRouteTimeoutSeconds < 1)
                 targetRouteTimeoutSeconds = 30;

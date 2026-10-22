@@ -513,6 +513,25 @@ public class QueryRouteResolverTests
     }
 
     [Fact]
+    public void GetRouteParametersIfAny_WithTheGlobalPattern_ReadsTheParameter()
+    {
+        // The route matched with the global pattern, but its value was read with the default one,
+        // which finds no variable in users/[[id]].
+        var resolver = BuildResolver(new Dictionary<string, string?>
+        {
+            ["route_variable_pattern"] = BracketsPattern,
+            ["queries:ep:route"] = "users/[[id]]",
+            ["queries:ep:verb"] = "GET",
+            ["queries:ep:query"] = "SELECT 1",
+        });
+
+        var section = resolver.ResolveRoute("users/7", "GET");
+
+        Assert.NotNull(section);
+        Assert.Equal("7", resolver.GetRouteParametersIfAny(section, "users/7")["id"]);
+    }
+
+    [Fact]
     public void GetRouteParametersIfAny_DoesNotCompileAPatternPerCall()
     {
         // It compiled the route variable pattern on every request, about a millisecond of CPU each time:

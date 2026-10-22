@@ -148,8 +148,8 @@ namespace DBToRestAPI.Middlewares
             // Get overwrite_existing_files setting (endpoint-specific -> global -> default false)
             // If false, uploading a file that already exists in the store will throw an exception
             // If true, existing files will be silently overwritten
-            var overwriteExistingFiles = fileManagementSection.GetValue<bool?>("overwrite_existing_files")
-                ?? defaultFileStoresSettings.GetValue<bool?>("overwrite_existing_files")
+            var overwriteExistingFiles = fileManagementSection.GetSetting<bool>("overwrite_existing_files")
+                ?? defaultFileStoresSettings.GetSetting<bool>("overwrite_existing_files")
                 ?? false;
 
             var storesList = stores.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -162,6 +162,21 @@ namespace DBToRestAPI.Middlewares
                 return;
             }
 
+            // A store missing a setting it needs fails like a store that can't be reached, before any file
+            // is written: an optional one is skipped with a warning, any other fails the request.
+            bool IsComplete(IConfigurationSection storeSection, string kind, string[] required)
+            {
+                var missing = required.FirstOrDefault(key => string.IsNullOrWhiteSpace(storeSection.GetValue<string>(key)));
+                if (missing == null)
+                    return true;
+                var problem = $"{kind} store '{storeSection.Key}' has no `{missing}`, which it needs";
+                if (!(storeSection.GetSetting<bool>("optional") ?? false))
+                    throw new InvalidOperationException(problem);
+                this._logger.LogWarning("{time}: Optional {problem}, so it is skipped",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffff"), problem);
+                return false;
+            }
+
             var localStores = new List<StoreOperationTracker>();
             var sftpStores = new List<StoreOperationTracker>();
             foreach (var store in storesList)
@@ -169,13 +184,15 @@ namespace DBToRestAPI.Middlewares
                 var storeSection = defaultFileStoresSettings.GetSection($"local_file_store:{store}");
                 if (storeSection.Exists())
                 {
-                    localStores.Add(new(storeSection));
+                    if (IsComplete(storeSection, "local", ["base_path"]))
+                        localStores.Add(new(storeSection));
                     continue;
                 }
                 storeSection = defaultFileStoresSettings.GetSection($"sftp_file_store:{store}");
                 if (storeSection.Exists())
                 {
-                    sftpStores.Add(new(storeSection));
+                    if (IsComplete(storeSection, "SFTP", ["host", "username", "password"]))
+                        sftpStores.Add(new(storeSection));
                     continue;
                 }
 
@@ -186,16 +203,9 @@ namespace DBToRestAPI.Middlewares
 
             // group SFTP stores by connection settings (host, port, username, password) to minimize connections
             var groupedSftpStores = sftpStores
-                // filter out stores with missing connection settings
-                .Where(s =>
-                {
-                    return !string.IsNullOrWhiteSpace(s.Config.GetValue<string>("host"))
-                        && !string.IsNullOrWhiteSpace(s.Config.GetValue<string>("username"))
-                        && !string.IsNullOrWhiteSpace(s.Config.GetValue<string>("password"));
-                })
                 .GroupBy(s => (SftpServer)(
                     s.Config.GetValue<string>("host")!,
-                    s.Config.GetValue<int>("port", 22),
+                    s.Config.GetSetting<int>("port") ?? 22,
                     s.Config.GetValue<string>("username")!,
                     s.Config.GetValue<string>("password")!))
                 .ToList();
@@ -501,9 +511,7 @@ namespace DBToRestAPI.Middlewares
 
                 foreach (var entry in localStores)
                 {
-                    var localPath = entry.Config.GetValue<string>("base_path");
-                    if (string.IsNullOrWhiteSpace(localPath))
-                        continue;
+                    var localPath = entry.Config.GetValue<string>("base_path")!;
 
                     try
                     {
@@ -618,7 +626,7 @@ namespace DBToRestAPI.Middlewares
                         // The caller left: nothing failed, and Step6MandatoryFieldsCheck logs it as one line.
                         if (context.RequestAborted.IsCancellationRequested)
                             throw;
-                        bool optional = entry.Config.GetValue<bool>("optional", false);
+                        bool optional = entry.Config.GetSetting<bool>("optional") ?? false;
                         if (optional)
                         {
                             this._logger.LogWarning("{time}: Failed to copy files to optional local store ({local_store_name})"
@@ -778,7 +786,7 @@ namespace DBToRestAPI.Middlewares
                             // The caller left: nothing failed, and Step6MandatoryFieldsCheck logs it as one line.
                             if (context.RequestAborted.IsCancellationRequested)
                                 throw;
-                            bool optional = entry.Config.GetValue<bool>("optional", false);
+                            bool optional = entry.Config.GetSetting<bool>("optional") ?? false;
                             if (optional)
                             {
                                 this._logger.LogWarning("{time}: Failed to upload files to optional SFTP store ({sftp_store_name})"
@@ -825,9 +833,9 @@ namespace DBToRestAPI.Middlewares
             {
                 // A status the query raised on purpose is logged by Step6MandatoryFieldsCheck, which
                 // answers it (at Error when it can no longer reach the client). So is a caller who
-                // left, as one line.
+                // left, as one line, and by Step1ServiceTypeChecks an invalid setting.
                 var callerLeft = context.RequestAborted.IsCancellationRequested;
-                if (!callerLeft && !Services.DatabaseErrors.TryGetCustomDbError(ex, out _, out _))
+                if (!callerLeft && ex is not InvalidSettingException && !Services.DatabaseErrors.TryGetCustomDbError(ex, out _, out _))
                 {
                     this._logger.LogError(ex, "{errorCode}: An exception occurred in Step6FileManagement middleware: {message}",
                         _errorCode,

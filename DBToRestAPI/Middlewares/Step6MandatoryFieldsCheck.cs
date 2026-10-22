@@ -178,7 +178,8 @@ namespace DBToRestAPI.Middlewares
             {
                 await _next(context);
             }
-            catch (Exception ex)
+            // Step1ServiceTypeChecks answers an invalid setting.
+            catch (Exception ex) when (ex is not InvalidSettingException)
             {
                 // Log detailed error information to help diagnose issues
                 var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");

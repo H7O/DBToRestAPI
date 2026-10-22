@@ -176,7 +176,8 @@ public class ParametersBuilder
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), ex.GetType().Name);
             return (null, new ObjectResult(new { success = false, message = "Request was cancelled" }) { StatusCode = 400 });
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // Step1ServiceTypeChecks answers an invalid setting.
+        catch (Exception ex) when (ex is not OperationCanceledException and not InvalidSettingException)
         {
             _logger.LogError(ex, "{Time}: Failed to read the request's parameters",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"));
@@ -665,19 +666,25 @@ public class ParametersBuilder
             relativeFilePathStructure = "{date{yyyy}}/{date{MMM}}/{date{dd}}/{{guid}}/{file{name}}";
 
 
-        // get `max_number_of_files` from section or config or use default (which is unlimited, i.e., null)
-        var maxNumberOfFiles = section.GetValue<int?>("file_management:max_number_of_files");
+        // get `max_number_of_files` from section or config or use default (which is unlimited, i.e., null).
+        // Below 1 counts as not set, on the route and at the root.
+        var maxNumberOfFiles = section.GetSetting<int>("file_management:max_number_of_files");
         if (maxNumberOfFiles == null || maxNumberOfFiles < 1)
-            maxNumberOfFiles = _config.GetValue<int?>("file_management:max_number_of_files") ?? null;
+            maxNumberOfFiles = _config.GetSetting<int>("file_management:max_number_of_files");
+        if (maxNumberOfFiles < 1)
+            maxNumberOfFiles = null;
 
-        // get `max_file_size_in_bytes` from section or config or use default (which is unlimited, i.e., null)
-        var maxFileSizeInBytes = section.GetValue<long?>("file_management:max_file_size_in_bytes");
+        // get `max_file_size_in_bytes` from section or config or use default (which is unlimited, i.e., null).
+        // Below 1 counts as not set, on the route and at the root.
+        var maxFileSizeInBytes = section.GetSetting<long>("file_management:max_file_size_in_bytes");
         if (maxFileSizeInBytes == null || maxFileSizeInBytes < 1)
-            maxFileSizeInBytes = _config.GetValue<long?>("file_management:max_file_size_in_bytes") ?? null;
+            maxFileSizeInBytes = _config.GetSetting<long>("file_management:max_file_size_in_bytes");
+        if (maxFileSizeInBytes < 1)
+            maxFileSizeInBytes = null;
 
         // get `pass_files_content_to_query` from section or config or use default (which is false)
-        var passFilesContentToQuery = section.GetValue<bool?>("file_management:pass_files_content_to_query") ??
-            _config.GetValue<bool?>("file_management:pass_files_content_to_query") ?? false;
+        var passFilesContentToQuery = section.GetSetting<bool>("file_management:pass_files_content_to_query") ??
+            _config.GetSetting<bool>("file_management:pass_files_content_to_query") ?? false;
 
         // get `permitted_file_extensions` from section or config or use default (which is all files, i.e., null)
         var permittedFileExtensions = section.GetValue<string>("file_management:permitted_file_extensions");
@@ -689,8 +696,8 @@ public class ParametersBuilder
             .ToHashSet();
 
         // get `accept_caller_defined_file_ids` from section or config or use default (which is false)
-        var acceptCallerDefinedFileIds = section.GetValue<bool?>("file_management:accept_caller_defined_file_ids") ??
-            _config.GetValue<bool?>("file_management:accept_caller_defined_file_ids") ?? false;
+        var acceptCallerDefinedFileIds = section.GetSetting<bool>("file_management:accept_caller_defined_file_ids") ??
+            _config.GetSetting<bool>("file_management:accept_caller_defined_file_ids") ?? false;
 
         // Determine if we're processing multipart files or JSON base64
 

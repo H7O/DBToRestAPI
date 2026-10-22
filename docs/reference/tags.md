@@ -25,7 +25,7 @@ Each tag has one or more of these places:
 Three rules hold for every tag:
 
 1. **An unknown tag, or a tag in the wrong place, is ignored without a log line.** A misspelled tag behaves as if it weren't there.
-2. **A value that isn't a number where a number is expected** (`success_status_code`, `db_command_timeout`, a cache duration) makes every request to the route fail with the generic `400`, and the error is logged at `Error`. Call the route after each change.
+2. **A value that isn't the number or the `true`/`false` a tag takes** (`success_status_code` of `created`, a cache duration of `1m`) makes each request that reads it fail with a `500` that names the tag, the value and the route, logged at `Error`: ``Invalid db_command_timeout `soon` for route `orders`: use a whole number``. The notes below say where a tag counts such a value as not set instead (`<max_age>`, `<allow_credentials>`, the rate-limit tags). Call the route after each change.
 3. **Repeated sibling elements are numbered.** A second `<queries>`, `<cors>` or `<rate_limit>` beside the first stops everything inside it from matching ([02](../topics/02-configuration.md#rules)).
 
 ## Endpoints and routing
@@ -36,7 +36,7 @@ Three rules hold for every tag:
 | `<route>` | Endpoint | the element's name | Route values in `{{name}}`. Matched ignoring case. |
 | `<verb>` | Endpoint | any method | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, or several separated by commas. A `HEAD` request gets the `GET` route's answer without its body, unless a route takes `HEAD` itself. |
 | `<host>` | Endpoint | any host | `www.example.com` or `*.example.com`, port ignored. Exact beats wildcard beats none. |
-| `route_variable_pattern` | Endpoint, then global | `{{name}}` or `{r{name}}` | The pattern that finds route values in `<route>`. Leave it alone: a global one changes how routes match but not how their values are read ([TODO.md](../../TODO.md)). |
+| `route_variable_pattern` | Endpoint, then global | `{{name}}` or `{r{name}}` | The pattern that finds route values in `<route>`, both to match a request and to read its values. |
 
 ## Queries and databases
 
@@ -45,7 +45,7 @@ Three rules hold for every tag:
 | `<query>` | Endpoint | required | The SQL in `<![CDATA[ ... ]]>`. Several `<query>` elements form a chain ([14](../topics/14-query-chaining.md)). |
 | `connection_string_name` attribute on `<query>` | Endpoint | the endpoint's `<connection_string_name>`, else `default` | One query of a chain on another database. |
 | `json_var` attribute on `<query>` | Endpoint | `json` | Names `{pq{...}}`'s JSON array of the previous query's rows. Ignored on the first query. |
-| `db_command_timeout` attribute on `<query>` | Endpoint | the endpoint's `<db_command_timeout>` | Seconds. An invalid attribute value is ignored. |
+| `db_command_timeout` attribute on `<query>` | Endpoint | the endpoint's `<db_command_timeout>` | Seconds. |
 | `<connection_string_name>` | Endpoint | `default` | No global fallback. |
 | `<db_command_timeout>` | Endpoint, then global | the provider's default (30 s on most) | Seconds ([13](../topics/13-databases.md#per-query-timeout)). |
 | `<count_query>` | Endpoint | none | Runs after the last query, on its connection and timeout. The answer becomes `{"success":true,"count":N,"data":[...]}`, and `<response_structure>` is ignored. Attributes on it are not read. |
@@ -86,8 +86,9 @@ Each tag goes in `<cors>`: the endpoint's or gateway route's, then the global on
 | `<pattern>` | none: no origin matches | Matched against the origin's host only, ignoring case. Anchor it with `^` and `$`. |
 | `<fallback_origin>` | `*` | Sent when the origin doesn't match, and when there's no `Origin` header. |
 | `<allowed_headers>` | the default list with credentials on, `*` with them off | Replaces the default list. |
-| `<allow_credentials>` | `true` when an `<authorize>` exists on the route or at the root, else `false` | `true` or `false`. |
-| `<max_age>` | `86400` | Seconds. |
+| `<allow_credentials>` | `true` when an `<authorize>` exists on the route or at the root, else `false` | `true` or `false`. Anything else counts as not set. |
+| `<max_age>` | `86400` | Seconds. A value that isn't a whole number of 0 or more counts as not set. |
+| `<exposed_headers>` | `Content-Disposition, Retry-After` | The response headers a page may read, besides those every browser shows. Replaces the default list. |
 
 ## API keys
 
@@ -156,7 +157,7 @@ Each tag goes in `<file_management>`: the endpoint's, then the global one in `fi
 | `<filename_field_in_payload>` | `name` | The file-name field of a JSON entry. |
 | `<base64_content_field_in_payload>` | `base64_content` | The content field of a JSON entry. The shipped file sets `content_base64`. |
 | `<relative_file_path_structure>` | `{date{yyyy}}/{date{MMM}}/{date{dd}}/{{guid}}/{file{name}}` | The stored file's path ([placeholders.md](placeholders.md#where-each-marker-works)). |
-| `<max_number_of_files>` | unlimited | A route value below 1 counts as not set. A global `0` rejects every file. |
+| `<max_number_of_files>` | unlimited | A value below 1 counts as not set: on a route, the global value applies; globally, there is no limit. |
 | `<max_file_size_in_bytes>` | unlimited | The same rule as above. |
 | `<permitted_file_extensions>` | every extension | Comma-separated, with the dot: `.pdf,.png`. Ignoring case. |
 | `<overwrite_existing_files>` | `false` | |
@@ -167,9 +168,9 @@ Stores are defined globally, inside `<file_management>`:
 
 | Tag | Default | Notes |
 |---|---|---|
-| `<local_file_store>` children: `<base_path>` | none: a store without one is skipped | One element per store. |
-| `<sftp_file_store>` children: `<host>`, `<port>`, `<username>`, `<password>`, `<base_path>` | port `22`; base path the user's home folder | An upload store needs host, username and password: one without them is dropped, without a log line. |
-| `<optional>` in a store | `false` | A failure to store in an optional store doesn't fail the upload. Not read for downloads. |
+| `<local_file_store>` children: `<base_path>` | required | One element per store. |
+| `<sftp_file_store>` children: `<host>`, `<port>`, `<username>`, `<password>`, `<base_path>` | port `22`; base path the user's home folder | An upload store needs host, username and password. |
+| `<optional>` in a store | `false` | A failure to store in an optional store doesn't fail the upload. Not read for downloads. A store without a setting it needs fails like a store that can't be reached, before any file is written: an optional one is skipped with a warning, any other makes the upload a `500`. |
 
 ## File downloads
 

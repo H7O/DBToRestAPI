@@ -26,6 +26,7 @@ namespace DBToRestAPI.Middlewares;
 /// - Access-Control-Allow-Headers
 /// - Access-Control-Allow-Credentials
 /// - Access-Control-Max-Age
+/// - Access-Control-Expose-Headers (not on a preflight)
 /// </summary>
 public class Step2CorsCheck(
     RequestDelegate next,
@@ -39,6 +40,8 @@ public class Step2CorsCheck(
     private static readonly string _errorCode = "Step 2 - CORS Check Error";
     private static readonly string _defaultMethods = "GET, POST, PUT, DELETE, PATCH, OPTIONS";
     private static readonly string _defaultHeaders = "Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key";
+    // A download's file name and a 429's wait, which a page can't read without them.
+    private static readonly string _defaultExposedHeaders = "Content-Disposition, Retry-After";
     private const long DefaultMaxAge = 86400; // 1 day
 
 
@@ -127,8 +130,11 @@ public class Step2CorsCheck(
         string allowCredentials = GetAllowCredentials(section);
         long maxAge = GetMaxAge(section);
         bool variesByOrigin = !string.IsNullOrWhiteSpace(GetCorsValue(section, "pattern"));
+        string exposedHeaders = GetCorsValue(section, "exposed_headers") is { } exposed && !string.IsNullOrWhiteSpace(exposed)
+            ? exposed.Trim()
+            : _defaultExposedHeaders;
 
-        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge, variesByOrigin);
+        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge, variesByOrigin, exposedHeaders);
     }
 
     /// <summary>
@@ -146,7 +152,8 @@ public class Step2CorsCheck(
         long maxAge = GetMaxAge(sections);
         bool variesByOrigin = sections.Any(section => !string.IsNullOrWhiteSpace(GetCorsValue(section, "pattern")));
 
-        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge, variesByOrigin);
+        // A preflight's answer isn't read by the page, so it exposes nothing.
+        SetCorsResponseHeaders(context, allowedOrigin, allowedMethods, allowedHeaders, allowCredentials, maxAge, variesByOrigin, exposedHeaders: null);
     }
 
     /// <summary>
@@ -159,7 +166,8 @@ public class Step2CorsCheck(
         string? allowedHeaders,
         string allowCredentials,
         long maxAge,
-        bool variesByOrigin)
+        bool variesByOrigin,
+        string? exposedHeaders)
     {
         context.Response.Headers["Access-Control-Allow-Origin"] = allowedOrigin;
 
@@ -174,6 +182,11 @@ public class Step2CorsCheck(
 
         context.Response.Headers["Access-Control-Allow-Headers"] = allowedHeaders ?? (allowCredentials == "true" ? _defaultHeaders : "*");
         context.Response.Headers["Access-Control-Max-Age"] = maxAge.ToString();
+
+        // The response headers a page on another origin may read, besides the few every browser shows
+        // (Content-Type among them).
+        if (exposedHeaders != null)
+            context.Response.Headers["Access-Control-Expose-Headers"] = exposedHeaders;
 
         this._logger.LogDebug("CORS headers set: Origin={origin}, Methods={methods}, MaxAge={maxAge}",
             allowedOrigin, allowedMethods, maxAge);

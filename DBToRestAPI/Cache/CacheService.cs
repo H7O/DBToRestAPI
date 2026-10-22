@@ -433,8 +433,8 @@ namespace DBToRestAPI.Cache
                 return null;
 
             // Determine the cache duration
-            int duration = memorySection.GetValue<int?>("duration_in_milliseconds") ??
-                this._configuration.GetValue<int?>("cache:memory:duration_in_milliseconds") ?? -1;
+            int duration = memorySection.GetSetting<int>("duration_in_milliseconds") ??
+                this._configuration.GetSetting<int>("cache:memory:duration_in_milliseconds") ?? -1;
             if (duration < 1)
                 return null;
 
@@ -532,8 +532,8 @@ namespace DBToRestAPI.Cache
                 return null;
 
             // Determine the cache duration
-            int duration = memorySection.GetValue<int?>("duration_in_milliseconds") ??
-                this._configuration.GetValue<int?>("cache:memory:duration_in_milliseconds") ?? -1;
+            int duration = memorySection.GetSetting<int>("duration_in_milliseconds") ??
+                this._configuration.GetSetting<int>("cache:memory:duration_in_milliseconds") ?? -1;
             if (duration < 1)
                 return null;
 

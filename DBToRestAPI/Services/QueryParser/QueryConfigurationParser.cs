@@ -103,12 +103,7 @@ namespace DBToRestAPI.Services.QueryParser
             }
 
             // Parse optional db_command_timeout (per-query override)
-            int? dbCommandTimeout = null;
-            var timeoutStr = queryNode[DbCommandTimeoutKey]?.Trim();
-            if (!string.IsNullOrEmpty(timeoutStr) && int.TryParse(timeoutStr, out var timeout))
-            {
-                dbCommandTimeout = timeout;
-            }
+            int? dbCommandTimeout = queryNode.GetSetting<int>(DbCommandTimeoutKey);
 
             return new QueryDefinition
             {

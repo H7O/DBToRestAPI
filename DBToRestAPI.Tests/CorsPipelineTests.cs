@@ -19,6 +19,10 @@ public class CorsPipelineTests(CorsPipelineTests.CorsEngine engine) : IClassFixt
         ["queries:cors_no_credentials:cors:allow_credentials"] = "false",
         ["queries:cors_no_credentials:query"] = "SELECT 1 AS a;",
 
+        ["queries:cors_exposed:route"] = "cors/exposed",
+        ["queries:cors_exposed:cors:exposed_headers"] = "X-Total-Count, Content-Disposition",
+        ["queries:cors_exposed:query"] = "SELECT 1 AS a;",
+
         ["routes:cors_gateway:route"] = "cors/gateway",
         ["routes:cors_gateway:url"] = "https://upstream.example/data",
     });
@@ -81,5 +85,24 @@ public class CorsPipelineTests(CorsPipelineTests.CorsEngine engine) : IClassFixt
         Assert.Equal(204, context.Response.StatusCode);
         Assert.Equal("https://app.example.com", context.Response.Headers.AccessControlAllowOrigin.ToString());
         Assert.Contains("GET", context.Response.Headers.AccessControlAllowMethods.ToString());
+    }
+
+    [Theory]
+    [InlineData("/cors/star", "Content-Disposition, Retry-After")]
+    [InlineData("/cors/exposed", "X-Total-Count, Content-Disposition")]
+    [InlineData("/cors/gateway", "Content-Disposition, Retry-After")]
+    public async Task AnAnswer_LetsThePageRead_ADownloadsFileName_AndA429sWait(string path, string exposed)
+    {
+        var context = await SendAsync("GET", path, "https://app.example.com");
+
+        Assert.Equal(exposed, context.Response.Headers.AccessControlExposeHeaders.ToString());
+    }
+
+    [Fact]
+    public async Task APreflight_ExposesNothing()
+    {
+        var context = await SendAsync("OPTIONS", "/cors/exposed", "https://app.example.com");
+
+        Assert.False(context.Response.Headers.ContainsKey("Access-Control-Expose-Headers"));
     }
 }

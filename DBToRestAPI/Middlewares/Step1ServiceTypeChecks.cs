@@ -54,6 +54,23 @@ public class Step1ServiceTypeChecks(
 
     public async Task InvokeAsync(HttpContext context)
     {
+        try
+        {
+            await RouteAsync(context);
+        }
+        catch (InvalidSettingException ex) when (!context.Response.HasStarted)
+        {
+            // A setting read as a number or as true/false holds something else. The steps after this
+            // one let it through, so it gets this one answer and log line, whichever step read it.
+            var route = context.Items.TryGetValue("route", out var r) ? r : "unknown";
+            _logger.LogError("{Time}: {Message}, read for route `{Route}`",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), LogText.Escape(ex.Message), route);
+            await context.Response.DeferredWriteAsJsonAsync(ex.ToResult(route));
+        }
+    }
+
+    private async Task RouteAsync(HttpContext context)
+    {
         //var val1 = this._settingsEncryptionService.GetValue<string>("secret_info");
         // var secretSection = this._settingsEncryptionService.GetSection("nested_secret_data");
 

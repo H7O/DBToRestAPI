@@ -65,6 +65,16 @@ public class QueryRouteResolver
             ? DefaultRegex.DefaultRouteVariablesCompiledRegex
             : _routeVariableRegexes.GetOrAdd(pattern, p => new Regex(p, RegexOptions.Compiled));
 
+    /// <summary>
+    /// The pattern that finds the variables in an endpoint's route: its own, else the global one,
+    /// else (null) the default. A route is matched and its values read with the same one.
+    /// </summary>
+    private string? RouteVariablePattern(IConfigurationSection endpointSection)
+    {
+        var pattern = endpointSection.GetValue<string>("route_variable_pattern");
+        return string.IsNullOrWhiteSpace(pattern) ? _configuration.GetValue<string>("route_variable_pattern") : pattern;
+    }
+
     // Each configured route's segments, with the name of the variable each holds (null for a segment
     // matched as it is written), per route variable pattern. Read once per route instead of per request.
     private static readonly ConcurrentDictionary<(Regex Pattern, string Route), (string[] Segments, string?[] Variables)> _routeSegments = new();
@@ -139,11 +149,7 @@ public class QueryRouteResolver
                         foreach (var v in _allVerbs) verbs.Add(v);
                     }
 
-                    var routeParameterPattern =
-                    endpointSection.GetValue<string>("route_variable_pattern")
-                    ?? _configuration.GetValue<string>("route_variable_pattern");
-
-                    var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
+                    var routeParametersRegex = RouteVariablesRegex(RouteVariablePattern(endpointSection));
 
                     // Read optional host pattern (e.g., "www.example.com" or "*.example.com")
                     var hostPattern = endpointSection.GetValue<string>("host");
@@ -349,13 +355,7 @@ public class QueryRouteResolver
 
         string[] urlSegments = urlRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        var routeParameterPattern = configSection?.GetValue<string>("route_variable_pattern");
-        if (string.IsNullOrWhiteSpace(routeParameterPattern))
-            routeParameterPattern = configSection?.GetValue<string>("route_variables_pattern");
-        if (string.IsNullOrWhiteSpace(routeParameterPattern))
-            routeParameterPattern = DefaultRegex.DefaultRouteVariablesPattern;
-
-        var routeParametersRegex = RouteVariablesRegex(routeParameterPattern);
+        var routeParametersRegex = RouteVariablesRegex(RouteVariablePattern(configSection));
         var (configSegments, variables) = RouteSegments(routeParametersRegex, configRoute);
 
         Dictionary<string, string> parameters = [];

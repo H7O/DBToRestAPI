@@ -65,7 +65,7 @@ async function downloadFile(id, fileName) {
 }
 ```
 
-When you save a blob, the browser names the file from `a.download`, not from the header, so pass the `file_name` you already have. `Content-Disposition` is readable from JavaScript only when the page and the API share an origin: the engine doesn't send `Access-Control-Expose-Headers`. On an endpoint without login, a plain link works and the browser uses the header's name. With curl, `curl -OJ -H "Authorization: Bearer $TOKEN" URL` saves the file under the server's `filename`, with non-ASCII characters replaced by `_`.
+When you save a blob, the browser names the file from `a.download`, not from the header, so pass the `file_name` you already have. A page on another origin can read `Content-Disposition` too: the engine exposes it unless the route's `<cors>` replaces the list ([11](11-cors.md#settings)). On an endpoint without login, a plain link works and the browser uses the header's name. With curl, `curl -OJ -H "Authorization: Bearer $TOKEN" URL` saves the file under the server's `filename`, with non-ASCII characters replaced by `_`.
 
 ## Columns the query returns
 
