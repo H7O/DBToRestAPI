@@ -32,7 +32,7 @@ feature.  Use them when you need quick lookups:
 | Query Chaining | [docs/topics/14-query-chaining.md](../topics/14-query-chaining.md) |
 | Encryption | [docs/topics/15-encryption.md](../topics/15-encryption.md) |
 | TLS Certificates | [docs/topics/16-tls-certificates.md](../topics/16-tls-certificates.md) |
-| Embedded HTTP Calls | [docs/topics/17-embedded-http-calls.md](../topics/17-embedded-http-calls.md) |
+| Embedded HTTP Calls | [docs/topics/17-embedded-http-calls.md](../topics/17-embedded-http-calls.md), and the patterns in [docs/topics/23-http-call-patterns.md](../topics/23-http-call-patterns.md) |
 | Rate Limiting | [docs/topics/18-rate-limiting.md](../topics/18-rate-limiting.md) |
 | Webhooks | [docs/topics/19-webhooks.md](../topics/19-webhooks.md) |
 | OpenAPI / Swagger | [docs/topics/20-openapi.md](../topics/20-openapi.md) |

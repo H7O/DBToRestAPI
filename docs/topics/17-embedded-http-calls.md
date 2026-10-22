@@ -1,214 +1,88 @@
-# Embedded HTTP Calls in SQL Queries
+---
+title: HTTP calls from SQL
+summary: Call another API from inside an endpoint's query with a {http{ ... }http} block; the engine makes the call before the query runs and hands the answer to the SQL as a JSON parameter.
+keywords: ["{http{", "}http}", http_variable_pattern, url, method, headers, query, body, body_raw, content_type, application/x-www-form-urlencoded, timeout_seconds, ignore_certificate_errors, follow_redirects, auth, bearer, api_key, key_header, key_query_param, basic, retry, max_attempts, delay_ms, exponential_backoff, retry_status_codes, skip, no_wait, status_code, data, error, "@http_response_1", JSON_VALUE, OPENJSON, 502, 503]
+---
 
-Execute HTTP requests directly from within your SQL queries — enrich database data with external APIs, validate inputs against third-party services, or orchestrate microservice calls without leaving SQL.
+# HTTP calls from SQL
 
-## How It Works
+> For AI agents: read [AGENTS.md](../../AGENTS.md) first. The documentation index is [llms.txt](../../llms.txt). Errors: [errors.md](../reference/errors.md). Worked patterns (skipping a call, several calls, a KYC check): [23 HTTP call patterns](23-http-call-patterns.md).
 
-Embed HTTP call markers in your SQL queries using the `{http{...}http}` syntax. Processing happens in two phases:
+A `{http{ ... }http}` block in a query describes an HTTP call in JSON. The engine makes the call before the query runs and puts the answer, as a JSON string, where the block was, bound as a SQL parameter. Use it to check input against another service, to enrich rows, or to call a payment or messaging API as part of a request. To forward a whole request to another API instead, use the [API gateway](08-api-gateway.md); to receive calls from another service, see [webhooks](19-webhooks.md).
 
-### Phase 1: Pre-processing (before SQL execution)
-1. The engine scans the entire query text for all `{http{...}http}` markers
-2. **Prepare (sequential):** `{{param}}` placeholders inside each HTTP configuration are resolved from the incoming request parameters (query string, body, route, headers — the engine has access to all of them at this stage). Calls with `skip` set to a truthy value are excluded.
-3. **Execute (parallel):** All prepared HTTP calls are fired concurrently via `Task.WhenAll` — the total wait time is the duration of the **slowest** call, not the sum of all calls. Duplicate calls (identical configuration) are deduplicated and executed only once.
-4. **Apply (sequential):** Each `{http{...}http}` marker in the query text is replaced with a **SQL parameter name** (e.g., `@http_response_1`, `@http_response_2`), and the corresponding HTTP response is bound to that parameter as a **structured JSON string** via parameterization — **it is never string-interpolated into the SQL**
+## Rules
 
-### Structured Response Format
+1. **Every block in a query's text is called before the query runs**, even one inside an `IF` branch that won't run, or inside a comment. Never write a block in a comment. To call only sometimes, decide in an earlier [chained query](14-query-chaining.md) and pass the decision as `"skip": "{pq{skip_it}}"` ([23](23-http-call-patterns.md#let-the-database-decide-whether-to-call)).
+2. **Check `$.status_code` before you read `$.data`.** A failed call doesn't fail the request: a `404` or `500` from the API, or no answer at all (`status_code` `0`), reaches your SQL like a success. Raise the status you want the caller to get ([errors.md](../reference/errors.md#raising-an-error-from-sql)).
+3. **Read the API's answer at `$.data`,** not at the root: `JSON_VALUE(@r, '$.data.id')`.
+4. **Put caller values in `"query"`, never in the `"url"` string.** A value in `query` is percent-encoded; one inside `url` can add parameters with `&` ([Caller-supplied values](#caller-supplied-values-url-encoding-and-json-escaping)).
+5. **Send a form as `"body_raw"` with `"content_type": "application/x-www-form-urlencoded"`, and fill it only with values you checked or built.** The engine has no form encoding: `&` and `=` in a value add or change fields.
+6. **A call is made once unless it has `"retry"`.** Don't retry a call that creates something (a payment, an order) unless the API takes an idempotency key: a retried POST can create it twice.
+7. **Keep the engine's own credentials in `<vars>` (`{s{api_key}}`), never in a header the caller sends:** any caller can send any value. Encrypt them ([21](21-settings-vars.md), [15](15-encryption.md)).
+8. **In a chain, read earlier results with `{pq{name}}`, not `{{name}}`,** inside the block too: `{{name}}` falls back to a request value of the same name when the earlier query gave none ([14](14-query-chaining.md#reading-earlier-results-pqname)).
 
-Every embedded HTTP call produces a JSON string with this shape — regardless of success or failure:
+## How it works
+
+1. The engine finds every `{http{ ... }http}` block in the query's text with `http_variable_pattern` (a route can override it; a custom pattern needs `(?s)` when a block spans lines).
+2. In each block, it fills the placeholders as text: request values (`{{name}}`, from the body, query string, route and headers), `{auth{...}}`, `{s{...}}` and `{pq{...}}` ([Caller-supplied values](#caller-supplied-values-url-encoding-and-json-escaping)). A block whose `skip` is then truthy is left out.
+3. It makes the calls at the same time, so the request waits for the slowest one, not their sum. Blocks that come out identical are called once.
+4. It replaces each block with a SQL parameter (`@http_response_1`, `@http_response_2`...) and binds the call's answer to it. The answer is never written into the SQL text, so nothing an API returns can change the query.
+5. The query runs. A `DECLARE @r NVARCHAR(MAX) = {http{ ... }http};` inside an `IF` that is false never runs, so `@r` stays `NULL`, but the call was still made.
+
+Every call's answer is a JSON string of this shape, whether the call succeeded or not:
 
 ```json
-{
-  "status_code": 200,
-  "headers": {
-    "Content-Type": "application/json",
-    "X-Request-Id": "abc-123"
-  },
-  "data": { ... },
-  "error": null
-}
+{ "status_code": 200, "headers": { "Content-Type": "application/json" }, "data": { "id": "pi_123" }, "error": null }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `status_code` | int | HTTP status code (e.g., 200, 404, 500). `0` if the request failed before receiving a response (network error, timeout, DNS failure). |
-| `headers` | object | All response headers (including content headers). Multi-value headers are joined with `, `. |
-| `data` | any | The response body — parsed as a JSON object/array if valid JSON, a plain string if not, or `null` if the body was empty. |
-| `error` | object\|null | `null` when a server response was received (even 4xx/5xx — the server's error details are in `data`). Populated as `{"message": "..."}` only when `status_code` is `0` (infrastructure failures: timeout, DNS, network, SSL, etc.). |
+| Field | Meaning |
+|---|---|
+| `status_code` | The API's status, `404` and `500` included. `0` when no answer came: DNS failure, refused connection, TLS error, timeout. |
+| `headers` | The answer's headers, content headers included. A header with several values has them joined with `, `. |
+| `data` | The body: the parsed JSON when it is JSON, otherwise the text, or `null` when it is empty. An API's error details are here too. |
+| `error` | `null` when an answer came, even a `500`. `{"message": "..."}` when `status_code` is `0`, such as `Request timed out after 30 seconds`. |
 
-### Phase 2: SQL execution
-- The modified query is executed via standard parameterized SQL (similar to `sp_executesql @query, @params, @http_response_1 = '...', @http_response_2 = '...'`)
-- HTTP responses are available as regular SQL variables — you can use them in `SELECT`, `INSERT`, `UPDATE`, `IF`, `WHERE`, or any SQL construct
-- Use `JSON_VALUE(@var, '$.status_code')` to inspect the HTTP status, `$.headers` for response headers, and `$.data` for the response body
-- Because values are parameterized, **there is zero SQL injection risk**, even if the external API returns malicious content
+The parameter is `NULL` instead in two cases only: the call was skipped (`skip`), or it was started without waiting (`no_wait`).
+
+If the caller disconnects, the calls stop and the query doesn't run. On a route with `<cache>`, a call that other callers wait on keeps running until all of them have gone ([caching](07-caching.md#requests-that-arrive-while-the-query-runs)).
+
+## Complete example: POST with a form body
+
+An order page pays for an order with Stripe, which takes `application/x-www-form-urlencoded`, on SQL Server. The first query checks that the order is the caller's and unpaid, and reads the amount and the Stripe customer from the database. The second makes the call with those values, so nothing in the form comes from the request.
+
+### Tables
 
 ```sql
--- What you write:
-DECLARE @response NVARCHAR(MAX) = {http{
-  {
-    "url": "https://api.example.com/data",
-    "method": "GET"
-  }
-}http};
+CREATE TABLE customers (
+  id                 UNIQUEIDENTIFIER PRIMARY KEY,
+  owner_id           NVARCHAR(200)    NOT NULL,   -- the user's {auth{user_id}}
+  stripe_customer_id NVARCHAR(100)    NOT NULL
+);
 
--- What actually runs (conceptually):
--- DECLARE @response NVARCHAR(MAX) = @http_response_1;
--- where @http_response_1 = '{"status_code":200,"headers":{...},"data":{...},"error":null}'
-
--- Check status before using data
-IF JSON_VALUE(@response, '$.status_code') != '200'
-  THROW 50502, 'External API call failed', 1;
-
--- Access the response body via $.data
-SELECT * FROM OPENJSON(@response, '$.data');
+CREATE TABLE orders (
+  id                UNIQUEIDENTIFIER PRIMARY KEY,
+  customer_id       UNIQUEIDENTIFIER NOT NULL REFERENCES customers(id),
+  amount_cents      INT              NOT NULL,
+  status            NVARCHAR(30)     NOT NULL,    -- 'unpaid', 'pending_payment', 'paid'
+  payment_intent_id NVARCHAR(100)    NULL
+);
 ```
 
-> **Key insight for query authors**: All `{http{...}http}` calls fire during Phase 1 regardless of any SQL `IF` conditions — because Phase 1 happens before SQL executes. However, because the result arrives as a parameterized SQL variable (not string replacement), you **can** use SQL `IF` blocks to control whether the result variable is assigned or referenced in your logic. If your `IF` condition is false, the `DECLARE @var = {http{...}http}` inside it simply never runs, so `@var` stays `NULL`. This is the same behavior as any SQL variable declared inside a conditional block. When executed, the response is **always** a structured JSON string — check `JSON_VALUE(@var, '$.status_code')` to determine success or failure. The variable receives `NULL` only when the call is skipped with the [`skip`](#skipping-http-calls) property or launched in the background with `no_wait`.
+### Settings
 
-> **For LLMs / AI agents**: Do **not** assume that `{http{...}http}` results are string-replaced into the SQL. They are SQL-parameterized. The parameter value is a **structured JSON string** with `status_code`, `headers`, and `data` fields. This means: (1) SQL `IF` guards around the `DECLARE @var = {http{...}http}` assignment **do** control whether the variable receives the value, (2) the HTTP call still fires during pre-processing regardless (unless the `skip` property is truthy — see [Skipping HTTP Calls](#skipping-http-calls)), (3) there is no SQL injection risk from HTTP response content, and (4) the actual API response body is at `$.data`, not at the root level.
-
-## Basic Example
+`stripe_secret_key` goes in `<vars>` in `config/settings.xml`, encrypted ([21](21-settings-vars.md), [15](15-encryption.md)):
 
 ```xml
-<get_weather_enriched_locations>
-  <route>locations/weather</route>
-  <verb>GET</verb>
-  <response_structure>array</response_structure>
-  <query><![CDATA[
-    -- Fetch current weather from external API
-    DECLARE @weather NVARCHAR(MAX) = {http{
-      {
-        "url": "https://api.weatherapi.com/v1/current.json?key=YOUR_API_KEY",
-        "query": { "q": "{{city}}" },
-        "method": "GET"
-      }
-    }http};
-    
-    -- Check if the call succeeded
-    IF JSON_VALUE(@weather, '$.status_code') != '200'
-      THROW 50502, 'Weather API unavailable', 1;
-    
-    -- Combine with database data (response body is under $.data)
-    SELECT 
-      l.id,
-      l.name,
-      l.city,
-      JSON_VALUE(@weather, '$.data.current.temp_c') AS temperature_celsius,
-      JSON_VALUE(@weather, '$.data.current.condition.text') AS weather_condition,
-      l.last_updated
-    FROM locations l
-    WHERE l.city = {{city}};
-  ]]></query>
-</get_weather_enriched_locations>
+<settings>
+  <vars>
+    <stripe_secret_key>sk_live_...</stripe_secret_key>
+  </vars>
+</settings>
 ```
 
-## HTTP Request Configuration
+### Endpoint
 
-The JSON inside `{http{...}http}` supports the full HTTP executor configuration:
-
-> If you override `http_variable_pattern` with a custom regex, include inline `(?s)` (Singleline) when your `{http{...}http}` payload spans multiple lines.
-
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `url` | string | Yes | The HTTP endpoint URL. Constants and `{s{settings}}` values may sit in its query string; a **caller-supplied** `{{marker}}` belongs in `query` — see [Caller-Supplied Values](#caller-supplied-values-url-encoding-and-json-escaping) |
-| `method` | string | No | HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS (default: GET) |
-| `headers` | object | No | Custom headers to include. A header whose name or value contains a line break is dropped, never sent. A `Content-Type` here replaces the one `content_type` sets |
-| `query` | object | No | Query-string parameters, percent-encoded and appended to `url` (with `&` when `url` already has a `?`). The right place for caller-supplied values |
-| `body` | object/array | No | JSON body, sent as written (for POST/PUT/PATCH). A marker used outside a string (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string. A string `body` is sent as its text when the body's type isn't JSON (a form), and as a JSON string when it is |
-| `body_raw` | string | No | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document, and `body_raw` with `content_type` for a form ([POST with a form body](#post-with-a-form-body)) |
-| `content_type` | string | No | The body's `Content-Type` (default: `application/json`), sent with a `charset=utf-8` |
-| `timeout_seconds` | number | No | Request timeout in seconds (default: 30). `timeout` is accepted as an alias |
-| `ignore_certificate_errors` | bool | No | Skip TLS certificate validation (default: `false`; development only) |
-| `follow_redirects` | bool | No | Follow HTTP redirects automatically (default: `true`) |
-| `auth` | object | No | Authentication configuration — `basic`, `bearer` or `api_key` (see [Authentication Options](#authentication-options)) |
-| `retry` | object | No | Retry policy: `max_attempts` (default 3), `delay_ms` (1000), `exponential_backoff` (true), `retry_status_codes` ([500, 502, 503, 504]). Without `retry`, the call is made once. Don't retry a call that creates something (a payment, an order) unless the API takes an idempotency key: a retried POST can create it twice |
-| `skip` | bool/string/number | No | When truthy (`true`, `"true"`, `"1"`, `"yes"`, non-zero), the call is **not executed** and the SQL variable receives `NULL` instead of structured JSON. See [Skipping HTTP Calls](#skipping-http-calls). |
-| `no_wait` | bool/string/number | No | When truthy, the call starts in the background before the query runs, nothing waits for it, and the SQL variable receives `NULL`. It can still be running after the response is sent, and it goes out even if the query then fails. See [Fire-and-Forget](../tutorial/16-http-from-sql.md#fire-and-forget-with-no_wait) in the tutorial. |
-
-## Using Request Parameters
-
-Parameters from the incoming HTTP request (query string, body, headers, route) can be used inside the HTTP call configuration:
-
-```xml
-<validate_email>
-  <route>users/validate-email</route>
-  <verb>POST</verb>
-  <query><![CDATA[
-    DECLARE @validation NVARCHAR(MAX) = {http{
-      {
-        "url": "https://api.emailvalidation.com/v1/validate",
-        "method": "POST",
-        "headers": {
-          "X-API-Key": "{s{email_validation_key}}"
-        },
-        "body": {
-          "email": "{{email}}"
-        }
-      }
-    }http};
-    
-    -- Check HTTP status first
-    IF JSON_VALUE(@validation, '$.status_code') != '200'
-      THROW 50502, 'Email validation service unavailable', 1;
-    
-    -- A missing is_valid counts as invalid
-    IF ISNULL(JSON_VALUE(@validation, '$.data.is_valid'), 'false') <> 'true'
-      THROW 50400, 'Invalid email address', 1;
-    
-    INSERT INTO users (email, name, email_verified)
-    VALUES ({{email}}, {{name}}, 1);
-    
-    SELECT 'User created successfully' AS message;
-  ]]></query>
-</validate_email>
-```
-
-## Caller-Supplied Values: URL Encoding and JSON Escaping
-
-A `{{marker}}` inside the block is replaced with the caller's value **as text, before the JSON is
-parsed**. Three things protect the request from a hostile value:
-
-**URL encoding — your job, via `query`.** Characters such as `&`, `#`, `?` and `=` carry meaning in
-a URL, and a marker placed inside the `url` string passes them through as written. Put caller-supplied
-values in `query` instead; each value is percent-encoded there and appended to `url` (with `&` if
-`url` already has a `?`). Constants and `{s{settings}}` values can stay in `url`.
-
-```sql
--- Not this: {{city}} is caller-supplied, so "a&key=other" would add a parameter
-"url": "https://api.example.com/current?key={s{api_key}}&q={{city}}"
-
--- This: the value is percent-encoded, whatever it contains
-"url": "https://api.example.com/current?key={s{api_key}}",
-"query": { "q": "{{city}}" }
-```
-
-**JSON escaping — automatic.** Before the block is parsed, the engine works out which markers land
-inside a JSON string literal and escapes those values (`"`, `\`, control characters). A value such as
-`a","url":"https://attacker.example` therefore stays inside the string it was substituted into; it
-cannot close that string, append a second `url` key, or otherwise change the request. Markers that
-sit *outside* a string — `"body": {{doc}}` — are not escaped, because that is how a whole
-JSON document is injected. The value must be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`), read as leniently as the block itself (comments and trailing commas are allowed) and inserted as compact JSON; anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it cannot add keys. Markers are found with the patterns the route uses, including overridden ones such as `||name||`. A marker inside a value is part of the value and is never filled: a document an earlier query returned arrives as it is, `{s{...}}` and `{{...}}` text included. A marker used both inside and outside a string, or inside a comment, is escaped so it can't change the structure anywhere: outside a string it then works only for a plain number, `true`, `false` or `null`. A boolean or number from the request body becomes JSON `true`, `false` or a number. Even so, reserve that form for values you built yourself
-(a settings variable, a column from a previous chained query read with `{pq{name}}`); to forward a caller-supplied document, use
-`"body_raw": "{{payload}}"`, which escapes it into a string and sends it verbatim. A marker used both
-inside and outside a string in the same block is escaped everywhere and a warning is logged, because
-that block needs splitting into two markers.
-
-**Header injection — blocked.** A header whose name or value contains a carriage return or line feed
-is dropped rather than sent, so a substituted value cannot start a second header or a body.
-
-**A marker that matches nothing, or a `NULL` value.** Inside a JSON string, in `query` and in
-`headers`, it becomes an empty string: `"q": "{{city}}"` sends `q=` when the request has no `city`.
-Outside a string it becomes JSON `null`: `"body": { "doc": {{doc}} }` sends `{ "doc": null }`.
-
-## POST with a form body
-
-Some APIs, such as Stripe's, take `application/x-www-form-urlencoded` instead of JSON. Send the form
-as `body_raw` and set `content_type`. A `body` string with that type is sent the same way.
-
-A value in `body_raw` is inserted as written, and `&` and `=` in it add or change fields: a caller who
-sends `10&currency=eur` as the amount adds a second `currency`. The engine has no form encoding, so
-fill a form only with values you checked or built yourself. Here the amount and the customer come
-from the database, looked up by an earlier [chained query](14-query-chaining.md), and the second
-query, which makes the call, runs only when the first one succeeded (SQL Server):
+`config/sql.xml`, inside `<settings><queries>`:
 
 ```xml
 <pay_for_order>
@@ -263,441 +137,164 @@ query, which makes the call, runs only when the first one succeeded (SQL Server)
 </pay_for_order>
 ```
 
-`{pq{amount_cents}}` reads query 1's column only: an `amount_cents` the caller sends doesn't reach
-it. `stripe_secret_key` is a [settings variable](21-settings-vars.md), kept encrypted in `<vars>`.
-Two requests for one order can both pass query 1, and both create a PaymentIntent; the
-`UPDATE ... AND status = 'unpaid'` lets only the first one store its own. The second one's
-PaymentIntent is never confirmed, so it charges nothing. The call has no `retry`, so a timeout never
-creates a second PaymentIntent.
+`{pq{amount_cents}}` reads query 1's column only: an `amount_cents` the caller sends doesn't reach it. Two requests for one order can both pass query 1 and both create a PaymentIntent; the `UPDATE ... AND status = 'unpaid'` lets only the first one store its own. The second one's PaymentIntent is never confirmed, so it charges nothing. The call has no `retry`, so a timeout never creates a second PaymentIntent.
 
-## Authentication Options
+### Request
 
-### Bearer Token
-
-```sql
-DECLARE @data NVARCHAR(MAX) = {http{
-  {
-    "url": "https://api.example.com/secure",
-    "auth": {
-      "type": "bearer",
-      "token": "your-access-token"
-    }
-  }
-}http};
+```bash
+curl -X POST https://api.example.com/orders/6f1c2a4e-0d1b-4a52-9a49-3c3a8f0e2b11/payment \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-### API Key
+### What the client gets back
 
-`key` is the secret itself; `key_header` names the header that carries it, or `key_query_param` the query-string parameter:
-
-```sql
-DECLARE @data NVARCHAR(MAX) = {http{
-  {
-    "url": "https://api.example.com/data",
-    "auth": {
-      "type": "api_key",
-      "key": "your-api-key",
-      "key_header": "X-API-Key"
-    }
-  }
-}http};
-```
-
-### Basic Auth
-
-```sql
-DECLARE @data NVARCHAR(MAX) = {http{
-  {
-    "url": "https://api.example.com/data",
-    "auth": {
-      "type": "basic",
-      "username": "user",
-      "password": "pass"
-    }
-  }
-}http};
-```
-
-## Retry Configuration
-
-Configure automatic retries for transient failures:
-
-```sql
-DECLARE @data NVARCHAR(MAX) = {http{
-  {
-    "url": "https://api.example.com/data",
-    "retry": {
-      "max_attempts": 3,
-      "delay_ms": 2000,
-      "exponential_backoff": true,
-      "retry_status_codes": [500, 502, 503, 504]
-    }
-  }
-}http};
-```
-
-## Skipping HTTP Calls
-
-Use the `skip` property to conditionally prevent an HTTP call from executing. When `skip` evaluates to a truthy value, the call is **not made** and the SQL variable receives `NULL` (DbNull) instead of a structured JSON response.
-
-```sql
--- Skip validation when the caller passes skip_validation=true
-DECLARE @validation NVARCHAR(MAX) = {http{
-  {
-    "url": "https://api.example.com/validate",
-    "method": "POST",
-    "body": { "email": "{{email}}" },
-    "skip": "{{skip_validation}}"
-  }
-}http};
-
--- Three-state check:
---   NULL          = call was skipped (skip property was truthy)
---   status_code 0 = infrastructure failure (timeout, DNS, network)
---   status_code>0 = server responded (check the specific code)
-IF @validation IS NULL
-BEGIN
-  -- Skipped — proceed without validation
-  INSERT INTO users (email, name) VALUES ({{email}}, {{name}});
-END
-ELSE IF CAST(JSON_VALUE(@validation, '$.status_code') AS INT) = 0
-BEGIN
-  DECLARE @err NVARCHAR(500) = JSON_VALUE(@validation, '$.error.message');
-  THROW 50502, @err, 1;
-END
-ELSE IF JSON_VALUE(@validation, '$.status_code') != '200'
-BEGIN
-  THROW 50502, 'Validation service error', 1;
-END
-ELSE
-BEGIN
-  IF JSON_VALUE(@validation, '$.data.is_valid') = 'false'
-    THROW 50400, 'Invalid email', 1;
-  INSERT INTO users (email, name, validated) VALUES ({{email}}, {{name}}, 1);
-END
-```
-
-### Truthy Values for `skip`
-
-The `skip` property accepts multiple representations because `{{param}}` placeholders are resolved as strings before the JSON is parsed:
-
-| Value | Skipped? |
-|-------|----------|
-| `true` (boolean) | Yes |
-| `"true"` (string, case-insensitive) | Yes |
-| `"1"` | Yes |
-| `"yes"` (string, case-insensitive) | Yes |
-| Non-zero number | Yes |
-| `false`, `"false"`, `"0"`, `"no"`, `0`, absent | No |
-
-> **Tip**: Since `{{param}}` values are resolved as strings, `"skip": "{{should_skip}}"` works naturally — pass `true` or `1` in the request to skip the call.
-
-### Conditionally Skipping Based on Database Logic
-
-The `skip` property is resolved during **Phase 1 pre-processing**, before any SQL executes. This means the skip decision must come from something available at that stage — request parameters (`{{param}}`), JWT claims (`{auth{claim}}`), or settings variables (`{s{var}}`). It **cannot** come from a SQL computation in the same query, because that SQL hasn't run yet.
-
-However, by combining `skip` with **[query chaining](14-query-chaining.md)**, you can let the database drive the skip decision. Query 1 runs first, and when it returns a single row, Query 2 can read each output column as `{pq{column_name}}`. Query 2 can reference one of those columns as the `skip` value — effectively letting SQL decide whether the HTTP call fires.
-
-| Condition source | Can drive `skip`? | Mechanism |
+| Case | Status | Body |
 |---|---|---|
-| Request parameter (`{{param}}`) | Yes | Body, query string, route, or header |
-| JWT claim (`{auth{claim}}`) | Yes | Any claim from the validated token |
-| Settings variable (`{s{var}}`) | Yes | From `<vars>` in settings.xml |
-| SQL in the **same** query | No | SQL hasn't run yet during Phase 1 |
-| SQL in a **previous** chained query | Yes | Output columns are read as `{pq{column}}` — see below |
+| Paid | `200` | `{"payment_intent_id":"pi_...","client_secret":"pi_..._secret_..."}` |
+| Another user's order, an unknown id, or one that isn't a GUID | `404` | `{"success":false,"message":"Order not found","error_number":404}` |
+| The order isn't unpaid | `409` | `{"success":false,"message":"Only an unpaid order can be paid","error_number":409}` |
+| Stripe answered with another status | `502` | `{"success":false,"message":"Payment service error","error_number":502}` |
+| Stripe didn't answer | `503` | `{"success":false,"message":"Payment service unreachable","error_number":503}` |
+| Another request for the order stored its PaymentIntent during the call | `409` | `{"success":false,"message":"This order is already being paid","error_number":409}` |
+| No token | `401` | `{"success":false,"message":"Authorization header is required"}` |
 
-#### Example: Skip Enrichment If Data Already Exists
+Nothing is called for the `404` and the first `409`: query 1 stops the chain before query 2 is read.
 
-Query 1 checks the database and outputs a `skip_http` flag. Query 2 uses it to conditionally fire an enrichment API.
+## Request settings
 
-```xml
-<enrich_contact>
-  <route>contacts/{{id}}/enrich</route>
-  <verb>POST</verb>
-  <mandatory_parameters>id</mandatory_parameters>
+The JSON inside the block:
 
-  <!-- Query 1: Check if enrichment is needed -->
-  <!-- Query 2 reads its output columns as {pq{column}} -->
-  <query><![CDATA[
-    DECLARE @id UNIQUEIDENTIFIER = {{id}};
+| Property | Default | Notes |
+|---|---|---|
+| `url` | required | The address. Constants and `{s{...}}` values may sit in its query string; a caller's value goes in `query`. |
+| `method` | `GET` | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`. |
+| `headers` | none | An object of headers. A header whose name or value holds a line break is dropped, never sent. A `Content-Type` here replaces the one `content_type` sets. |
+| `query` | none | An object of query-string values, each percent-encoded and appended to `url` (with `&` when `url` already has a `?`). |
+| `body` | none | The JSON body, sent as written. A marker outside a string (`"body": {{doc}}`) inserts one whole JSON value. A string `body` is sent as its text when the body's type isn't JSON, such as a form, and as a JSON string when it is. |
+| `body_raw` | none | A body sent as written, when there is no `body`. `"body_raw": "{{payload}}"` forwards a caller's document as it came. |
+| `content_type` | `application/json` | The body's type, sent with `charset=utf-8`. |
+| `timeout_seconds` | `30` | `timeout` is accepted too. A timeout gives `status_code` `0`. |
+| `auth` | none | `bearer`, `api_key` or `basic` ([Authentication](#authentication)). |
+| `retry` | none: one attempt | `max_attempts` (`3`), `delay_ms` (`1000`), `exponential_backoff` (`true`), `retry_status_codes` (`[500, 502, 503, 504]`). A network error or a timeout is retried too ([Retry configuration](#retry-configuration)). |
+| `follow_redirects` | `true` | Calls keep no cookies, so a cookie set on a redirect isn't sent to the next hop. |
+| `ignore_certificate_errors` | `false` | Development only. |
+| `skip` | `false` | Truthy (`true`, or the text `true`, `1` or `yes` in any case, or a non-zero number): the call isn't made and the parameter is `NULL`. Anything else, or none, makes the call. |
+| `no_wait` | `false` | Truthy: the call starts before the query runs and nothing waits for it; the parameter is `NULL`. It can still run after the response is sent, and it goes out even if the query then fails ([tutorial](../tutorial/16-http-from-sql.md#fire-and-forget-with-no_wait)). |
 
-    IF NOT EXISTS (SELECT 1 FROM contacts WHERE id = @id)
-    BEGIN
-      THROW 50404, 'Contact not found', 1;
-      RETURN;
-    END
+## Caller-supplied values: URL encoding and JSON escaping
 
-    SELECT
-      id,
-      email,
-      -- '1' = already enriched → skip the API call
-      -- '0' = not yet enriched → fire the API call
-      CASE WHEN enriched_at IS NOT NULL THEN '1' ELSE '0' END AS skip_http
-    FROM contacts
-    WHERE id = @id;
-  ]]></query>
+A placeholder inside the block is replaced with its value **as text, before the JSON is read**. Three things protect the call from a hostile value.
 
-  <!-- Query 2: Conditionally call the enrichment API -->
-  <!-- {pq{skip_http}}, {pq{id}}, {pq{email}} all come from Query 1's single-row output -->
-  <query><![CDATA[
-    DECLARE @id UNIQUEIDENTIFIER = {pq{id}};
-    DECLARE @email NVARCHAR(500) = {pq{email}};
-
-    DECLARE @enrichment NVARCHAR(MAX) = {http{
-      {
-        "url": "{s{enrichment_api_url}}/lookup",
-        "method": "POST",
-        "headers": { "X-API-Key": "{s{enrichment_api_key}}" },
-        "body": { "email": "{pq{email}}" },
-        "skip": "{pq{skip_http}}"
-      }
-    }http};
-
-    -- Three-state check:
-    --   NULL          → skipped (already enriched)
-    --   status_code 0 → infrastructure failure
-    --   status_code>0 → server responded
-    IF @enrichment IS NULL
-    BEGIN
-      SELECT id, name, email, company, enriched_at,
-             'already_enriched' AS status
-      FROM contacts WHERE id = @id;
-    END
-    ELSE IF CAST(JSON_VALUE(@enrichment, '$.status_code') AS INT) = 0
-    BEGIN
-      DECLARE @err NVARCHAR(500) = JSON_VALUE(@enrichment, '$.error.message');
-      THROW 50502, @err, 1;
-    END
-    ELSE IF CAST(JSON_VALUE(@enrichment, '$.status_code') AS INT) NOT BETWEEN 200 AND 299
-    BEGIN
-      THROW 50502, 'Enrichment service returned an error', 1;
-    END
-    ELSE
-    BEGIN
-      UPDATE contacts
-      SET
-        company     = JSON_VALUE(@enrichment, '$.data.company'),
-        location    = JSON_VALUE(@enrichment, '$.data.location'),
-        enriched_at = GETUTCDATE()
-      WHERE id = @id;
-
-      SELECT id, name, email, company, enriched_at,
-             'enriched' AS status
-      FROM contacts WHERE id = @id;
-    END
-  ]]></query>
-</enrich_contact>
-```
-
-**Why this works:** Query 1 executes first and outputs `skip_http` alongside `id` and `email`. Because Query 1 returns a single row, Query 2 can read all its output columns as `{pq{column_name}}` (see [Query Chaining — Parameter Passing](14-query-chaining.md#parameter-passing)). When Query 2's Phase 1 pre-processing resolves `"skip": "{pq{skip_http}}"`, it reads `"1"` or `"0"` from that parameter — before any SQL in Query 2 runs. If `skip_http` is `"1"`, the HTTP call never fires and `@enrichment` receives `NULL`. If it's `"0"`, the call executes normally. The database made the decision; no application code, no extra round-trips. Use `{pq{skip_http}}` rather than `{{skip_http}}`: if Query 1 returned `NULL` or no row, `{{skip_http}}` would take a request value with the same name, letting the caller decide.
-
-> **When to use this pattern:** pay-per-call APIs (avoid unnecessary charges), rate-limited APIs (protect your quota), slow external services (skip when data is already fresh), and idempotent enrichment workflows (safely re-run without double-calling).
-
-## Multiple HTTP Calls
-
-You can include multiple HTTP calls in a single query. Each unique call is executed once, and duplicates are automatically deduplicated:
-
-```xml
-<aggregate_external_data>
-  <route>dashboard/summary</route>
-  <verb>GET</verb>
-  <query><![CDATA[
-    DECLARE @users NVARCHAR(MAX) = {http{
-      {"url": "https://users-service/api/stats", "method": "GET"}
-    }http};
-    
-    DECLARE @orders NVARCHAR(MAX) = {http{
-      {"url": "https://orders-service/api/stats", "method": "GET"}
-    }http};
-    
-    DECLARE @inventory NVARCHAR(MAX) = {http{
-      {"url": "https://inventory-service/api/stats", "method": "GET"}
-    }http};
-    
-    SELECT 
-      JSON_VALUE(@users, '$.data.total_users') AS total_users,
-      JSON_VALUE(@orders, '$.data.total_orders') AS total_orders,
-      JSON_VALUE(@inventory, '$.data.items_in_stock') AS items_in_stock,
-      JSON_VALUE(@users, '$.status_code') AS users_api_status,
-      JSON_VALUE(@orders, '$.status_code') AS orders_api_status,
-      JSON_VALUE(@inventory, '$.status_code') AS inventory_api_status,
-      GETDATE() AS generated_at;
-  ]]></query>
-</aggregate_external_data>
-```
-
-## Conditional Usage with IF Blocks
-
-Because HTTP responses are delivered as parameterized SQL variables, you can use standard SQL `IF` blocks to conditionally process the result — even though the HTTP call itself always fires during pre-processing:
+**URL encoding is your job, through `query`.** Characters such as `&`, `#`, `?` and `=` mean something in a URL, and a placeholder inside the `url` string passes them through as written. Put a caller's value in `query`, where it is percent-encoded. Constants and `{s{...}}` values can stay in `url`.
 
 ```sql
-DECLARE @emirates_id NVARCHAR(50) = {{emirates_id}};
+-- Not this: {{city}} is the caller's, so "a&key=other" would add a parameter
+"url": "https://api.example.com/current?key={s{api_key}}&q={{city}}"
 
--- The HTTP call executes during pre-processing regardless,
--- but its result (a parameterized variable) is only assigned
--- to @nin_json inside the IF block when the condition is met.
-DECLARE @nin NVARCHAR(MAX) = NULL;
-IF @emirates_id IS NOT NULL AND @emirates_id NOT LIKE '%[^0-9]%'
-BEGIN
-    DECLARE @nin_json NVARCHAR(MAX) = {http{
-      {
-        "url": "https://api.example.com/lookup",
-        "method": "GET",
-        "body": { "eid": "{{emirates_id}}" }
-      }
-    }http};
-
-    IF CAST(JSON_VALUE(@nin_json, '$.status_code') AS INT) BETWEEN 200 AND 299
-    BEGIN
-        SELECT @nin = STRING_AGG(TRIM(JSON_VALUE(value, '$.NIN_NO')), ' | ')
-        FROM OPENJSON(@nin_json, '$.data')
-        WHERE JSON_VALUE(value, '$.NIN_NO') IS NOT NULL;
-    END
-END
-
--- @nin is NULL if the IF condition was false,
--- or contains the looked-up value if it was true.
-UPDATE records SET nin = COALESCE(@nin, nin) WHERE id = @id;
+-- This: the value is percent-encoded, whatever it holds
+"url": "https://api.example.com/current?key={s{api_key}}",
+"query": { "q": "{{city}}" }
 ```
 
-This pattern is useful in **update** scenarios where a parameter may or may not be provided in the request. The HTTP call fires either way (minimal overhead if the external API handles null/empty gracefully), but your SQL logic decides whether to use the result. You can also inspect `$.status_code` to handle API failures gracefully within the conditional block.
+**JSON escaping is automatic.** The engine works out which placeholders sit inside a JSON string and escapes their values (`"`, `\`, control characters), so `a","url":"https://attacker.example` stays inside its string and can't add a key. A placeholder outside a string, such as `"body": {{doc}}`, is how a whole JSON document is inserted, so it isn't escaped. Its value must then be exactly one JSON value (an object, array, string, number, `true`, `false` or `null`), read as leniently as the block (comments and trailing commas allowed) and inserted as compact JSON; anything else, such as `1, "url": "https://attacker.example"`, is inserted as a JSON string, so it can't add keys. A boolean or number from the request body becomes JSON `true`, `false` or a number. Even so, reserve that form for values you built (a settings variable, a column from an earlier query read with `{pq{name}}`). To forward a caller's document, use `"body_raw": "{{payload}}"`.
 
-## Error Handling
+A placeholder used both inside and outside a string in one block, or inside a comment, is escaped everywhere, so it can't change the structure: outside a string it then works only for a plain number, `true`, `false` or `null`, and a warning is logged. Split such a block into two placeholders. A placeholder inside a value is part of the value and is never filled: a document an earlier query returned arrives as it is, `{s{...}}` and `{{...}}` text included. Placeholders are found with the patterns the route uses, overridden ones such as `||name||` included.
 
-Every embedded HTTP call **always** returns a structured JSON response — even when the call fails — unless its caller disconnects. Then the call stops and the query doesn't run, since nobody waits for the answer; on a route with `<cache>`, a call that other callers wait on keeps running until all of them have gone ([caching](07-caching.md#requests-that-arrive-while-the-query-runs)). Any other failure reaches the query, which gives query authors full visibility into what happened:
+**Header injection is blocked.** A header whose name or value holds a carriage return or line feed is dropped, so a value can't start a second header or a body.
+
+**A placeholder that matches nothing, or a `NULL` value,** is an empty string inside a JSON string, in `query` and in `headers` (`"q": "{{city}}"` sends `q=` when the request has no `city`), and JSON `null` outside one (`"body": { "doc": {{doc}} }` sends `{ "doc": null }`).
+
+## Authentication
+
+| `type` | Fields | Sends |
+|---|---|---|
+| `bearer` | `token` | `Authorization: Bearer <token>` |
+| `api_key` | `key`, and `key_header` or `key_query_param` | The key in that header, or in that query-string parameter |
+| `basic` | `username`, `password` | `Authorization: Basic <base64>` |
 
 ```sql
-DECLARE @response NVARCHAR(MAX) = {http{
-  {"url": "https://api.example.com/data", "method": "GET"}
+DECLARE @data NVARCHAR(MAX) = {http{
+  {
+    "url": "https://api.example.com/data",
+    "auth": { "type": "api_key", "key": "{s{example_api_key}}", "key_header": "X-API-Key" }
+  }
 }http};
-
-DECLARE @status INT = CAST(JSON_VALUE(@response, '$.status_code') AS INT);
-
--- Handle specific failure scenarios
-IF @status = 0
-BEGIN
-  -- Infrastructure failure — check $.error.message for details
-  DECLARE @err_msg NVARCHAR(500) = JSON_VALUE(@response, '$.error.message');
-  -- e.g., "Request timed out after 30 seconds" or "Host not found: api.example.com"
-  THROW 50502, @err_msg, 1;
-END
-
-IF @status = 401 OR @status = 403
-  THROW 50401, 'External service authentication failed', 1;
-
-IF @status = 429
-  THROW 50429, 'External service rate limit exceeded', 1;
-
-IF @status < 200 OR @status >= 300
-  THROW 50502, 'External service returned an error', 1;
-
--- Access response headers (e.g., pagination, rate-limit info)
-SELECT JSON_VALUE(@response, '$.headers.X-RateLimit-Remaining') AS rate_limit_remaining;
-
--- Continue with the actual response body
-SELECT * FROM OPENJSON(@response, '$.data');
 ```
 
-### Status Code Reference
+## Retry configuration
+
+```sql
+DECLARE @data NVARCHAR(MAX) = {http{
+  {
+    "url": "https://api.example.com/data",
+    "retry": { "max_attempts": 3, "delay_ms": 2000, "exponential_backoff": true, "retry_status_codes": [500, 502, 503, 504] }
+  }
+}http};
+```
+
+`max_attempts` counts the first attempt. A status in `retry_status_codes`, a network error and a timeout are retried. With `exponential_backoff`, each wait doubles (`delay_ms`, then twice it, then four times), up to 60 seconds. The answer is the last attempt's.
+
+## Errors
+
+The engine raises nothing for a call that failed: the query decides. The usual checks, on SQL Server:
+
+```sql
+DECLARE @status INT = TRY_CONVERT(INT, JSON_VALUE(@response, '$.status_code'));
+
+IF @status = 0
+  THROW 50503, 'The service is unreachable', 1;    -- $.error.message says why
+IF @status IN (401, 403)
+  THROW 50502, 'The service refused our credentials', 1;
+IF @status = 429
+  THROW 50503, 'The service is rate limiting us', 1;
+IF @status NOT BETWEEN 200 AND 299
+  THROW 50502, 'The service returned an error', 1;
+```
 
 | `$.status_code` | Meaning |
-|------------------|---------|
-| `0` | Request never reached the server (DNS failure, network error, timeout, exception). Check `$.error.message` for details. |
-| `200`–`299` | Success — `$.data` contains the response body |
-| `400`–`499` | Client error — `$.data` may contain error details from the server |
-| `500`–`599` | Server error — `$.data` may contain error details from the server |
+|---|---|
+| `0` | No answer: DNS failure, network error, TLS error, timeout. `$.error.message` says which. |
+| `200`-`299` | Success. `$.data` holds the body. |
+| `400`-`599` | The API's error. `$.data` may hold its details. |
 
-Every call is logged with its status code and timing: at `Debug` when it succeeds, at `Warning` when it gets a status outside 2xx (a redirect it doesn't follow included) or times out, and at `Error` when it can't connect. The shipped log level is `Information`, so a successful call leaves no line there ([Log level](02-configuration.md#log-level)).
+Every call is logged with its status and time: at `Debug` when it succeeds, at `Warning` when it gets a status outside 2xx (a redirect it doesn't follow included) or times out, and at `Error` when it can't connect. The shipped log level is `Information`, so a successful call leaves no line ([Log level](02-configuration.md#log-level)).
 
-## Real-World Example: KYC Verification
+Silent failures, where the request succeeds:
 
-The first query checks the request, so the provider is called only for a customer of the caller's
-with a valid document type. The provider's key is a settings variable, never a value the caller
-sends (SQL Server):
+- A query that doesn't check `$.status_code` goes on with an error page or `null` in `$.data` (rule 2).
+- A block in a comment, or in an `IF` branch that doesn't run, is still called (rule 1).
+- `JSON_VALUE(@r, '$.id')` instead of `'$.data.id'` is `NULL` (rule 3).
+- A `skip` or a value read with `{{name}}` in a chain takes the caller's value when the earlier query gave none (rule 8).
 
-```xml
-<verify_customer_kyc>
-  <route>customers/{{customer_id}}/verify</route>
-  <verb>POST</verb>
-  <authorize><provider>my_provider</provider></authorize>
-  <mandatory_parameters>id_number,id_type</mandatory_parameters>
+## Do and don't
 
-  <!-- Query 1: validate before anything is sent to the provider -->
-  <query><![CDATA[
-    DECLARE @customer_id UNIQUEIDENTIFIER = TRY_CONVERT(UNIQUEIDENTIFIER, {{customer_id}});
-    DECLARE @id_type NVARCHAR(20) = {{id_type}};
-
-    IF NOT EXISTS (SELECT 1 FROM customers WHERE id = @customer_id AND owner_id = {auth{user_id}})
-      THROW 50404, 'Customer not found', 1;
-    IF @id_type IS NULL OR @id_type NOT IN ('passport', 'national_id')
-      THROW 50400, 'id_type must be passport or national_id', 1;
-
-    SELECT @customer_id AS customer_id, @id_type AS id_type;
-  ]]></query>
-
-  <!-- Query 2: the call, then the result -->
-  <query><![CDATA[
-    DECLARE @kyc_result NVARCHAR(MAX) = {http{
-      {
-        "url": "https://kyc-provider.example.com/api/v1/verify",
-        "method": "POST",
-        "headers": { "Authorization": "Bearer {s{kyc_api_key}}" },
-        "body": {
-          "document_number": "{{id_number}}",
-          "document_type": "{pq{id_type}}",
-          "country": "AE"
-        },
-        "timeout_seconds": 60,
-        "retry": { "max_attempts": 2, "delay_ms": 5000 }
-      }
-    }http};
-
-    DECLARE @customer_id UNIQUEIDENTIFIER = {pq{customer_id}};
-    DECLARE @kyc_status_code INT = TRY_CONVERT(INT, JSON_VALUE(@kyc_result, '$.status_code'));
-
-    IF @kyc_status_code = 0 OR @kyc_status_code >= 500
-      THROW 50503, 'KYC service temporarily unavailable', 1;
-    IF @kyc_status_code <> 200
-      THROW 50502, 'KYC service rejected the request', 1;
-
-    DECLARE @kyc_status NVARCHAR(50) = JSON_VALUE(@kyc_result, '$.data.status');
-    DECLARE @kyc_score INT = TRY_CONVERT(INT, JSON_VALUE(@kyc_result, '$.data.confidence_score'));
-
-    -- A missing status or score fails the check too: NULL <> 'VERIFIED' is not true.
-    IF @kyc_status IS NULL OR @kyc_status <> 'VERIFIED' OR @kyc_score IS NULL OR @kyc_score < 80
-      THROW 50422, 'KYC verification failed', 1;
-
-    UPDATE customers
-    SET
-      kyc_verified = 1,
-      kyc_verified_at = SYSUTCDATETIME(),
-      kyc_reference = JSON_VALUE(@kyc_result, '$.data.reference_id'),
-      kyc_score = @kyc_score
-    WHERE id = @customer_id;
-
-    SELECT
-      @customer_id AS customer_id,
-      'KYC verification successful' AS message,
-      @kyc_score AS confidence_score;
-  ]]></query>
-</verify_customer_kyc>
+```sql
+-- Don't: the caller's value inside the url
+"url": "https://api.example.com/search?q={{term}}"
+-- Do: in query, percent-encoded
+"url": "https://api.example.com/search", "query": { "q": "{{term}}" }
 ```
 
-## Performance Considerations
+```sql
+-- Don't: a block in a comment is still called
+-- DECLARE @old NVARCHAR(MAX) = {http{ {"url": "https://api.example.com/v1"} }http};
+-- Do: delete it, or skip it from an earlier query
+"skip": "{pq{skip_it}}"
+```
 
-- **HTTP calls are executed concurrently** — after sequential parameter preparation, all calls fan out in parallel via `Task.WhenAll`, so the total latency is the **slowest** call, not the sum. Results are then applied to the query sequentially before SQL execution
-- **All `{http{...}http}` blocks execute during pre-processing**, regardless of SQL `IF` conditions (unless the `skip` property is truthy) — the `IF` only controls whether the parameterized result variable is assigned/used in your SQL logic
-- **Duplicate calls are deduplicated** — identical HTTP configurations execute only once (the response is reused for all matching markers)
-- **Use timeouts** to prevent slow external services from blocking your API
-- **Consider caching** for frequently-called external APIs
-- **Use retries wisely** — exponential backoff prevents overwhelming external services
+## Security
 
-## Security Notes
+- An API's answer reaches SQL as a bound parameter, never as SQL text, so it can't change the query.
+- The answer is only inside the query: the caller sees only what your `SELECT` returns.
+- Calls keep no cookies: a cookie a remote sets is never sent with a later call, for this caller or another, nor with the next hop of a redirect. Send one in `headers` when an API needs it. When a remote sets the cookie on a redirect, set `"follow_redirects": false` and make the second call yourself, with the cookie from the first answer's headers.
+- The log shows a url without its query string, so a key there stays out of it, but the path is logged: a webhook URL whose path is the secret (Slack, Discord) appears in full when a call to it fails, and on every call at `Debug`. Headers are logged by name only, at `Debug`.
+- Pass a caller's header on (`{h{Header-Name}}`) only when the remote should act as that caller, such as with the caller's own token.
 
-- **SQL injection safe**: HTTP responses are delivered to SQL as **parameterized values** (e.g., `@http_response_1`, `@http_response_2`) via the same parameterization mechanism used for `{{param}}` values. This is equivalent to binding parameters in `sp_executesql` — the response content is **never** concatenated or interpolated into the SQL string. Even a malicious external API response cannot alter query structure or cause SQL injection.
-- **No information leakage to clients**: The structured response (status_code, headers, data, error) is available only inside the SQL query. The query author controls what, if anything, is returned to the API consumer.
-- `{{param}}` placeholders inside `{http{...}http}` are substituted as text before the block is parsed. Values that land inside a JSON string are escaped automatically, headers containing line breaks are dropped, and caller-supplied values belong in `query` so they are percent-encoded — see [Caller-Supplied Values](#caller-supplied-values-url-encoding-and-json-escaping)
-- Calls keep no cookies: a cookie the remote sets is never sent with a later call, for this caller or another, nor with the next hop of a redirect the call follows. Send one in `headers` when an API needs it. When a remote sets the cookie on a redirect, set `"follow_redirects": false` and make the second call yourself, with the cookie from the first response's headers.
-- The log shows a url without its query string: a key in the query string stays out of it, but the path is logged, so a webhook URL whose path is the secret (Slack, Discord) appears in full when a call to it fails, and on every call at `Debug`. Headers are logged by name only, at `Debug` (see [Log level](02-configuration.md#log-level)).
-- Sensitive credentials in HTTP configurations should use [settings variables](21-settings-vars.md) with encryption — e.g., `{s{api_key}}` instead of hardcoding secrets (see [Settings Encryption](15-encryption.md))
-- Keep the engine's own credentials for a remote API in `<vars>` (`{s{api_key}}`), not in a header the caller sends: any caller can send any value. Pass a caller's header on (`{h{Header-Name}}`) only when the remote should act as that caller, such as the caller's own token
+## Related
+
+- [23 HTTP call patterns](23-http-call-patterns.md): enriching rows, validating input, skipping a call, several calls, a KYC check.
+- [14 Query chaining](14-query-chaining.md): `{pq{name}}`, and deciding in an earlier query.
+- [21 Settings variables](21-settings-vars.md) and [15 Encryption](15-encryption.md): keys in `<vars>`.
+- [08 API gateway](08-api-gateway.md): forwarding a whole request instead.
+- [19 Webhooks](19-webhooks.md): calling back another service after a request.
+- [Tutorial 16](../tutorial/16-http-from-sql.md): HTTP calls step by step.

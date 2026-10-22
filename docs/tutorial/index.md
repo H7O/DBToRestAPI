@@ -121,6 +121,7 @@ For quick lookups and comprehensive details on any feature, see the [reference t
 - [20-openapi.md](../topics/20-openapi.md) — OpenAPI spec & Swagger UI reference
 - [21-settings-vars.md](../topics/21-settings-vars.md) — Settings variables reference
 - [22-static-files.md](../topics/22-static-files.md) — Static file serving reference
+- [23-http-call-patterns.md](../topics/23-http-call-patterns.md) — HTTP call patterns: skipping a call, several calls, a KYC check
 
 ---
 

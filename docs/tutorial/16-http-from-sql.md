@@ -155,7 +155,7 @@ JSON document, use `"body_raw": "{{payload}}"`.
 
 ## POST with JSON Body
 
-The body is sent as `application/json`. For another type, set `"content_type"`, or a `Content-Type` in `"headers"`, which replaces it. A form (`application/x-www-form-urlencoded`) goes in `"body_raw"`, as topic 17 shows in [POST with a form body](../topics/17-embedded-http-calls.md#post-with-a-form-body).
+The body is sent as `application/json`. For another type, set `"content_type"`, or a `Content-Type` in `"headers"`, which replaces it. A form (`application/x-www-form-urlencoded`) goes in `"body_raw"`, as topic 17 shows in [POST with a form body](../topics/17-embedded-http-calls.md#complete-example-post-with-a-form-body).
 
 ```sql
 DECLARE @result NVARCHAR(MAX) = {http{
@@ -440,7 +440,7 @@ The `skip` value is resolved **before** SQL runs, so it can't come from SQL in t
 ]]></query>
 ```
 
-This is especially useful for pay-per-call APIs, rate-limited services, or idempotent enrichment workflows. See the [full reference example](../topics/17-embedded-http-calls.md#conditionally-skipping-based-on-database-logic) for a complete walkthrough.
+This is especially useful for pay-per-call APIs, rate-limited services, or idempotent enrichment workflows. See the [full reference example](../topics/23-http-call-patterns.md#let-the-database-decide-whether-to-call) for a complete walkthrough.
 
 ## Fire-and-Forget with `no_wait`
 

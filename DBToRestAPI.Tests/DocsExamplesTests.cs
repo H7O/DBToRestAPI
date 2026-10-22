@@ -53,6 +53,30 @@ public partial class DocsExamplesTests
     [GeneratedRegex(@"\]\((?<target>[^)\s]+)\)")]
     private static partial Regex Link();
 
+    [GeneratedRegex(@"^#{1,6}[ \t]+(?<title>.+?)[ \t]*#*[ \t]*$", RegexOptions.Multiline)]
+    private static partial Regex HeadingLine();
+
+    [GeneratedRegex(@"[^\p{L}\p{Nd}\p{Mn}\p{Pc} -]")]
+    private static partial Regex NotInAnAnchor();
+
+    /// <summary>
+    /// The anchors of a page's headings, made as GitHub makes them: lower case, punctuation other
+    /// than hyphens and underscores dropped, each space a hyphen, and a repeated one numbered.
+    /// </summary>
+    private static HashSet<string> Anchors(string file)
+    {
+        var text = CodeBlock().Replace(File.ReadAllText(file).Replace("\r\n", "\n"), "");
+        var anchors = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match heading in HeadingLine().Matches(text))
+        {
+            var slug = NotInAnAnchor().Replace(heading.Groups["title"].Value.ToLowerInvariant(), "").Replace(' ', '-');
+            var unique = slug;
+            for (var n = 1; !anchors.Add(unique); n++)
+                unique = $"{slug}-{n}";
+        }
+        return anchors;
+    }
+
     [Fact]
     public void EveryLinkInTheShippedPages_ReachesAShippedFile()
     {
@@ -65,14 +89,19 @@ public partial class DocsExamplesTests
             text = InlineCode().Replace(CodeBlock().Replace(text, ""), "");
             foreach (Match link in Link().Matches(text))
             {
-                var target = link.Groups["target"].Value.Split('#')[0];
-                if (target.Length == 0 || target.Contains(':'))
-                    continue;   // an anchor on the same page, or a URL
-                var full = Path.GetFullPath(Path.Combine(Root, Path.GetDirectoryName(page)!, target));
+                var parts = link.Groups["target"].Value.Split('#', 2);
+                var (target, anchor) = (parts[0], parts.Length > 1 ? parts[1] : null);
+                if (target.Contains(':'))
+                    continue;   // a URL
+                var full = target.Length == 0
+                    ? Path.Combine(Root, page)
+                    : Path.GetFullPath(Path.Combine(Root, Path.GetDirectoryName(page)!, target));
                 var path = Path.GetRelativePath(Root, full).Replace('\\', '/').TrimEnd('/');
                 var reaches = File.Exists(full) ? Shipped(path) : Directory.Exists(full) && (path == "docs" || ShippedFolders.Contains(path));
                 if (!reaches)
                     broken.Add($"{page}: `{link.Groups["target"].Value}` is not in a release folder");
+                else if (anchor != null && File.Exists(full) && full.EndsWith(".md") && !Anchors(full).Contains(anchor))
+                    broken.Add($"{page}: `{link.Groups["target"].Value}`: no heading has that anchor");
             }
         }
 

@@ -5,29 +5,19 @@ using System.Text.Json;
 namespace DBToRestAPI.Tests;
 
 /// <summary>
-/// docs/topics/17-embedded-http-calls.md, "POST with a form body", on SQL Server: the pay_for_order
-/// chain, with the payment API answered in process. The page shows no tables, so they are built here
-/// from the columns its queries use.
+/// docs/topics/17-embedded-http-calls.md, "Complete example: POST with a form body", on SQL Server:
+/// the pay_for_order chain and its tables, with the payment API answered in process, and each row of
+/// its "What the client gets back" table.
 /// </summary>
 public class HttpCallsExampleTests(HttpCallsExampleTests.Engine engine) : IClassFixture<HttpCallsExampleTests.Engine>
 {
     private const string PaymentIntents = "https://api.stripe.com/v1/payment_intents";
 
-    private const string Tables = """
-        CREATE TABLE customers (id UNIQUEIDENTIFIER PRIMARY KEY, owner_id NVARCHAR(200), stripe_customer_id NVARCHAR(100));
-        CREATE TABLE orders (
-          id UNIQUEIDENTIFIER PRIMARY KEY,
-          customer_id UNIQUEIDENTIFIER REFERENCES customers(id),
-          amount_cents INT,
-          status NVARCHAR(30),
-          payment_intent_id NVARCHAR(100) NULL);
-        """;
-
     public sealed class Engine : SqlServerExampleEngine
     {
         public FakeIdp Idp { get; }
 
-        public Engine() : base(new SqlServerExample(("docs/topics/17-embedded-http-calls.md", "POST with a form body")), _ => new()
+        public Engine() : base(new SqlServerExample(("docs/topics/17-embedded-http-calls.md", "Complete example")), _ => new()
         {
             ["vars:stripe_secret_key"] = "sk_test_docs",
             ["authorize:providers:my_provider:authority"] = "https://idp.test",
@@ -35,7 +25,6 @@ public class HttpCallsExampleTests(HttpCallsExampleTests.Engine engine) : IClass
         })
         {
             Idp = new FakeIdp(Http, "https://idp.test", "api://docs");
-            Example.Execute(Tables);
         }
     }
 
@@ -119,6 +108,18 @@ public class HttpCallsExampleTests(HttpCallsExampleTests.Engine engine) : IClass
         Assert.Equal(expected, status);
         Assert.Equal(message, body.GetProperty("message").GetString());
         Assert.Equal("unpaid", engine.Example.Scalar($"SELECT status FROM orders WHERE id = '{order}'"));
+    }
+
+    [SqlServerFact]
+    public async Task NoToken_Is401()
+    {
+        var order = NewOrder("fay");
+
+        using var response = await engine.Client.PostAsync($"orders/{order}/payment", null);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("Authorization header is required", body.GetProperty("message").GetString());
     }
 
     [SqlServerFact]

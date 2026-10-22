@@ -152,7 +152,7 @@ DECLARE @payment NVARCHAR(MAX) = {http{
 The form goes in `body_raw`, with its type in `content_type`. The values in
 the form come from the database, not the request: `&` or `=` in a caller's
 value would add fields. The whole endpoint is in topic 17,
-[POST with a form body](../topics/17-embedded-http-calls.md#post-with-a-form-body).
+[POST with a form body](../topics/17-embedded-http-calls.md#complete-example-post-with-a-form-body).
 
 The Stripe secret key never appears in `sql.xml` — it lives in `settings.xml`
 and can be encrypted at rest.
