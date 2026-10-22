@@ -93,8 +93,9 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
   without a `password` fails the upload (or is skipped, when optional); a download from the same
   store connects with an empty password.
 - **Docs: finish the agent-first rewrite** ([docs/AUTHORING.md](docs/AUTHORING.md)).
-  The pages are rewritten or corrected, and `docs/reference/tags.md` and `placeholders.md` exist;
-  still to do: examples tested in CI, and docs bundled in release archives.
+  The pages are rewritten or corrected, and `docs/reference/tags.md` and `placeholders.md` exist.
+  `DocsExamplesTests` checks every XML example's tags, CDATA and placeholders in CI. Still to do:
+  running the complete examples against a database, and docs bundled in release archives.
 
 ## Done
 

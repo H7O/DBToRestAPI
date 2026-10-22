@@ -132,7 +132,7 @@ Enable globally, then disable specific endpoints:
 <internal_health_check>
   <route>internal/health</route>
   <verb>GET</verb>
-  <query>SELECT 1 AS ok;</query>
+  <query><![CDATA[SELECT 1 AS ok;]]></query>
   <openapi>
     <enabled>false</enabled>
   </openapi>
@@ -148,7 +148,7 @@ Leave the global `<enabled>` off (the default) and opt in per endpoint:
   <route>products</route>
   <verb>GET</verb>
   <response_structure>array</response_structure>
-  <query>SELECT * FROM products;</query>
+  <query><![CDATA[SELECT * FROM products;]]></query>
   <openapi>
     <enabled>true</enabled>
     <summary>List products</summary>

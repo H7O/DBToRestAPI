@@ -77,4 +77,5 @@ Each rule prevents a mistake that fails silently or looks like it works. These r
 - Build: `dotnet build DBToRestAPI.sln`. Test: `dotnet test DBToRestAPI.Tests`.
 - Keep each file's existing line endings.
 - When behaviour changes, update its topic page, `llms.txt` (keep `llms.md` identical) and, if the failure is silent, the rules above. Follow [docs/AUTHORING.md](docs/AUTHORING.md).
+- A new tag goes in [tags.md](docs/reference/tags.md) and in `DBToRestAPI.Tests/ConfigGrammar.cs`: the tests check every XML example in the docs against that file.
 - Keep docs, comments and commit messages generic: never name a customer, a deployment or an internal system.

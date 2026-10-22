@@ -178,8 +178,8 @@ Caching works with query chains — entire chain result is cached:
     </memory>
   </cache>
   
-  <query>SELECT * FROM local WHERE id = {{lookup_id}};</query>
-  <query connection_string_name="remote">SELECT * FROM remote WHERE ref = {pq{id}};</query>
+  <query><![CDATA[SELECT * FROM local WHERE id = {{lookup_id}};]]></query>
+  <query connection_string_name="remote"><![CDATA[SELECT * FROM remote WHERE ref = {pq{id}};]]></query>
 </chained_with_cache>
 ```
 

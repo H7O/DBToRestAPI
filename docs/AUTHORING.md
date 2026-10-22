@@ -45,6 +45,18 @@ Sections in this order. [09 file uploads](topics/09-file-uploads.md) follows it 
 - **Name the SQL dialect.** Examples default to SQL Server. For anything dialect-specific (raising errors, parsing JSON), give the other databases too.
 - **Keep it generic.** Never name a customer, a deployment or an internal system.
 
+## What the tests check
+
+`dotnet test` runs `DBToRestAPI.Tests/DocsExamplesTests.cs` over every page in `docs/`, `AGENTS.md`, `llms.txt` and `README.md`, and over the shipped `config/*.xml`:
+
+- every ```` ```xml ```` block parses as XML;
+- every tag in it is one the engine reads where it stands, by the tree in `DBToRestAPI.Tests/ConfigGrammar.cs`. A block that shows an endpoint or a block without its parents is checked where it fits best;
+- no element repeats beside a sibling of the same name, except the ones that may (a chain's `<query>`, a collection's `<key>`);
+- every `<query>` and `<count_query>` holds its SQL in CDATA;
+- every placeholder kind (`{auth{`, `{pq{` and the others) is one the engine resolves.
+
+To show a mistake on purpose, put a comment that starts with `Don't` before it: the elements after it are skipped up to the next comment. When the engine reads a new tag, add it to `ConfigGrammar.cs` as well as to [tags.md](reference/tags.md).
+
 ## Testing docs with agents
 
 Run docs-only agents on real tasks before and after changing a page:
