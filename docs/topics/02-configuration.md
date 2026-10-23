@@ -21,7 +21,7 @@ The engine reads XML files from its `config/` folder: `settings.xml` first, then
 ## Where the files are
 
 - **In a release:** `config/` next to the executable.
-- **In a clone:** `DBToRestAPI/config/`. `dotnet run` serves the copies in `DBToRestAPI/bin/<Configuration>/net10.0/config/`, and the SQLite demo database at `DBToRestAPI/bin/<Configuration>/net10.0/demo.db`. Only the files listed in `DBToRestAPI.csproj` are copied. A new file needs its own entry there, `<None Update="config\NAME.xml"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>`, or the engine fails to start once `<additional_configurations>` names it. Putting new endpoints in the existing `sql.xml` avoids this.
+- **In a clone:** `DBToRestAPI/config/`. `dotnet run` serves the copies in `DBToRestAPI/bin/<Configuration>/net10.0/config/`, and the SQLite demo database at `DBToRestAPI/bin/<Configuration>/net10.0/demo.db`. Every `.xml` file under `config/` is copied, a new one included.
 
 | File | What it holds |
 |------|---------|

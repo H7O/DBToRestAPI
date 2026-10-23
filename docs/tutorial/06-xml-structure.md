@@ -288,10 +288,7 @@ You're not limited to a single `sql.xml`. You can organize endpoints into multip
 
 Each file follows the same structure: its endpoints inside `<settings><queries>`. This is useful for large projects with many endpoints — organize by domain, team, or feature.
 
-Two things to watch:
-
-- **Endpoint names must be unique across all files.** The files merge element by element, so a `<get_contact>` in two files becomes one endpoint mixing both, and nothing is logged.
-- **In a clone, a new file needs an entry in `DBToRestAPI.csproj`**, or `dotnet run` doesn't copy it and the application fails to start: `<None Update="config\contacts_api.xml"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>`.
+One thing to watch: **endpoint names must be unique across all files.** The files merge element by element, so a `<get_contact>` in two files becomes one endpoint mixing both, and nothing is logged.
 
 ## The regex.xml File
 

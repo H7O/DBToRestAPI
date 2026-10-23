@@ -189,8 +189,8 @@ DECLARE @roles NVARCHAR(500) = {auth{roles}};
 
 | Claim | Syntax | Description |
 |-------|--------|-------------|
-| `user_id` | `{auth{user_id}}` | The user's id: the token's subject (`sub`), or `oid` when it has none |
-| `sub` | `{auth{sub}}` | The token's subject. Prefer `user_id`, which falls back to `oid` |
+| `user_id` | `{auth{user_id}}` | The user's id: the token's subject (`sub`), or `oid` when it has none or when the subject is Azure AD B2C's `Not supported` |
+| `sub` | `{auth{sub}}` | The token's subject, as the token sends it. Prefer `user_id`, which falls back to `oid` |
 | `email` | `{auth{email}}` | Email |
 | `name` | `{auth{name}}` | Full name |
 | `roles` | `{auth{roles}}` | Roles (pipe-delimited) |
@@ -200,7 +200,7 @@ DECLARE @roles NVARCHAR(500) = {auth{roles}};
 
 .NET renames many token claims on the way in: `sub` becomes `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier`, and `oid`, `given_name`, `family_name`, `tid`, `scp`, `email` and `roles` get long names too. Every claim is available under the name the token used and under its long type (see [Special Characters](#special-characters)), so `{auth{sub}}`, `{auth{oid}}`, `{auth{tid}}`, `{auth{scp}}`, `{auth{given_name}}` and `{auth{family_name}}` all work. Where several claims share a name (two `role` claims, say), the placeholder holds the first one. `{auth{roles}}` holds every role, and `{auth{scp}}` and `{auth{scope}}` hold every scope, space-separated. The engine also adds `user_id`, `email`, `name`, `roles`, `auth_time` and `auth_provider`, which work the same for every provider. When the token lacks a claim listed in `userinfo_fallback_claims`, the engine calls the provider's UserInfo endpoint and adds, as text, the fields the token doesn't have. A claim the token carries keeps the token's value, and `required_scopes` and `required_roles` read the token only.
 
-A provider that sends the same subject for every user gives every user the same `user_id`. For example, an Azure AD B2C user flow with the subject claim turned off sends `Not supported` as the subject. Configure the provider to send a unique subject (in B2C, the object ID).
+An Azure AD B2C user flow with its subject claim turned off sends the same sentence as every user's subject: `Not supported currently. Use oid claim.` A subject that starts with `Not supported` counts as none, so `user_id` is the token's `oid`, or `NULL` when the token has none, while `{auth{sub}}` holds the sentence. Any other provider that sends the same subject for every user gives every user the same `user_id`: configure it to send a unique subject.
 
 On a route without `<authorize>`, every `{auth{...}}` placeholder is `NULL`.
 

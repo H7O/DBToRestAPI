@@ -4,10 +4,10 @@
   <TargetFramework>net10.0</TargetFramework>
   <Nullable>enable</Nullable>
   <ImplicitUsings>enable</ImplicitUsings>
-  <Version>1.7.23</Version>
-  <AssemblyVersion>1.7.23.0</AssemblyVersion>
-  <FileVersion>1.7.23.0</FileVersion>
-  <InformationalVersion>1.7.23</InformationalVersion>
+  <Version>1.7.24</Version>
+  <AssemblyVersion>1.7.24.0</AssemblyVersion>
+  <FileVersion>1.7.24.0</FileVersion>
+  <InformationalVersion>1.7.24</InformationalVersion>
 </PropertyGroup>
 
 <!--
@@ -154,31 +154,9 @@
   </Target>
 
   <ItemGroup>
-    <None Update="config\api_keys.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\auth_providers.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\encryption_test.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\file_management.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\api_gateway.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\regex.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\settings.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\sql.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="config\test_auth_provider.xml">
+    <!-- Every XML file under config\, so a file added there (and named in <additional_configurations>)
+         reaches the build output without an entry of its own. -->
+    <None Update="config\**\*.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="demo.db">

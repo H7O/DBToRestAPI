@@ -55,6 +55,20 @@ public class AddDynamicConfigurationFilesTests : IDisposable
             .Build();
     }
 
+    // A file added under config/ and named in <additional_configurations> needs no csproj entry of
+    // its own to reach the build output, which `dotnet run` reads.
+    [Fact]
+    public void EveryXmlFileUnderConfig_ReachesTheBuildOutput()
+    {
+        var config = Path.Combine(DocsExamplesTests.Root, "DBToRestAPI", "config");
+        var files = Directory.GetFiles(config, "*.xml", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(config, f))
+            .ToList();
+
+        Assert.NotEmpty(files);
+        Assert.All(files, f => Assert.True(File.Exists(Path.Combine(AppContext.BaseDirectory, "config", f)), $"config/{f} is not in the build output"));
+    }
+
     [Fact]
     public void NoSection_ReturnsBuilderUnchanged()
     {

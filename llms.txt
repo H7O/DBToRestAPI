@@ -201,7 +201,7 @@ Client sends: `x-api-key: secret-key-123`
 <!-- Multiple providers on one endpoint ("Log in with X"); or use * for any configured provider -->
 <authorize><provider>google,azure_b2c,auth0</provider></authorize>
 ```
-Access claims: `{auth{user_id}}` (the user's id, from the token's subject), `{auth{email}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`. Prefer `{auth{user_id}}` to `{auth{sub}}`, which is empty for a token without a subject. Every claim is also available under the name the token used, such as `{auth{sub}}`, `{auth{scp}}`, `{auth{tid}}` and `{auth{given_name}}`.
+Access claims: `{auth{user_id}}` (the user's id: the token's subject, or `oid` when it has none or when it is Azure AD B2C's `Not supported`), `{auth{email}}`, `{auth{roles}}` (pipe-delimited), `{auth{auth_time}}` (login instant: `auth_time` else `iat`), `{auth{auth_provider}}`. Prefer `{auth{user_id}}` to `{auth{sub}}`, which is empty for a token without a subject. Every claim is also available under the name the token used, such as `{auth{sub}}`, `{auth{scp}}`, `{auth{tid}}` and `{auth{given_name}}`.
 For multi-provider endpoints the provider is selected by the `X-Auth-Provider` hint header
 (overridable), else by the token's `iss`. Selection only *routes* — the token is still fully
 validated (signature, issuer, audience, lifetime) against the chosen provider.

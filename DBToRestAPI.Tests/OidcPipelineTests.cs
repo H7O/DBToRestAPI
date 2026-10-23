@@ -248,6 +248,25 @@ public class OidcPipelineTests(OidcPipelineTests.OidcEngine engine) : IClassFixt
     private static string? Text(JsonElement row, string name)
         => row.GetProperty(name).ValueKind == JsonValueKind.Null ? null : row.GetProperty(name).ToString();
 
+    // Azure AD B2C, with the subject claim turned off, sends the same sentence as every user's sub.
+    [Fact]
+    public async Task B2CsNotSupportedSubject_GivesEachUserTheirOwnOid()
+    {
+        var ann = FakeIdp.Claims();
+        ann["sub"] = "Not supported currently. Use oid claim.";
+        ann["oid"] = "ann-object-id";
+        var bob = FakeIdp.Claims();
+        bob["sub"] = "Not supported currently. Use oid claim.";
+        bob["oid"] = "bob-object-id";
+
+        var (annStatus, annRow) = await GetAsync("auth/claims", engine.Idp.Issue(ann));
+        var (_, bobRow) = await GetAsync("auth/claims", engine.Idp.Issue(bob));
+
+        Assert.Equal(HttpStatusCode.OK, annStatus);
+        Assert.Equal("ann-object-id", Text(annRow, "user_id"));
+        Assert.Equal("bob-object-id", Text(bobRow, "user_id"));
+    }
+
     [Fact]
     public async Task FullToken_GivesEveryAuthName_WithoutCallingUserInfo()
     {

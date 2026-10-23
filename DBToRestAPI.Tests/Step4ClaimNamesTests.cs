@@ -126,8 +126,40 @@ public class Step4ClaimNamesTests
     {
         var principal = Validate(new() { ["oid"] = "object-id", ["name"] = "No Subject" });
 
-        Assert.Equal("object-id",
-            Step4JwtAuthorization.FirstClaimValue(principal, ClaimTypes.NameIdentifier, "sub", "oid"));
+        Assert.Equal("object-id", Step4JwtAuthorization.UserIdOf(principal));
+    }
+
+    // Azure AD B2C with the subject claim turned off sends this sentence as every user's subject.
+    [Theory]
+    [InlineData("Not supported currently. Use oid claim.")]
+    [InlineData("Not supported")]
+    [InlineData("not supported")]
+    public async Task UserId_IsTheOid_WhenTheSubjectIsB2CsNotSupported(string subject)
+    {
+        var ann = Validate(new() { ["sub"] = subject, ["oid"] = "ann-object-id" });
+        var bob = Validate(new() { ["sub"] = subject, ["oid"] = "bob-object-id" });
+
+        Assert.Equal("ann-object-id", (await ResolveAsync(ann)).Claims["user_id"]);
+        Assert.Equal("bob-object-id", (await ResolveAsync(bob)).Claims["user_id"]);
+        // The token's own claim stays as the token says it.
+        Assert.Equal(subject, (await ResolveAsync(ann)).Claims["sub"]);
+    }
+
+    [Fact]
+    public async Task UserId_IsMissing_WhenTheSubjectIsB2CsNotSupportedAndThereIsNoOid()
+    {
+        var (claims, token, _) = await ResolveAsync(Validate(new() { ["sub"] = "Not supported currently. Use oid claim." }));
+
+        Assert.False(claims.ContainsKey("user_id"));
+        Assert.Null(token.UserId);
+    }
+
+    [Fact]
+    public void UserId_IsTheSubject_WhenTheTokenHasOne()
+    {
+        Assert.Equal("pairwise-subject", Step4JwtAuthorization.UserIdOf(EntraLikeToken()));
+        Assert.Equal("Not a supported value, but an id", Step4JwtAuthorization.UserIdOf(
+            Validate(new() { ["sub"] = "Not a supported value, but an id", ["oid"] = "object-id" })));
     }
 
     [Fact]

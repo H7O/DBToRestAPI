@@ -699,14 +699,28 @@ namespace DBToRestAPI.Middlewares
             IReadOnlySet<string> Scopes);
 
         internal static TokenIdentity ReadTokenIdentity(ClaimsPrincipal principal) => new(
-            // NameIdentifier is where .NET puts sub. oid (Entra's object id) is the fallback for
-            // a token without a subject; .NET renames it too, so it is matched by either name.
-            UserId: FirstClaimValue(principal, ClaimTypes.NameIdentifier, "sub", "oid"),
+            UserId: UserIdOf(principal),
             // "emails" is Azure AD B2C's claim, a list; the first value is used.
             Email: FirstClaimValue(principal, ClaimTypes.Email, "email", "emails"),
             Name: FirstClaimValue(principal, ClaimTypes.Name, "name"),
             Roles: GetRoles(principal),
             Scopes: GetScopes(principal));
+
+        /// <summary>
+        /// The user's id: the token's subject, or its oid (Entra's object id) when it has none.
+        /// NameIdentifier is where .NET puts sub, and .NET renames oid too, so each is matched by
+        /// either name. Azure AD B2C, with the subject claim turned off, sends the same sentence as
+        /// every user's subject (<c>Not supported currently. Use oid claim.</c>), so a subject that
+        /// starts with "Not supported" counts as none: taken as the id, it would make every user
+        /// one user.
+        /// </summary>
+        internal static string? UserIdOf(ClaimsPrincipal principal)
+        {
+            var subject = FirstClaimValue(principal, ClaimTypes.NameIdentifier, "sub");
+            return subject != null && !subject.StartsWith("Not supported", StringComparison.OrdinalIgnoreCase)
+                ? subject
+                : FirstClaimValue(principal, "oid");
+        }
 
         /// <summary>
         /// The claims listed in userinfo_fallback_claims that the token doesn't carry. UserInfo is

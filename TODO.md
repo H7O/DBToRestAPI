@@ -5,14 +5,6 @@ names the note that explains the background.
 
 ## Open
 
-- **A JSON number that isn't a large integer is bound as a `double`**, so a value with more than
-  about 15 significant digits is rounded (AGENTS rule 18 says to send it as a string). Binding every
-  JSON number as `decimal` was tried for 1.7.16 and dropped. It changed what existing SQL computes:
-  on SQL Server, `POWER({{x}}, 2)` takes the type of `x` (2.5 gave 6.3), a product's scale is cut
-  to 6 places, and a number compared with `''` or with a varchar column holding `''` failed; on
-  PostgreSQL, 2.5 stored in an int column became 3. Oracle's driver and the Access ODBC driver read
-  some decimal results back wrong or not at all. A number that a double would change could still go
-  as a decimal, on the providers that read one back.
 - **A value inside a JSON string of a `{http{}}` block is written in the server's culture**
   (`EmbeddedHttpTemplate.ConvertValue` uses `ToString()`), so on a server whose culture writes a
   decimal comma a number is sent as `19,99`, and a date takes that culture's format. Writing it in
@@ -45,12 +37,6 @@ against the code. Each was read in the code; none has a test yet.
   3.5 s). A maximum join wait, after which a waiting caller runs its own query, would bound it. Not
   requested; recorded from the downstream's measurement of the 1.7.11 fix.
 - **OpenAPI:** upload endpoints have no request schema.
-- **A constant subject gives every user the same `user_id`.** An Azure AD B2C user flow with the
-  subject claim turned off sends `Not supported`. Ignore that value and fall back to `oid` (the
-  fallback to the renamed `oid` itself works from 1.7.6).
-- **Only the config files listed in `DBToRestAPI.csproj` are copied to the build output.** A new
-  `config/*.xml` file named in `<additional_configurations>` makes `dotnet run` fail at start-up
-  until it gets its own csproj entry. Consider a `config\*.xml` glob.
 - **A cookie set on a redirect is dropped.** The engine's clients are pooled and keep no cookies, so
   that callers never share them, and they follow redirects themselves. So a cookie the remote sets on
   a `3xx` never reaches the next hop: an `http` download that needs it fails (until 1.7.8 each
@@ -94,6 +80,24 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A new file under `config/` wasn't copied to the build output.** Fixed in 1.7.24. Each config
+  file had its own entry in `DBToRestAPI.csproj`, so a file added under `config/` and named in
+  `<additional_configurations>` made `dotnet run` fail at start-up until it got one. One wildcard
+  entry now copies every `.xml` file under `config/`, subfolders included.
+- **Azure AD B2C's `Not supported` subject made every user one user.** Fixed in 1.7.24. A B2C user
+  flow with its subject claim turned off sends `Not supported currently. Use oid claim.` as every
+  user's `sub`, and `{auth{user_id}}` took it, so a query scoped by user showed each user everyone's
+  rows. A subject that starts with `Not supported` now counts as none, and `user_id` is the token's
+  `oid`, or missing without one. `{auth{sub}}` still holds what the token says.
+- **Binding JSON numbers as `decimal`: dropped.** A JSON number that isn't a large integer is bound
+  as a `double`, so a value with more than about 15 significant digits is rounded, and AGENTS rule
+  18 says to send such a value as a string. Binding every JSON number as `decimal` was tried for
+  1.7.16 and dropped: it changed what existing SQL computes (on SQL Server, `POWER({{x}}, 2)` takes
+  the type of `x`, so 2.5 gave 6.3; a product's scale is cut to 6 places; a number compared with
+  `''` failed; on PostgreSQL, 2.5 stored in an int column became 3), and Oracle's driver and the
+  Access ODBC driver read some decimal results back wrong or not at all. Binding only the numbers a
+  double would change was left as an idea, and decided against on 2026-10-23: not worth its risk
+  for the edge case it covers.
 - **The Docker image of 1.7.22 wasn't built.** Fixed in 1.7.23. A published build has carried the
   docs since the docs were bundled, but `.dockerignore` kept them out of the image's build context,
   so `dotnet publish` failed in the Docker workflow. The Docker workflow runs only for a release

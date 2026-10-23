@@ -35,7 +35,7 @@ A JSON `null` counts as missing, so `{{name}}` moves on to the next source. Type
 
 | Marker | Reads | When nothing matches | Page |
 |---|---|---|---|
-| `{auth{claim}}` | A claim of the validated JWT, on a route with `<authorize>`. `{auth{user_id}}` is the subject, or `oid` without one | `NULL`, and always `NULL` on a route without `<authorize>` | [12](../topics/12-authentication.md) |
+| `{auth{claim}}` | A claim of the validated JWT, on a route with `<authorize>`. `{auth{user_id}}` is the subject, or `oid` without one or when the subject starts with `Not supported` (Azure AD B2C) | `NULL`, and always `NULL` on a route without `<authorize>` | [12](../topics/12-authentication.md) |
 | `{s{name}}`, `{settings{name}}` | A child of `<vars>` at the root of the configuration. The name ignores case | `NULL` | [21](../topics/21-settings-vars.md) |
 | `{pq{column}}` | A column of an earlier chained query that returned one row. When several did, the latest one with that column | `NULL` | [14](../topics/14-query-chaining.md) |
 | `{pq{json}}` | The previous query's rows as a JSON array (`[]` for none). `json_var="name"` on a `<query>` renames it | `NULL` in the first query | [14](../topics/14-query-chaining.md) |
