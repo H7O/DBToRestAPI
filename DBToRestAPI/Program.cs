@@ -145,7 +145,9 @@ builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions
     }));
 
 
-builder.Services.AddControllers();
+// A JSON column's objects are written by ExpandoJsonConverter: the JSON the serializer writes, in less time.
+builder.Services.AddControllers()
+    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new ExpandoJsonConverter()));
 
 
 // The limit as the engine starts; PayloadLimit applies the current one to each request.

@@ -26,7 +26,7 @@ namespace DBToRestAPI.Cache
                 return new CachableQueryResult
                 {
                     StatusCode = objectResult.StatusCode ?? 200,
-                    Data = JsonSerializer.SerializeToElement(objectResult.Value)
+                    Data = JsonSerializer.SerializeToElement(objectResult.Value, Services.ExpandoJsonConverter.Options)
                 };
             }
 

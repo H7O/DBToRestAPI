@@ -71,23 +71,23 @@ one logical CPU of a Ryzen 7 5800H laptop under Windows (each cell: DbToRestAPI 
 
 | Scenario | SQLite req/s | SQLite CPU per request (µs) | SQL Server req/s | SQL Server CPU per request (µs) |
 |---|---:|---:|---:|---:|
-| `SELECT 1` | 9,945 / 33,089 | 100 / 29 | 5,930 / 10,462 | 166 / 93 |
-| One row by id | 7,035 / 21,900 | 141 / 45 | 5,042 / 10,089 | 196 / 96 |
-| 100 rows | 2,690 / 6,356 | 369 / 157 | 2,012 / 4,981 | 495 / 199 |
-| 1,000 rows | 428 / 856 | 2,266 / 1,159 | 371 / 661 | 2,641 / 1,472 |
-| Insert from a JSON body | see below | | 3,988 / 11,559 | 244 / 81 |
+| `SELECT 1` | 10,221 / 33,395 | 98 / 29 | 6,541 / 16,451 | 151 / 59 |
+| One row by id | 7,272 / 21,843 | 137 / 45 | 5,727 / 14,355 | 174 / 68 |
+| 100 rows | 3,656 / 6,398 | 272 / 156 | 3,235 / 5,832 | 304 / 170 |
+| 1,000 rows | 724 / 862 | 1,360 / 1,143 | 733 / 719 | 1,336 / 1,282 |
+| Insert from a JSON body | see below | | 4,800 / 11,667 | 205 / 79 |
 
-DbToRestAPI spends about 70 to 100 µs of CPU per request more than the hand-written endpoints, the
+DbToRestAPI spends about 70 to 110 µs of CPU per request more than the hand-written endpoints, the
 cost of what it does for every request: route matching, the API key, CORS, JWT and rate-limit
 checks, and gathering parameters from every source. That matters most for small, fast queries: the
-slower the query, the smaller the share. Each row costs about 1 µs more, in reading it into a
-dynamic row and serializing it, so a result of 1,000 rows costs about twice the hand-written CPU.
-The engine's working set stays near 150 MB under load.
+slower the query, the smaller the share. Each row adds little to that: a page of 1,000 rows costs
+about 1.2 times the hand-written CPU on SQLite, and about the same on SQL Server. The engine's
+working set stays near 150 MB under load.
 
 SQLite inserts from 32 connections are left out of the table. SQLite lets one connection write at
 a time, and Microsoft.Data.Sqlite waits 150 ms before it retries a write that found the database
 locked. How often writes collide depends on how the operating system schedules the server's
-threads, so the result varies from run to run: in this run DbToRestAPI answered 192 inserts a
-second and the Minimal API 1,522, and in repeated 10-second runs of one DbToRestAPI build the rate
+threads, so the result varies from run to run: in this run DbToRestAPI answered 1,336 inserts a
+second and the Minimal API 1,581, and in repeated 10-second runs of the 1.7.18 build the rate
 went from 170 to 1,000. From one connection, where nothing collides, an insert runs at 84% of the
-hand-written speed (1,319 / 1,566 a second).
+hand-written speed (1,410 / 1,685 a second).

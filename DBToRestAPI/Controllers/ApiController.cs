@@ -881,7 +881,7 @@ namespace DBToRestAPI.Controllers
                             // The JSON entry is added AFTER the single row entry, so it takes precedence for {{json}}
                             // while individual columns remain accessible via {{column_name}}.
                             // A NULL bare value is a row too, so it gives [null], not [].
-                            var jsonArray = JsonSerializer.Serialize(rows);
+                            var jsonArray = JsonSerializer.Serialize(rows, ExpandoJsonConverter.Options);
 
                             qParams.Add(new DbQueryParams
                             {
@@ -896,7 +896,7 @@ namespace DBToRestAPI.Controllers
                         {
                             // Multiple rows: serialize to JSON and wrap in dictionary
                             var allRows = chamberedResult.AsEnumerable().ToList();
-                            var jsonArray = JsonSerializer.Serialize(allRows);
+                            var jsonArray = JsonSerializer.Serialize(allRows, ExpandoJsonConverter.Options);
 
                             qParams.Add(new DbQueryParams
                             {

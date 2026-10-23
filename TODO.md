@@ -17,13 +17,6 @@ names the note that explains the background.
   (`EmbeddedHttpTemplate.ConvertValue` uses `ToString()`), so on a server whose culture writes a
   decimal comma a number is sent as `19,99`, and a date takes that culture's format. Writing it in
   the invariant culture would change the dates that existing configurations send on such servers.
-- **A result of many rows costs about twice the CPU of hand-written code** (`benchmarks/`, 1,000
-  rows). Profiled for 1.7.18: each row becomes an `ExpandoObject`, built one property at a time
-  (`ExpandoClass.FindNewClass`), and is serialized as a dictionary of `object` values, so
-  System.Text.Json looks up a converter for every value. A row type whose column names are shared by
-  every row of a result, or writing the JSON straight from the reader, would remove most of it. Both
-  change what Com.H.Data.Common hands its callers (code reads rows as `dynamic`), so each needs its
-  own release.
 - **Under full load on one CPU, the engine reaches its full speed only after about a minute.** The
   runtime compiles a hot method again, optimized, only after a pause in which no new method was
   compiled, and a busy server keeps cutting that pause short: for the first 20 seconds a lookup by
@@ -101,6 +94,16 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A result of many rows cost about twice the CPU of hand-written code.** Fixed in 1.7.22 with
+  Com.H.Data.Common 10.1.0.15. Each row was an `ExpandoObject`, built one column at a time, and
+  System.Text.Json wrote it as a dictionary of `object`, looking up a converter for every value. The
+  library's rows are now `DbQueryRow`s: the rows of a result share their column names, and the
+  library writes them with a converter of its own, each name encoded once per result. The engine
+  writes the objects of a JSON column (`ExpandoObject`s still) with `ExpandoJsonConverter`. The JSON
+  is byte for byte the same, which `RowJsonPipelineTests` and `SqlServerColumnTypesTests` check
+  against topic 05's table. On one CPU, at steady speed, a page of 1,000 rows went from 2,250 to
+  1,330 µs of CPU (the hand-written API: about 1,130), 100 rows from 342 to 266 µs, and a row by id
+  stayed at 133 µs.
 - **Five settings were read wrong or not checked.** Fixed in 1.7.21, each found by the inventory of
   configuration keys or the docs pass. A setting that takes a number or `true`/`false` and held
   something else (`success_status_code` of `created`, `db_command_timeout` of `soon`, a cache
