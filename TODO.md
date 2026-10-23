@@ -94,6 +94,12 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **The Docker image of 1.7.22 wasn't built.** Fixed in 1.7.23. A published build has carried the
+  docs since the docs were bundled, but `.dockerignore` kept them out of the image's build context,
+  so `dotnet publish` failed in the Docker workflow. The Docker workflow runs only for a release
+  tag, so nothing failed until the first release after the change. `.dockerignore` now lets the
+  docs in, and CI builds the image on every push, runs it, calls an endpoint and checks that the
+  docs are in it.
 - **A result of many rows cost about twice the CPU of hand-written code.** Fixed in 1.7.22 with
   Com.H.Data.Common 10.1.0.15. Each row was an `ExpandoObject`, built one column at a time, and
   System.Text.Json wrote it as a dictionary of `object`, looking up a converter for every value. The
