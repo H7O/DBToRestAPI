@@ -5,96 +5,101 @@ using System.Text.Json;
 namespace DBToRestAPI.Tests;
 
 /// <summary>
-/// docs/topics/14-query-chaining.md on SQL Server: the "Basic Configuration" chain, and the
-/// "Cross-Database Example" with its registry query, whose SQL runs on any database, on the same
-/// server. The page shows no tables, so they are built here from the columns its queries use.
+/// docs/topics/14-query-chaining.md, "Complete example: an order with live stock from another
+/// database", on SQL Server: the chain and its tables, with the warehouse connection on the same
+/// database, and each row of its "What the client gets back" table that a request can produce.
 /// </summary>
 public class ChainingExampleTests(ChainingExampleTests.Engine engine) : IClassFixture<ChainingExampleTests.Engine>
 {
-    private const string Tables = """
-        CREATE TABLE users (id INT PRIMARY KEY, name NVARCHAR(100), email NVARCHAR(500));
-        CREATE TABLE orders (id INT PRIMARY KEY, user_email NVARCHAR(500), total DECIMAL(10, 2));
-        INSERT INTO users VALUES (1, 'John', 'j@x.com'), (2, 'Mary', 'm@x.com');
-        INSERT INTO orders VALUES (10, 'j@x.com', 25.00), (11, 'j@x.com', 40.00), (12, 'm@x.com', 5.00);
-
-        CREATE TABLE permissions (email NVARCHAR(255), perm NVARCHAR(50));
-        CREATE TABLE CUSTOMER_REGISTRY (ID NVARCHAR(50), FULL_NAME NVARCHAR(255), STATUS NVARCHAR(20));
-        CREATE TABLE customers (id NVARCHAR(50) PRIMARY KEY, validated BIT NOT NULL DEFAULT 0, validated_by NVARCHAR(255));
-        INSERT INTO permissions VALUES ('alice@example.com', 'validate');
-        INSERT INTO CUSTOMER_REGISTRY VALUES ('C1', 'Acme Ltd', 'ACTIVE');
-        INSERT INTO customers (id) VALUES ('C1'), ('C2');
-        """;
+    private static readonly Guid Order = Guid.Parse("6f1c2a4e-0d1b-4a52-9a49-3c3a8f0e2b11");
+    private static readonly Guid EmptyOrder = Guid.Parse("0b9e3c55-6a0f-4d2b-8e57-2f8d1c7a9e40");
 
     public sealed class Engine : SqlServerExampleEngine
     {
         public FakeIdp Idp { get; }
 
-        public Engine() : this(new SqlServerExample(
-            ("docs/topics/14-query-chaining.md", "Basic Configuration"), ("docs/topics/14-query-chaining.md", "Cross-Database Example")))
+        public Engine() : this(new SqlServerExample(("docs/topics/14-query-chaining.md", "Complete example")))
         {
         }
 
-        // The registry query's `db2` connection is the same database here.
+        // The page's warehouse connection is the same database here.
         private Engine(SqlServerExample example) : base(example, _ => new()
         {
-            ["ConnectionStrings:db2"] = example.ConnectionString,
-            ["ConnectionStrings:db2:provider"] = "Microsoft.Data.SqlClient",
+            ["ConnectionStrings:warehouse"] = example.ConnectionString,
+            ["ConnectionStrings:warehouse:provider"] = "Microsoft.Data.SqlClient",
             ["authorize:providers:my_provider:authority"] = "https://idp.test",
             ["authorize:providers:my_provider:audience"] = "api://docs",
         })
         {
             Idp = new FakeIdp(Http, "https://idp.test", "api://docs");
-            Example.Execute(Tables);
+            var customer = Guid.NewGuid();
+            Example.Execute($"""
+                INSERT INTO customers VALUES ('{customer}', 'ann', 'Ann');
+                INSERT INTO orders (id, customer_id, status) VALUES ('{Order}', '{customer}', 'placed'), ('{EmptyOrder}', '{customer}', 'placed');
+                INSERT INTO order_lines VALUES ('{Order}', 'B2', 5), ('{Order}', 'A1', 2);
+                INSERT INTO stock VALUES ('A1', 10), ('B2', 3);
+                """);
         }
     }
 
-    private async Task<(HttpStatusCode Status, JsonElement Body)> GetAsync(string path, string? email = null)
+    private async Task<(HttpStatusCode Status, string Body)> GetAsync(string path, string? user = "ann")
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
-        if (email != null)
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", engine.Idp.Issue(new() { ["sub"] = email, ["email"] = email }));
+        if (user != null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", engine.Idp.Issue(new() { ["sub"] = user }));
         using var response = await engine.Client.SendAsync(request);
-        return (response.StatusCode, JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement);
-    }
-
-    [SqlServerFact]
-    public async Task TheSecondQuery_ReadsTheFirstQuerysRow()
-    {
-        var (status, orders) = await GetAsync("workflow?user_id=1");
-
-        Assert.Equal(HttpStatusCode.OK, status);
-        Assert.Equal([10, 11], orders.EnumerateArray().Select(o => o.GetProperty("id").GetInt32()));
-    }
-
-    [SqlServerFact]
-    public async Task AFirstQueryWithNoRow_LeavesTheColumnNull()
-    {
-        var (status, orders) = await GetAsync("workflow?user_id=99");
-
-        Assert.Equal(HttpStatusCode.OK, status);
-        Assert.Equal(0, orders.GetArrayLength());
-    }
-
-    [SqlServerFact]
-    public async Task ACustomerInTheRegistry_IsValidated_ByTheCaller()
-    {
-        var (status, body) = await GetAsync("customers/C1/validate", "alice@example.com");
-
-        Assert.Equal(HttpStatusCode.OK, status);
-        Assert.Equal("Validated", body.GetProperty("status").GetString());
-        Assert.Equal("C1", body.GetProperty("id").GetString());
-        Assert.Equal("alice@example.com", engine.Example.Scalar("SELECT validated_by FROM customers WHERE id = 'C1' AND validated = 1"));
+        return (response.StatusCode, await response.Content.ReadAsStringAsync());
     }
 
     [SqlServerTheory]
-    [InlineData("customers/C1/validate", "bob@example.com", HttpStatusCode.Forbidden, "Not authorized")]
-    [InlineData("customers/C2/validate", "alice@example.com", HttpStatusCode.NotFound, "Customer not found in the registry")]
-    public async Task AQueryThatThrows_StopsTheChain_WithItsStatus(string path, string email, HttpStatusCode expected, string message)
+    [InlineData("")]
+    [InlineData("?order_status=hacked")]   // a request value doesn't replace query 1's column
+    public async Task TheOwner_GetsEachLineWithItsStock(string queryString)
     {
-        var (status, body) = await GetAsync(path, email);
+        var (status, body) = await GetAsync($"orders/{Order}/stock{queryString}");
 
-        Assert.Equal(expected, status);
-        Assert.Equal(message, body.GetProperty("message").GetString());
-        Assert.Equal((int)expected, body.GetProperty("error_number").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal(
+            """[{"product_id":"A1","quantity":2,"available":10,"in_stock":true,"order_status":"placed"},{"product_id":"B2","quantity":5,"available":3,"in_stock":false,"order_status":"placed"}]""",
+            body);
+    }
+
+    [SqlServerFact]
+    public async Task AnOrderWithoutLines_IsAnEmptyArray()
+    {
+        var (status, body) = await GetAsync($"orders/{EmptyOrder}/stock");
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal("[]", body);
+    }
+
+    [SqlServerTheory]
+    [InlineData("another user")]
+    [InlineData("an unknown id")]
+    [InlineData("an id that isn't a GUID")]
+    public async Task AnyoneElse_Gets404(string who)
+    {
+        var (path, user) = who switch
+        {
+            "another user" => ($"orders/{Order}/stock", "bob"),
+            "an unknown id" => ($"orders/{Guid.NewGuid()}/stock", "ann"),
+            _ => ("orders/not-a-guid/stock", "ann"),
+        };
+
+        var (status, body) = await GetAsync(path, user);
+        var answer = JsonDocument.Parse(body).RootElement;
+
+        Assert.Equal(HttpStatusCode.NotFound, status);
+        Assert.Equal("Order not found", answer.GetProperty("message").GetString());
+        Assert.Equal(404, answer.GetProperty("error_number").GetInt32());
+    }
+
+    [SqlServerFact]
+    public async Task NoToken_Is401()
+    {
+        var (status, body) = await GetAsync($"orders/{Order}/stock", user: null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, status);
+        Assert.Equal("Authorization header is required", JsonDocument.Parse(body).RootElement.GetProperty("message").GetString());
     }
 }

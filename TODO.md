@@ -97,9 +97,7 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
   `DocsExamplesTests` checks every XML example's tags, CDATA and placeholders in CI, and the
   examples of 09, 10, 14 and 17 run on SQL Server in CI. A published build (every release archive)
   holds the docs next to the executable. Still to do: the other pages' examples (several use
-  PostgreSQL, DB2 or SQLite, which CI doesn't run). Topic 14 doesn't follow the page template: it
-  shows no tables, so its test builds them from the columns the queries use, and it has no complete
-  example of its own.
+  PostgreSQL, DB2 or SQLite, which CI doesn't run).
 
 ## Done
 

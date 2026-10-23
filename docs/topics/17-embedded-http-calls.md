@@ -19,7 +19,7 @@ A `{http{ ... }http}` block in a query describes an HTTP call in JSON. The engin
 5. **Send a form as `"body_raw"` with `"content_type": "application/x-www-form-urlencoded"`, and fill it only with values you checked or built.** The engine has no form encoding: `&` and `=` in a value add or change fields.
 6. **A call is made once unless it has `"retry"`.** Don't retry a call that creates something (a payment, an order) unless the API takes an idempotency key: a retried POST can create it twice.
 7. **Keep the engine's own credentials in `<vars>` (`{s{api_key}}`), never in a header the caller sends:** any caller can send any value. Encrypt them ([21](21-settings-vars.md), [15](15-encryption.md)).
-8. **In a chain, read earlier results with `{pq{name}}`, not `{{name}}`,** inside the block too: `{{name}}` falls back to a request value of the same name when the earlier query gave none ([14](14-query-chaining.md#reading-earlier-results-pqname)).
+8. **In a chain, read earlier results with `{pq{name}}`, not `{{name}}`,** inside the block too: `{{name}}` falls back to a request value of the same name when the earlier query gave none ([14](14-query-chaining.md#what-a-query-receives)).
 
 ## How it works
 

@@ -134,7 +134,7 @@ Key details:
   results of earlier queries. A plain `{{request_id}}` would also take a
   request value of the same name when the column is `NULL` or the query
   returned no row. See
-  [reading earlier results](../topics/14-query-chaining.md#reading-earlier-results-pqname).
+  [reading earlier results](../topics/14-query-chaining.md#what-a-query-receives).
 - **The callback URL comes from your `partners` table.** The caller sends
   only its key, so it can't choose where your server sends requests.
 

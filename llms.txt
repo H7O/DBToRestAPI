@@ -68,7 +68,7 @@ Fetch only what you need:
 | CORS | [11-cors.md](docs/topics/11-cors.md) | Which pages may read an endpoint: pattern (host only, anchored) and fallback_origin, credentials (on whenever an `<authorize>` exists), allowed_headers (X-Auth-Provider), exposed_headers (Content-Disposition, Retry-After), preflight |
 | Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0, multiple providers per endpoint |
 | Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
-| Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Cross-database workflows, multi-query |
+| Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Several `<query>` elements run in order, each on its own connection (no shared transaction); `{pq{name}}` reads earlier results (never `{{name}}`), one row passes its columns, any rows pass `{pq{json}}` or `json_var`; a tested cross-database example |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
 | Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | `{http{ ... }http}`: every block is called before the query runs (even in an `IF` or a comment), the request settings (url, method, headers, `query` for caller values, body, `body_raw` for a form, `content_type`, timeout, auth, retry, skip, no_wait), the answer (status_code/headers/data/error, `$.data`), JSON escaping, errors; a complete tested example paying with a form body |

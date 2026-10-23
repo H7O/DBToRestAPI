@@ -166,7 +166,7 @@ Here the first query decides, and the call to a paid enrichment API is made only
 </enrich_contact>
 ```
 
-Query 1 returns one row, so query 2 reads its columns as `{pq{...}}` ([14](14-query-chaining.md#single-row--named-parameters)). The block's `skip` is filled with `1` or `0` before query 2's SQL runs. Use `{pq{skip_http}}`, not `{{skip_http}}`: when an earlier query gives no value, `{{skip_http}}` takes a request value of the same name, and the caller decides. Use this for pay-per-call and rate-limited APIs, and for work that may run twice.
+Query 1 returns one row, so query 2 reads its columns as `{pq{...}}` ([14](14-query-chaining.md#what-a-query-receives)). The block's `skip` is filled with `1` or `0` before query 2's SQL runs. Use `{pq{skip_http}}`, not `{{skip_http}}`: when an earlier query gives no value, `{{skip_http}}` takes a request value of the same name, and the caller decides. Use this for pay-per-call and rate-limited APIs, and for work that may run twice.
 
 ## Several calls at once
 

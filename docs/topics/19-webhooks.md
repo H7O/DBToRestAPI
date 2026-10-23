@@ -78,7 +78,7 @@ Key properties:
 - `"x-api-key": "{s{internal_api_key}}"` — authenticates via [settings variable](21-settings-vars.md)
 - Validation in Query 1 prevents the `no_wait` call in Query 2 from firing on invalid input (embedded HTTP calls are pre-processed per query)
 - The callback URL is read from your `partners` table, so the caller can't choose where your server sends requests
-- `{pq{request_id}}` reads the `request_id` column of Query 1 ([reading earlier results](14-query-chaining.md#reading-earlier-results-pqname))
+- `{pq{request_id}}` reads the `request_id` column of Query 1 ([reading earlier results](14-query-chaining.md#what-a-query-receives))
 
 > **Never call a URL the caller sent you.** The engine calls whatever URL your configuration builds: choosing the hosts is your configuration's job. If the callback URL comes from the request, any caller can make your server send requests to any host, including internal ones the internet can't reach. Register each partner's callback URL yourself and look it up in SQL, as above. If partners must send a URL, reject it before you store it unless it matches a URL registered for that partner.
 
