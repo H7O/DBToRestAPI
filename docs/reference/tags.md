@@ -74,7 +74,7 @@ Only `GET` and `HEAD` requests use the cache, and a download is never cached ([0
 |---|---|---|---|
 | `<cache><memory>` | Endpoint, gateway route | not cached | The route must have this block. |
 | `<duration_in_milliseconds>` | in the route's `<cache><memory>`, then the global one | not cached | Below 1 means not cached. A global duration alone caches nothing. |
-| `<invalidators>` | in the route's `<cache><memory>` | none | The query-string or body inputs that change the answer: each gets its own entry. |
+| `<invalidators>` | in the route's `<cache><memory>` | none | The inputs that change the answer, each read from every source (query string, body, headers, route, token claims, `<vars>`): each value gets its own entry. |
 | `<exclude_status_codes_from_cache>` | in a gateway route's `<cache><memory>` | none | Statuses not cached, separated by commas or spaces. |
 
 ## CORS

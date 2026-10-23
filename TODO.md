@@ -50,8 +50,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 
 - **OpenAPI doesn't show a `root_node` wrapper,** and documents a file route that also has a
   `count_query` as a download, though it answers the count wrapper. Found by review on 2026-10-07.
-- **Cache invalidators are read from every parameter source** (CacheService.cs), so one named like
-  a `<vars>` key or a JWT claim takes that value.
 - **`{http{}}` matching ignores SQL comments**, so AGENTS rule 15 says never to write the marker in
   one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
   `}http}`, and the SQL in between is deleted.
@@ -80,6 +78,11 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **Cache invalidators read from every source: as documented, not a bug.** Checked on
+  2026-10-23. Each value is labelled with its source, so a name that a `<vars>` key or a token
+  claim shares adds that value beside the request's, and only splits entries further. Naming a
+  claim (`user_id`, `email`) gives each caller its own entry, which topic 07 recommends for an
+  answer that depends on the caller. `CacheInvalidatorSourcesTests` checks all three cases.
 - **A new file under `config/` wasn't copied to the build output.** Fixed in 1.7.24. Each config
   file had its own entry in `DBToRestAPI.csproj`, so a file added under `config/` and named in
   `<additional_configurations>` made `dotnet run` fail at start-up until it got one. One wildcard

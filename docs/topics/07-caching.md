@@ -134,7 +134,7 @@ For a query endpoint, the key is built from:
 - the endpoint (its element in the configuration);
 - the verb (GET or HEAD);
 - the route values, such as the `{{id}}` in `users/{{id}}/data`. Spellings of one route that run the same SQL (`Items/1`, `items//1`, `items/1/`) share an entry;
-- the values of the parameters named in `<invalidators>`, from each source separately: a header and a query-string value with the same name are different parts of the key.
+- the values of the parameters named in `<invalidators>`, read from every source separately: the query string, the body, a header, a route value, a token claim and a `<vars>` key. A header and a query-string value with the same name are different parts of the key, so a name that a claim or a var shares only splits entries further.
 
 Nothing else is in the key. A query-string value, a body field, a header or the caller's identity separates entries only when its name is in `<invalidators>`. A cache hit runs no SQL, so authorization written in SQL is skipped: cache only answers that are the same for every caller, or name the caller (for example `user_id`) in `<invalidators>`.
 
