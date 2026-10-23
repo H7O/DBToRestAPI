@@ -44,3 +44,25 @@ jobs:
 
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
+
+  # The image the Docker workflow publishes for a release tag, built and run on every push but not
+  # pushed, so a change that breaks it fails here and not at the release.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: dbtorestapi:ci
+
+      - name: Run the image, call an endpoint, check the docs are in it
+        run: |
+          docker run -d --name engine -p 5000:5000 dbtorestapi:ci
+          for i in $(seq 1 30); do curl -sf http://localhost:5000/server_time > /dev/null && break; sleep 1; done
+          curl -sf http://localhost:5000/server_time || { docker logs engine; exit 1; }
+          docker exec engine test -f /app/AGENTS.md -a -f /app/llms.txt -a -f /app/docs/reference/tags.md

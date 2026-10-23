@@ -3,11 +3,22 @@
 **/.vs/
 **/.vscode/
 **/node_modules/
-*.md
-!README.md
-LICENSE
 .git/
 .github/
-docs/
 source_from_nuget/
 DBToRestAPI.Tests/
+# Local-only folders, absent from a checkout
+scratchpad/
+benchmarks/.out/
+# Markdown stays out, except the pages a published build ships next to the executable
+# (DBToRestAPI.csproj, "The docs"): without them, dotnet publish fails.
+*.md
+!README.md
+!AGENTS.md
+!CLAUDE.md
+!llms.md
+docs/
+!docs/AUTHORING.md
+!docs/reference/
+!docs/topics/
+!docs/tutorial/
