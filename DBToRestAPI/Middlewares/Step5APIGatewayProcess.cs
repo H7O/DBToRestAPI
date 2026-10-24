@@ -278,10 +278,62 @@ namespace DBToRestAPI.Middlewares
             // Step1ServiceTypeChecks answers an invalid setting.
             catch (Exception ex) when (ex is not InvalidSettingException)
             {
-                await context.Response.DeferredWriteAsJsonAsync(_settings.GetExceptionResponse(context.Request, ex));
+                // A caller who left gets nothing more; the connection is already gone.
+                if (Controllers.ApiController.CallerLeft(_logger, context, resolvedRoute, ex))
+                    return;
+                await context.Response.DeferredWriteAsJsonAsync(FailedForwardResponse(context, ex, resolvedRoute, url));
             }
             #endregion
 
+        }
+
+        /// <summary>
+        /// The answer to a forward that failed, which is logged. A target that didn't answer within
+        /// `target_route_timeout_seconds` is a 504, and one that couldn't be reached or whose answer
+        /// couldn't be read (no such host, a refused or dropped connection, a TLS failure) is a 502, each
+        /// with the generic message. A caller's body the server refused to read keeps its status (413 for
+        /// one that is too large): the client wraps that refusal in its own exception while it sends the
+        /// body. Anything else is the generic 400, and in debug mode every failure gets its details.
+        /// </summary>
+        private ObjectResult FailedForwardResponse(HttpContext context, Exception ex, string route, string url)
+        {
+            var refused = ex;
+            while (refused is not null and not BadHttpRequestException)
+                refused = refused.InnerException;
+            if (refused is BadHttpRequestException badRequest)
+            {
+                _logger.LogDebug("{Time}: Gateway route {Route} answered {Status}: the request body could not be read",
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, badRequest.StatusCode);
+                return new ObjectResult(new { success = false, message = "The request body could not be read." })
+                {
+                    StatusCode = badRequest.StatusCode
+                };
+            }
+
+            // The caller is still there (CallerLeft), so a cancelled forward ran out of time.
+            var status = ex switch
+            {
+                OperationCanceledException => StatusCodes.Status504GatewayTimeout,
+                HttpRequestException => StatusCodes.Status502BadGateway,
+                _ => StatusCodes.Status400BadRequest
+            };
+            var failure = status switch
+            {
+                StatusCodes.Status504GatewayTimeout => "its target didn't answer within target_route_timeout_seconds",
+                StatusCodes.Status502BadGateway => "its target couldn't be reached or its answer couldn't be read",
+                _ => "the forward failed"
+            };
+            _logger.LogError(LogText.Loggable(ex),
+                "{Time}: Gateway route {Route} answered {Status}: {Failure}. Target: {Target}{EscapedException}",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), route, status, failure, LogText.Url(url),
+                LogText.ExceptionText(ex));
+
+            if (status != StatusCodes.Status400BadRequest && !_settings.IsDebugMode(context.Request))
+                return new ObjectResult(new { success = false, message = _settings.GetDefaultGenericErrorMessage() })
+                {
+                    StatusCode = status
+                };
+            return _settings.GetExceptionResponse(context.Request, ex);
         }
 
         /// <summary>

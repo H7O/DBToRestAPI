@@ -28,10 +28,12 @@ names the note that explains the background.
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
   (global, overridable per endpoint) would let a deployment have the engine enforce that choice
   too. A convenience, not a fix.
-- **A gateway call that fails isn't logged.** On a route without `<cache>`, a target the engine
-  can't reach (no such host, a refused connection, a timeout) answers the generic `400`, and
-  nothing is written to the log, so the cause shows only in debug mode. Found on 2026-10-25 while
-  testing a gateway route.
+- **A gateway route reads the target's whole answer before it writes any of it.** The gateway
+  calls `HttpClient.SendAsync` without `HttpCompletionOption.ResponseHeadersRead`, so the client
+  reads the answer to its end into memory, and only then does the engine copy it to the caller.
+  A large download through a gateway route holds its full size in memory per request, which a
+  512 MB server can't afford. Streaming it needs the timeout to cover the copy, and a failure
+  during the copy to cut the connection, as a streamed query result does. Found on 2026-10-25.
 
 The items below were found on 2026-10-06 while testing the docs with docs-only agents graded
 against the code. Each was read in the code; none has a test yet.
@@ -79,6 +81,13 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A gateway call that failed was the generic `400`, and wasn't logged.** Fixed in 1.7.26. A
+  target the engine couldn't reach (no such host, a refused or dropped connection, a TLS failure)
+  or that didn't answer within `target_route_timeout_seconds` answered `400` with nothing in the
+  log, so the cause showed only in debug mode. It is now `502` or `504` with the generic message,
+  as a database the engine can't reach is `503` or `504`, and an error log line names the route
+  and the target without its query string. A caller's body too large to forward, which the client
+  reports inside its own exception, keeps its `413`. `GatewayFailureTests` checks each case.
 - **A body of another type was read as no parameters, and `json/` was a hidden route prefix.**
   Fixed in 1.7.25. A body whose `Content-Type` was neither `application/json` nor a form was
   ignored: `text/plain` (which `fetch` sends for a string body without a type) or

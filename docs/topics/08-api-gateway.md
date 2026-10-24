@@ -172,7 +172,7 @@ A route without it uses the global `<ignore_target_route_certificate_errors>` in
 
 ## Outbound Timeout
 
-API gateway outbound calls are cancelled after a timeout.
+API gateway outbound calls are cancelled after a timeout, and the caller gets `504` ([when the target fails](#when-the-target-fails)).
 
 Set per-route timeout in seconds:
 
@@ -189,6 +189,17 @@ Resolution order:
 3. Default: `30` seconds
 
 An outbound call stops when its caller disconnects. On a route with `<cache>`, a call that other callers are waiting on keeps running until all of them have gone ([caching](07-caching.md#requests-that-arrive-while-the-query-runs)).
+
+## When the Target Fails
+
+The target's own answer passes through unchanged, an error status included. When the target gives no answer, the caller gets one of these statuses, with the body `{"success":false,"message":"An error occurred while processing your request."}` (the `generic_error_message` of `settings.xml`):
+
+| Status | When |
+|---|---|
+| `502` | The target couldn't be reached or its answer couldn't be read: no such host, a refused or dropped connection, a TLS failure |
+| `504` | The target didn't answer within `target_route_timeout_seconds` |
+
+Each is logged as an error naming the route and the target's URL, without its query string. A caller's body over `max_payload_size_in_bytes` is `413`, and in debug mode every failure is a `500` with the exception's details ([errors.md](../reference/errors.md#api-gateway-routes)).
 
 ## Complete Example
 

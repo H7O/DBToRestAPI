@@ -128,6 +128,8 @@ All bodies are JSON. "Rolled back" means files this request stored are deleted.
 | `400`-`599` | SQL raised `50400`-`50599` | `{"success":false,"message":"...","error_number":404}` | Rolled back |
 | `400` | Any other database error: constraint violation, deadlock, a conversion that failed, syntax error | `{"success":false,"message":"An error occurred while processing your request."}`, from `generic_error_message` | Rolled back |
 | `503` | The engine couldn't connect to the database (server down or unreachable, login or database refused, every pooled connection in use, a SQLite file it can't open), or the database closed the connection during the query | The same body as the `400` | Rolled back |
+| `502` | A gateway route's target couldn't be reached or its answer couldn't be read: no such host, a refused or dropped connection, a TLS failure ([API gateway routes](#api-gateway-routes)) | The same body as the `400` | - |
+| `504` | A gateway route's target didn't answer within `target_route_timeout_seconds` ([API gateway routes](#api-gateway-routes)) | The same body as the `400` | - |
 | `504` | The database didn't answer in time: the command timeout (`db_command_timeout`) expired, or the database gave up waiting for a lock (a `NOWAIT` lock included) or stopped the statement for its own time limit | The same body as the `400` | Rolled back |
 | `400`, `499` | The client disconnected (it never sees the response) | `Request was cancelled` (`400`) if it left while its request was read; nothing (`499`) if it left while its token was checked, while its files were stored, or while its query or one of its `{http{ ... }http}` calls ran (a streamed result keeps the `200` it had sent) | Rolled back if anything was stored; once a streamed result has started, that depends on the driver |
 | `401` | API key missing or wrong | `API key was not provided` / `Unauthorized client` | None were stored |
@@ -250,7 +252,7 @@ END CATCH
 
 ## API gateway routes
 
-Proxy routes ([API gateway](../topics/08-api-gateway.md)) don't run a query. The upstream service's status and body pass through unchanged. A proxy failure is the generic `400`, and in debug mode a `500` whose body is a JSON string rather than an object.
+Proxy routes ([API gateway](../topics/08-api-gateway.md)) don't run a query. The upstream service's status and body pass through unchanged, an error status included. When the upstream gives no answer, the caller gets `502` or `504` with the generic message, and the engine logs an error naming the route and the upstream's URL without its query string ([when the target fails](../topics/08-api-gateway.md#when-the-target-fails)). A caller's body over `max_payload_size_in_bytes` is `413`. Any other proxy failure is the generic `400`. In debug mode, every proxy failure is a `500` whose body is a JSON string rather than an object.
 
 ## Related
 
