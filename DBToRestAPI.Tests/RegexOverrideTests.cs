@@ -33,6 +33,8 @@ public class RegexOverrideTests
         context.Request.QueryString = new QueryString("?q=1");
         context.Request.ContentType = "application/x-www-form-urlencoded";
         context.Request.Body = new MemoryStream("f=1"u8.ToArray());
+        // As Step1ServiceTypeChecks sets it from the Content-Type.
+        context.Items["content_type"] = "application/x-www-form-urlencoded";
         context.Items["section"] = root.GetSection("queries:ep");
         context.Items["route"] = "items/7";
         context.Items["route_parameters"] = new Dictionary<string, string> { ["id"] = "7" };

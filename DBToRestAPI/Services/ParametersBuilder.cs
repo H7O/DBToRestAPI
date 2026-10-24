@@ -130,8 +130,8 @@ public class ParametersBuilder
     /// Runs <see cref="GetParamsAsync"/> and turns a failure into the response to send instead of an
     /// exception. Without this, those exceptions reached Kestrel and the caller got an empty 500.
     /// <list type="bullet">
-    /// <item>A <see cref="RequestValidationException"/> (the caller sent an invalid upload) becomes a 400
-    /// carrying its message.</item>
+    /// <item>A <see cref="RequestValidationException"/> (the caller sent an invalid upload, or a body of
+    /// another type) becomes its status (a 400, or the 415) carrying its message.</item>
     /// <item>A request body the server refused to read keeps the status Kestrel gave it (413 for one that
     /// is too large), and a form over one of the FormOptions limits is a 400.</item>
     /// <item>Cancellation still propagates, and anything else becomes a logged 500.</item>
@@ -150,7 +150,7 @@ public class ParametersBuilder
             var forLog = LogText.Escape(ex.Message);
             _logger.LogDebug("{Time}: Request rejected while reading its parameters: {Message}",
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), forLog);
-            return (null, new ObjectResult(new { success = false, message = ex.Message }) { StatusCode = 400 });
+            return (null, new ObjectResult(new { success = false, message = ex.Message }) { StatusCode = ex.StatusCode });
         }
         catch (BadHttpRequestException ex)
         {
@@ -207,6 +207,7 @@ public class ParametersBuilder
 
         qParams = new List<DbQueryParams>();
 
+        RefuseABodyOfAnotherType();
         RefuseFilesFieldOutsideTheBody();
 
         // order of adding to qParams matters
@@ -280,6 +281,27 @@ public class ParametersBuilder
         context.Items["parameters"] = qParams;
         return qParams;
 
+    }
+
+    /// <summary>
+    /// Refuses a body that is neither JSON nor a form, such as `text/plain` (415): it would be read as no
+    /// parameters, and the query would run with every body parameter NULL. A request without a body has
+    /// nothing to misread, and a gateway route forwards any body as sent.
+    /// </summary>
+    private void RefuseABodyOfAnotherType()
+    {
+        var context = Context;
+        var contentType = this.ContentType;
+        if (contentType == "application/json"
+            || _formContentTypes.Contains(contentType)
+            || context.Items["service_type"] as string == "api_gateway"
+            || context.Request.ContentLength == 0
+            || context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == false)
+            return;
+        throw new RequestValidationException(
+            $"A request body of type `{contentType}` can't be read. Send JSON as `application/json`, "
+            + "or a form as `multipart/form-data` or `application/x-www-form-urlencoded`.",
+            StatusCodes.Status415UnsupportedMediaType);
     }
 
     /// <summary>

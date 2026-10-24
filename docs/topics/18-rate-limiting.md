@@ -214,7 +214,7 @@ One limiter for the whole engine, partitioned on `(endpoint, caller, max_request
 
 - **endpoint** is the configuration node (`queries:create_user`), not the request URL, so
   `users/1` and `users/2` share the `get_user` allowance, and `GET users` and `POST users` are
-  separate because they are separate nodes. Route-parameter, `json/` prefix, `$2F` and case
+  separate because they are separate nodes. Route-parameter, `$2F` and case
   variants all resolve to the same node in route resolution, so none of them mints a new
   allowance.
 - **the limits are part of the key**, so a hot-reloaded change takes effect on the next request

@@ -58,7 +58,7 @@ Fetch only what you need:
 | Quick Start | [01-overview.md](docs/topics/01-overview.md) | Getting started, philosophy, first endpoint |
 | Configuration | [02-configuration.md](docs/topics/02-configuration.md) | Where the files live, how they load, merge and reload (and what needs a restart), settings.xml, sql.xml, connection strings, environment variables, log levels |
 | CRUD Operations | [03-crud-operations.md](docs/topics/03-crud-operations.md) | Create, Read, Update, Delete patterns |
-| Parameters | [04-parameters.md](docs/topics/04-parameters.md) | {{param}}, value types (JSON numbers, empty query-string values), which source wins, one-source markers ({r{}}, {qs{}}, {j{}}, {f{}}, {h{}}), names with any characters, route params, mandatory params |
+| Parameters | [04-parameters.md](docs/topics/04-parameters.md) | {{param}}, value types (JSON numbers, empty query-string values), which body types are read (JSON, forms; any other is 415), which source wins, one-source markers ({r{}}, {qs{}}, {j{}}, {f{}}, {h{}}), names with any characters, route params, mandatory params |
 | Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON, buffer_rows |
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
 | Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |

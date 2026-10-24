@@ -15,6 +15,8 @@ Parameters can come from multiple sources. When the same `{{name}}` arrives from
 
 A route segment cannot be overridden from the query string. JWT claims and settings variables use their own markers, so they never compete with `{{name}}`.
 
+The body's `Content-Type` decides how it is read. `application/json`, `text/json` and every `+json` type (such as `application/vnd.api+json`) are read as JSON, and so is a body sent without a `Content-Type`. `multipart/form-data` and `application/x-www-form-urlencoded` are read as a form. A body of any other type is refused with `415` before the query runs. That includes `text/plain`, which `fetch` sends for a string body when no `Content-Type` is set ([errors.md](../reference/errors.md#statuses-you-will-meet)). A request without a body is read whatever its `Content-Type`, and a gateway route forwards any body as sent.
+
 A JSON `null` counts as missing, so the next source down fills `{{name}}`: with `{"name": null}` in the body, a `name` header fills it. If you override the marker patterns and give the body and the headers the identical pattern string, the body's `null` hides the header instead, and `{{name}}` is `NULL`.
 
 To read one source only, use its own marker. A name that source doesn't have is `NULL`, whatever the other sources hold:

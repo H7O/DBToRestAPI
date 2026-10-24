@@ -129,30 +129,6 @@ namespace DBToRestAPI.Controllers
 
 
 
-        ///// <summary>
-        ///// Similar to Index method but expects its endpoint to have a prefix of `json/`
-        ///// Ignores the `Content-Type` header and processes the request payload as JSON
-        ///// by default. The request is passed to the Index method for processing.
-        ///// </summary>
-        ///// <param name="payload">Payload to be passed to Index method under the hood</param>
-        ///// <returns>Payload return from Index method</returns>
-        //[HttpGet]
-        //[HttpPost]
-        //[HttpDelete]
-        //[HttpPut]
-        //[Route("json/{*route}")]
-        //public async Task<IActionResult> JsonProxy(
-        //    [ModelBinder(BinderType = typeof(BodyModelBinder))] JsonElement payload,
-        //    CancellationToken cancellationToken
-        //    )
-        //{
-        //    return await Index();
-        //}
-
-
-
-
-
         [Produces("application/json")]
         [HttpGet]
         [HttpPost]

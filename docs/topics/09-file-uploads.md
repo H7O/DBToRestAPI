@@ -420,7 +420,7 @@ Upload refusals are `400` with `{"success":false,"message":"..."}`, sent before 
 | `The form data could not be read.` | Malformed or cut-off form body, or a form over an ASP.NET Core limit (a field value over 4 MiB, more than 1024 fields) |
 | File name rules | Empty; not valid Unicode; longer than 150 characters; `..`, `/`, `\` or `:`; control characters or invisible ones (U+200B-U+200F, U+FEFF); characters invalid on the server's OS (on Windows `<` `>` `"` `|` `?` `*`; on Linux only NUL); Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`); only dots; starting or ending with a dot or space; starting with `-` |
 
-Other upload statuses: `409` when a target file exists in a non-optional store and overwriting is off, `413` for an oversized body, and `500` when a non-optional store fails or lacks a setting it needs. All statuses are listed in [errors.md](../reference/errors.md#statuses-you-will-meet).
+Other upload statuses: `409` when a target file exists in a non-optional store and overwriting is off, `413` for an oversized body, `415` for a body that is neither JSON nor a form (such as `text/plain`, which `fetch` sends for a string body when no `Content-Type` is set), and `500` when a non-optional store fails or lacks a setting it needs. All statuses are listed in [errors.md](../reference/errors.md#statuses-you-will-meet).
 
 ### Silent failures
 
@@ -430,7 +430,6 @@ Each of these returns success, and the request stores nothing:
 - **No `stores` (on the route or globally), or only unknown names.** Files are validated but never written, yet the query still gets `is_new_upload` entries with a `relative_path`, so it records files that don't exist. An unknown name logs a warning.
 - **A second `<local_file_store>` or `<sftp_file_store>` element.** Every store in either element becomes unknown ([store](#store)).
 - **A content field name that doesn't match the config, in a JSON body.** Every entry looks like an existing file.
-- **A Content-Type other than `application/json`, `multipart/form-data` or `application/x-www-form-urlencoded`.** For example `text/plain`, which `fetch` sends for a string body when no `Content-Type` header is set. The body is ignored, so every body parameter is `NULL` and no file is processed.
 
 ## Do and don't
 

@@ -28,6 +28,10 @@ names the note that explains the background.
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
   (global, overridable per endpoint) would let a deployment have the engine enforce that choice
   too. A convenience, not a fix.
+- **A gateway call that fails isn't logged.** On a route without `<cache>`, a target the engine
+  can't reach (no such host, a refused connection, a timeout) answers the generic `400`, and
+  nothing is written to the log, so the cause shows only in debug mode. Found on 2026-10-25 while
+  testing a gateway route.
 
 The items below were found on 2026-10-06 while testing the docs with docs-only agents graded
 against the code. Each was read in the code; none has a test yet.
@@ -53,9 +57,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 - **`{http{}}` matching ignores SQL comments**, so AGENTS rule 15 says never to write the marker in
   one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
   `}http}`, and the SQL in between is deleted.
-- **A body with another content type** (`text/plain`, `application/*+json`) gives `NULL` for every
-  body parameter and a success, never `415`. The `json/` route prefix is the only workaround, and
-  it is undocumented.
 - **CORS:** when any `<authorize>` section exists, credentials are on for every route and the
   default allowed headers leave out `X-Auth-Provider`.
 
@@ -78,6 +79,19 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A body of another type was read as no parameters, and `json/` was a hidden route prefix.**
+  Fixed in 1.7.25. A body whose `Content-Type` was neither `application/json` nor a form was
+  ignored: `text/plain` (which `fetch` sends for a string body without a type) or
+  `application/vnd.api+json` ran the query with every body parameter `NULL`, and the request
+  succeeded. `text/json` and `application/*+json` are now read as JSON, as ASP.NET Core's own JSON
+  input reads them, and a body of any other type is a `415`, answered after the CORS, API key, JWT
+  and rate limit steps. A request without a body and a gateway route's body are never refused. The
+  undocumented `json/` prefix, which read any body as JSON, is removed: a request without a
+  `Content-Type` already counts as JSON, and the prefix made a route named `json/orders`
+  unreachable, because `/json/orders` was looked up as `orders`. Breaking: `/json/<route>` is now
+  the path `json/<route>`. A gateway entry routing `json/*` to the engine itself as JSON keeps old
+  callers working (the release notes give it; `LegacyJsonPrefixGatewayTests` checks it), and
+  `RequestBodyTypeTests` checks the rest.
 - **Cache invalidators read from every source: as documented, not a bug.** Checked on
   2026-10-23. Each value is labelled with its source, so a name that a `<vars>` key or a token
   claim shares adds that value beside the request's, and only splits entries further. Naming a

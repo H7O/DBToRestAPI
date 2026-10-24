@@ -13,7 +13,6 @@ namespace DBToRestAPI.Middlewares;
 /// 
 /// The middleware validates that:
 /// - The route is properly formatted and exists
-/// - The Content-Type header is set to application/json (or the route starts with json/)
 /// - The configuration sections for either API gateway or database queries are properly defined
 /// 
 /// Upon successful validation, it sets the following items in context.Items:
@@ -22,7 +21,7 @@ namespace DBToRestAPI.Middlewares;
 /// - `service_type`: A string representing the type of service (`api_gateway` or `db_query`)
 /// - `remaining_path` (for api_gateway only): The remaining path after the route match
 /// - `route_parameters` (for db_query only): Dictionary of route parameters if any exist
-/// - `content_type`: The content type of the request
+/// - `content_type`: The body's type (<see cref="BodyType"/>), by which ParametersBuilder reads the body
 /// </summary>
 public class Step1ServiceTypeChecks(
     RequestDelegate next,
@@ -42,12 +41,6 @@ public class Step1ServiceTypeChecks(
     private readonly IEncryptedConfiguration _configuration = settingsEncryptionService;
     // Serves static content as a fallback when no API gateway/db_query route matches.
     private readonly StaticFileFallbackService _staticFileFallback = staticFileFallback;
-    private readonly HashSet<string> _acceptableContentTypes = new HashSet<string>
-    {
-        "application/json",
-        "multipart/form-data",
-        "application/x-www-form-urlencoded"
-    };
 
     // private static int count = 0;
     private static readonly string _errorCode = "Step 2 - Service Type Check Error";
@@ -129,24 +122,13 @@ public class Step1ServiceTypeChecks(
             .Replace("$2F", "/");
         #endregion
 
-        #region check content-type
-        // check if user set Content-Type header of the request to `application/json` or `multipart/form-data`,
-        // or set the route starts with `json/`. If NOT, return a message stating that
-        // caller should set the Content-Type header to either `application/json` or `multipart/form-data`
-        // with error code 400
+        #region the body's type
+        // ParametersBuilder reads a JSON or a form body by it, and refuses a body of any other type
+        // with a 415, once CORS and the caller's credentials have been checked.
+        var contentType = BodyType(context.Request.ContentType);
+        #endregion
 
-        var contentType = context.Request.ContentType?.Split(';')[0].Trim().ToLowerInvariant();
-
-        // if the route starts with `json/`, remove the `json/` prefix
-        if (route?.StartsWith("json/") == true)
-        {
-            route = DefaultRegex.DefaultRemoveJsonPrefixFromRouteCompiledRegex.Replace(route, string.Empty);
-            contentType = "application/json";
-        }
-
-        if (string.IsNullOrWhiteSpace(contentType))
-            contentType = "application/json";
-
+        #region if no endpoint is specified, serve static content or return 404
         if (string.IsNullOrWhiteSpace(route))
         {
             // No API endpoint specified (e.g. a request to `/`). Fall back to static content —
@@ -303,5 +285,21 @@ public class Step1ServiceTypeChecks(
 
         #endregion
 
+    }
+
+    /// <summary>
+    /// The body's type: the request's media type in lower case, without its parameters. The JSON
+    /// types ASP.NET Core's own JSON input reads, `text/json` and `application/*+json` (such as
+    /// `application/vnd.api+json`), are `application/json`, and so is a request without a Content-Type.
+    /// </summary>
+    internal static string BodyType(string? contentType)
+    {
+        var mediaType = contentType?.Split(';')[0].Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(mediaType)
+            || mediaType == "text/json"
+            || (mediaType.StartsWith("application/", StringComparison.Ordinal)
+                && mediaType.EndsWith("+json", StringComparison.Ordinal)))
+            return "application/json";
+        return mediaType;
     }
 }

@@ -25,15 +25,5 @@ namespace DBToRestAPI.Settings
         public static readonly Regex DefaultRouteVariablesCompiledRegex = new Regex(DefaultRouteVariablesPattern, RegexOptions.Compiled);
         public static readonly Regex DefaultDateVariablesCompiledRegex = new Regex(DefaultDateVariablesPattern, RegexOptions.Compiled);
         // public static readonly Regex DefaultFilesVariablesCompiledRegex = new Regex(DefaultFilesVariablesPattern, RegexOptions.Compiled);
-
-
-
-        /// <summary>
-        /// Pattern to remove the `json/` prefix from the URI route and keeps the rest of the route
-        /// e.g., if the route is `json/company/employees?id=123` it will be converted to `company/employees?id=123`
-        /// when calling `Regex.Replace(route, DefaultRemoveJsonPrefixFromRoutePattern, string.Empty)`
-        /// </summary>
-        public static readonly string DefaultRemoveJsonPrefixFromRoutePattern = @"^json\/";
-        public static readonly Regex DefaultRemoveJsonPrefixFromRouteCompiledRegex = new Regex(DefaultRemoveJsonPrefixFromRoutePattern);
     }
 }
