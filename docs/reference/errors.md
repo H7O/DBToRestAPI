@@ -252,7 +252,7 @@ END CATCH
 
 ## API gateway routes
 
-Proxy routes ([API gateway](../topics/08-api-gateway.md)) don't run a query. The upstream service's status and body pass through unchanged, an error status included. When the upstream gives no answer, the caller gets `502` or `504` with the generic message, and the engine logs an error naming the route and the upstream's URL without its query string ([when the target fails](../topics/08-api-gateway.md#when-the-target-fails)). A caller's body over `max_payload_size_in_bytes` is `413`. Any other proxy failure is the generic `400`. In debug mode, every proxy failure is a `500` whose body is a JSON string rather than an object.
+Proxy routes ([API gateway](../topics/08-api-gateway.md)) don't run a query. The upstream service's status and body pass through unchanged, an error status included. When the upstream gives no answer, the caller gets `502` or `504` with the generic message, and the engine logs an error naming the route and the upstream's URL without its query string ([when the target fails](../topics/08-api-gateway.md#when-the-target-fails)). A target that fails after part of its answer has been sent can't change the status any more, so the engine cuts the connection: the client gets a network error, not a cut-off body. A caller's body over `max_payload_size_in_bytes` is `413`. Any other proxy failure is the generic `400`. In debug mode, every proxy failure is a `500` whose body is a JSON string rather than an object.
 
 ## Related
 

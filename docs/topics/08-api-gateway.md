@@ -155,6 +155,8 @@ By default, **all responses are cached** including errors. A response with an ex
 - Temporary outages
 - Rate limiting by the external API
 
+A cached route reads each answer whole, into memory, before it is stored and sent, so cache only answers of a size the server can hold. A route without `<cache>`, or a request the cache doesn't handle (a POST, say), passes the answer to the caller as it arrives and never holds it whole.
+
 ## Ignore Certificate Errors
 
 For development/internal APIs with self-signed certs:
@@ -172,7 +174,7 @@ A route without it uses the global `<ignore_target_route_certificate_errors>` in
 
 ## Outbound Timeout
 
-API gateway outbound calls are cancelled after a timeout, and the caller gets `504` ([when the target fails](#when-the-target-fails)).
+`target_route_timeout_seconds` limits how long the engine waits for the target. When the answer is passed on as it arrives (a route without `<cache>`), the limit covers the wait for the target's headers, then each wait for more of its answer: a long download goes on while data keeps coming, and a target that sends nothing for that long is cut off. A cached answer is read whole, so all of it must arrive within the limit. A target that times out before any of its answer has been sent gets its caller `504` ([when the target fails](#when-the-target-fails)).
 
 Set per-route timeout in seconds:
 
@@ -200,6 +202,8 @@ The target's own answer passes through unchanged, an error status included. When
 | `504` | The target didn't answer within `target_route_timeout_seconds` |
 
 Each is logged as an error naming the route and the target's URL, without its query string. A caller's body over `max_payload_size_in_bytes` is `413`, and in debug mode every failure is a `500` with the exception's details ([errors.md](../reference/errors.md#api-gateway-routes)).
+
+An answer passed on as it arrives takes the target's status and headers with its first block. If the target fails after that (it breaks off, or sends nothing more within `target_route_timeout_seconds`), the status can't change any more. The engine then cuts the connection, so the caller gets a network error rather than a cut-off answer that looks whole, and logs an error.
 
 ## Complete Example
 

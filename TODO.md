@@ -28,12 +28,6 @@ names the note that explains the background.
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
   (global, overridable per endpoint) would let a deployment have the engine enforce that choice
   too. A convenience, not a fix.
-- **A gateway route reads the target's whole answer before it writes any of it.** The gateway
-  calls `HttpClient.SendAsync` without `HttpCompletionOption.ResponseHeadersRead`, so the client
-  reads the answer to its end into memory, and only then does the engine copy it to the caller.
-  A large download through a gateway route holds its full size in memory per request, which a
-  512 MB server can't afford. Streaming it needs the timeout to cover the copy, and a failure
-  during the copy to cut the connection, as a streamed query result does. Found on 2026-10-25.
 
 The items below were found on 2026-10-06 while testing the docs with docs-only agents graded
 against the code. Each was read in the code; none has a test yet.
@@ -81,6 +75,18 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A gateway route read the target's whole answer into memory before writing any of it.** Fixed
+  in 1.7.27. `HttpClient.SendAsync` without `ResponseHeadersRead` reads the answer to its end, so
+  a large download through a gateway route held its full size in memory per request. The answer
+  is now passed on as it arrives, block by block. `target_route_timeout_seconds` covers the wait
+  for the headers, then each wait for more of the answer, and stops while a block is written, so
+  a slow caller doesn't count against the target (it covered the whole answer, which streaming
+  would have made cut off a long download to a slow caller). The target's status and headers are
+  set with the first block, so a target that fails before then gets its caller `502` or `504`,
+  with the engine's own headers kept; after, the connection is cut and logged, as for a streamed
+  query result. A cached route still reads the answer whole, within the timeout, to store it.
+  Since 1.7.26, a caller who leaves a gateway route is logged like one who leaves a query route.
+  `GatewayStreamingTests` checks each case.
 - **A gateway call that failed was the generic `400`, and wasn't logged.** Fixed in 1.7.26. A
   target the engine couldn't reach (no such host, a refused or dropped connection, a TLS failure)
   or that didn't answer within `target_route_timeout_seconds` answered `400` with nothing in the

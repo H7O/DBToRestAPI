@@ -144,7 +144,7 @@ Each route is an element under `<settings><routes>` ([08](../topics/08-api-gatew
 | `<excluded_headers>` | Gateway route, then global | none | Request headers not forwarded. The route's list replaces the global one; an empty one counts as not set. |
 | `<applied_headers>` | Gateway route | none | Each child holds a `<name>` and a `<value>`. |
 | `<ignore_target_route_certificate_errors>` | Gateway route, then global | `false` | Development only. |
-| `<target_route_timeout_seconds>` | Gateway route, then global | `30` | Below 1 means 30. |
+| `<target_route_timeout_seconds>` | Gateway route, then global | `30` | Seconds to wait for the target's headers, then for each part of an answer passed on as it arrives. A cached answer must arrive whole within it ([08](../topics/08-api-gateway.md#outbound-timeout)). Below 1 means 30. |
 
 ## File uploads
 

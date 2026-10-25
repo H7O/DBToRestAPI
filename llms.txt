@@ -62,7 +62,7 @@ Fetch only what you need:
 | Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON, buffer_rows |
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
 | Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |
-| API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs, a target that fails (502, 504) |
+| API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs, answers streamed as they arrive, a target that fails (502, 504) |
 | File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Files plus form fields in one request (multipart or JSON base64), local/SFTP stores, validation and limits, what the query receives (is_new_upload), automatic rollback, partial updates (keep/remove/add), complete form example |
 | File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | response_structure file, `<store>`, the columns the query returns (relative_path, file_name, mime_type, base64_content, http), owner-only downloads, Content-Disposition, 404 cases |
 | CORS | [11-cors.md](docs/topics/11-cors.md) | Which pages may read an endpoint: pattern (host only, anchored) and fallback_origin, credentials (on whenever an `<authorize>` exists), allowed_headers (X-Auth-Provider), exposed_headers (Content-Disposition, Retry-After), preflight |

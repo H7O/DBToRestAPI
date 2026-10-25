@@ -310,11 +310,12 @@ namespace DBToRestAPI.Middlewares
                 };
             }
 
-            // The caller is still there (CallerLeft), so a cancelled forward ran out of time.
+            // The caller is still there (CallerLeft), so a cancelled forward ran out of time. An answer
+            // that ends early while it is read is an IOException of the client's.
             var status = ex switch
             {
                 OperationCanceledException => StatusCodes.Status504GatewayTimeout,
-                HttpRequestException => StatusCodes.Status502BadGateway,
+                HttpRequestException or IOException => StatusCodes.Status502BadGateway,
                 _ => StatusCodes.Status400BadRequest
             };
             var failure = status switch
@@ -505,9 +506,12 @@ namespace DBToRestAPI.Middlewares
                 : httpClientFactory.CreateClient("checkCertificateErrors")
                 )
             {
+                var timeout = TimeSpan.FromSeconds(targetRouteTimeoutSeconds);
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-                linkedCts.CancelAfter(TimeSpan.FromSeconds(targetRouteTimeoutSeconds));
-                var targetRouteResponse = await client.SendAsync(targetRequestMsg, linkedCts.Token);
+                linkedCts.CancelAfter(timeout);
+                // Only the headers: a streamed answer is copied as it arrives, never held whole.
+                using var targetRouteResponse = await client.SendAsync(
+                    targetRequestMsg, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token);
 
                 #region check if we should cache this status code
                 var storable = true;
@@ -539,8 +543,8 @@ namespace DBToRestAPI.Middlewares
 
                 if (disableStreaming)
                 {
-                    // Buffer the entire response for caching
-                    var buffered = await CachableHttpResponseContainer.Parse(targetRouteResponse, cancel);
+                    // Read whole, to be stored: all of it must arrive within the timeout.
+                    var buffered = await CachableHttpResponseContainer.Parse(targetRouteResponse, linkedCts.Token);
                     if (storable)
                         return buffered;
                     handBackNotStored(buffered);
@@ -548,36 +552,95 @@ namespace DBToRestAPI.Middlewares
                 }
                 else
                 {
-                    // Stream directly to client (a route without a cache, or a caller forwarding on its own)
-                    context.Response.StatusCode = (int)targetRouteResponse.StatusCode;
-
-                    #region setup the response headers back to the caller
-                    // Copy response headers (general headers)
-                    foreach (var header in targetRouteResponse.Headers
-                        .Where(x => !_excludedResponseHeaders.Contains(x.Key))
-                        )
+                    // Stream directly to client (a route without a cache, or a caller forwarding on its own).
+                    // The target's status and headers are set once the first block of its answer has
+                    // arrived, so a target that fails before then gets its caller the failure's status.
+                    var started = false;
+                    void SetStatusAndHeaders()
                     {
-                        context.Response.Headers[header.Key] = header.Value.ToArray();
+                        started = true;
+                        context.Response.StatusCode = (int)targetRouteResponse.StatusCode;
+
+                        #region setup the response headers back to the caller
+                        // Copy response headers (general headers)
+                        foreach (var header in targetRouteResponse.Headers
+                            .Where(x => !_excludedResponseHeaders.Contains(x.Key))
+                            )
+                        {
+                            context.Response.Headers[header.Key] = header.Value.ToArray();
+                        }
+
+                        // Copy content headers (Content-Type, Content-Encoding, etc.)
+                        foreach (var header in targetRouteResponse.Content.Headers
+                            .Where(x => !_excludedResponseHeaders.Contains(x.Key))
+                            )
+                        {
+                            context.Response.Headers[header.Key] = header.Value.ToArray();
+                        }
+                        #endregion
                     }
 
-                    // Copy content headers (Content-Type, Content-Encoding, etc.)
-                    foreach (var header in targetRouteResponse.Content.Headers
-                        .Where(x => !_excludedResponseHeaders.Contains(x.Key))
-                        )
+                    try
                     {
-                        context.Response.Headers[header.Key] = header.Value.ToArray();
+                        await CopyAnswerAsync(context, targetRouteResponse, linkedCts, timeout, cancel, SetStatusAndHeaders);
                     }
-                    #endregion
-
-                    // Stream the response body
-                    await targetRouteResponse.Content.CopyToAsync(
-                        context.Response.BodyWriter.AsStream(),
-                        cancel
-                        );
+                    catch (Exception ex) when (started && !cancel.IsCancellationRequested)
+                    {
+                        // Part of the answer has been sent, so its status can't change any more. Cut the
+                        // connection: ending the answer normally would hand the caller a cut-off body that
+                        // reads like a whole one.
+                        _logger.LogError(LogText.Loggable(ex),
+                            "{Time}: Gateway route {Route} cut its caller's connection: {Failure} after part of it was sent. Target: {Target}{EscapedException}",
+                            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), context.Items["route"],
+                            ex is OperationCanceledException
+                                ? "its target didn't send the rest of its answer within target_route_timeout_seconds"
+                                : "its target's answer broke off",
+                            LogText.Url(targetRequestMsg.RequestUri?.ToString()), LogText.ExceptionText(ex));
+                        context.Abort();
+                        return null;
+                    }
 
                     context.Response.BodyWriter.Complete();
                     return null; // Indicates response already written
                 }
+            }
+        }
+
+        /// <summary>
+        /// Copies the target's answer to the caller as it arrives, each block sent on as soon as it is
+        /// read, after <paramref name="start"/> has set the status and headers: once the first block
+        /// is in, or the answer turned out to have none. Each read must complete within the route's
+        /// timeout, so a long download goes on while data keeps coming, and a target that stops
+        /// sending is cut off. The timer stops while a block is written, so a slow caller never counts
+        /// against the target.
+        /// </summary>
+        private static async Task CopyAnswerAsync(HttpContext context, HttpResponseMessage answer,
+            CancellationTokenSource timer, TimeSpan timeout, CancellationToken cancel, Action start)
+        {
+            await using var source = await answer.Content.ReadAsStreamAsync(timer.Token);
+            var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                var first = true;
+                while (true)
+                {
+                    timer.CancelAfter(timeout);
+                    var read = await source.ReadAsync(buffer, timer.Token);
+                    timer.CancelAfter(Timeout.InfiniteTimeSpan);
+                    if (first)
+                    {
+                        first = false;
+                        start();
+                    }
+                    if (read == 0)
+                        return;
+                    // Written and flushed: the caller gets the block now.
+                    await context.Response.BodyWriter.WriteAsync(buffer.AsMemory(0, read), cancel);
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
             }
         }
 

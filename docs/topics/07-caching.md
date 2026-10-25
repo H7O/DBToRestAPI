@@ -149,7 +149,7 @@ For an API gateway route, the key is the route, the verb, the requested path, an
 
 ### Requests that arrive while the query runs
 
-A request with the same key that arrives while the first one's query runs waits for that query instead of running its own, and gets its result. The query keeps running for the callers still waiting when the caller who started it disconnects, and stops only when all of them have gone. On a query route, a caller who disconnects is logged as one `Information` line naming the route; on a gateway route, nothing is logged. Its command timeout (`db_command_timeout`) still applies, as does a gateway route's `target_route_timeout_seconds`.
+A request with the same key that arrives while the first one's query runs waits for that query instead of running its own, and gets its result. The query keeps running for the callers still waiting when the caller who started it disconnects, and stops only when all of them have gone. A caller who disconnects is logged as one `Information` line naming the route. Its command timeout (`db_command_timeout`) still applies, as does a gateway route's `target_route_timeout_seconds`.
 
 On a gateway route, a response that is not stored (an excluded status, or a `Set-Cookie` header) goes only to the caller whose request was forwarded, and each caller who waited for it is forwarded on its own.
 
