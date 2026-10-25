@@ -36,7 +36,6 @@ against the code. Each was read in the code; none has a test yet.
   wait until it ends, however long that takes (a 3-second query made every joined caller wait about
   3.5 s). A maximum join wait, after which a waiting caller runs its own query, would bound it. Not
   requested; recorded from the downstream's measurement of the 1.7.11 fix.
-- **OpenAPI:** upload endpoints have no request schema.
 - **A cookie set on a redirect is dropped.** The engine's clients are pooled and keep no cookies, so
   that callers never share them, and they follow redirects themselves. So a cookie the remote sets on
   a `3xx` never reaches the next hop: an `http` download that needs it fails (until 1.7.8 each
@@ -48,8 +47,6 @@ against the code. Each was read in the code; none has a test yet.
 
 The items below were found on 2026-10-06 by checking real-world usage patterns against the code.
 
-- **OpenAPI doesn't show a `root_node` wrapper,** and documents a file route that also has a
-  `count_query` as a download, though it answers the count wrapper. Found by review on 2026-10-07.
 - **`{http{}}` matching ignores SQL comments**, so AGENTS rule 15 says never to write the marker in
   one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
   `}http}`, and the SQL in between is deleted.
@@ -75,6 +72,15 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **The OpenAPI document described three kinds of route wrong.** Fixed in 1.7.28. An upload route
+  had no request schema: a POST, PUT or PATCH to a route with a files field (its own or the global
+  one) now has a `multipart/form-data` body (the entries as a JSON string, each new file a part)
+  and an `application/json` one (the entries with base64 content), with the field names the route
+  uses. A `root_node` wrapper wasn't shown: the answer is now inside it, from the route or the
+  global setting, and `null` inside where a route without `array` or a count query finds no row.
+  And a `file` route with a `count_query` was documented as a download, though it answers the
+  count envelope; a blank `count_query`, which the controller ignores, counted as one.
+  `OpenApiDocumentBuilderTests` checks each case.
 - **A gateway route read the target's whole answer into memory before writing any of it.** Fixed
   in 1.7.27. `HttpClient.SendAsync` without `ResponseHeadersRead` reads the answer to its end, so
   a large download through a gateway route held its full size in memory per request. The answer

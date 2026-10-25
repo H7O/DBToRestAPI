@@ -344,8 +344,21 @@ $$"""
         var host = section.GetValue<string>("host");
         // A download is never cached: <cache> on it is ignored (CacheService).
         var hasCache = section.GetSection("cache").Exists() && responseStructure != "file";
-        var hasCountQuery = section.GetSection("count_query").Exists()
-            || !string.IsNullOrWhiteSpace(section.GetValue<string>("count_query"));
+        // Read as the controller reads them: a count query answers its envelope, whatever the
+        // response structure, and the route's root_node, else the global one, wraps the answer.
+        var hasCountQuery = !string.IsNullOrWhiteSpace(section.GetSection("count_query").Value);
+        var rootNode = section.GetValue<string?>("root_node") ?? _configuration.GetValue<string?>("root_node");
+        if (string.IsNullOrWhiteSpace(rootNode))
+            rootNode = null;
+
+        // An upload route has a files field, its own or the global one, as ParametersBuilder reads it.
+        var filesField = FileSetting(section, "files_json_field_or_form_field_name");
+        var upload = filesField == null
+            ? null
+            : new UploadFields(
+                filesField,
+                FileSetting(section, "filename_field_in_payload") ?? "name",
+                FileSetting(section, "base64_content_field_in_payload") ?? "base64_content");
 
         var descriptionParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(description))
@@ -364,20 +377,32 @@ $$"""
         var fullDescription = descriptionParts.Count > 0 ? string.Join(" | ", descriptionParts) : null;
 
         // Build response schema
-        var responseContent = BuildResponseContent(responseStructure, responseSchemaStr, hasCountQuery);
+        var responseContent = BuildResponseContent(responseStructure, responseSchemaStr, hasCountQuery, rootNode);
 
         var pathItem = new Dictionary<string, object>();
         foreach (var verb in verbs)
         {
             var operation = BuildOperation(
                 verb, summary, fullDescription, tags,
-                pathParams, nonPathMandatory,
+                pathParams, nonPathMandatory, upload,
                 successCode, responseContent,
                 usesApiKey, usesBearer, rateLimit);
             pathItem[verb] = operation;
         }
 
         return (openApiPath, pathItem, usesApiKey, usesBearer);
+    }
+
+    /// <summary>The field names an upload route's request uses.</summary>
+    private sealed record UploadFields(string FilesField, string NameField, string ContentField);
+
+    /// <summary>A file_management setting: the route's, else the global one, else null.</summary>
+    private string? FileSetting(IConfigurationSection section, string name)
+    {
+        var value = section.GetValue<string>("file_management:" + name);
+        if (string.IsNullOrWhiteSpace(value))
+            value = _configuration.GetValue<string>("file_management:" + name);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static Dictionary<string, object> BuildOperation(
@@ -387,6 +412,7 @@ $$"""
         List<string> tags,
         HashSet<string> pathParams,
         List<string> nonPathMandatory,
+        UploadFields? upload,
         string successCode,
         Dictionary<string, object>? responseContent,
         bool usesApiKey,
@@ -437,30 +463,25 @@ $$"""
         if (parameters.Count > 0)
             operation["parameters"] = parameters;
 
-        // Request body for body verbs
-        if (isBodyVerb && nonPathMandatory.Count > 0)
+        // Request body for body verbs. An upload route takes a multipart form (browsers, large
+        // files) or JSON with base64 content (09-file-uploads.md, request formats).
+        if (isBodyVerb && (nonPathMandatory.Count > 0 || upload != null))
         {
-            var properties = new Dictionary<string, object>();
-            foreach (var param in nonPathMandatory)
+            var content = new Dictionary<string, object>();
+            if (upload != null)
+                content["multipart/form-data"] = new Dictionary<string, object>
+                {
+                    ["schema"] = BodySchema(nonPathMandatory, MultipartUploadProperties(upload, nonPathMandatory))
+                };
+            content["application/json"] = new Dictionary<string, object>
             {
-                properties[param] = new Dictionary<string, object> { ["type"] = "string" };
-            }
+                ["schema"] = BodySchema(nonPathMandatory, upload == null ? new() : JsonUploadProperties(upload))
+            };
 
             operation["requestBody"] = new Dictionary<string, object>
             {
-                ["required"] = true,
-                ["content"] = new Dictionary<string, object>
-                {
-                    ["application/json"] = new Dictionary<string, object>
-                    {
-                        ["schema"] = new Dictionary<string, object>
-                        {
-                            ["type"] = "object",
-                            ["properties"] = properties,
-                            ["required"] = nonPathMandatory
-                        }
-                    }
-                }
+                ["required"] = nonPathMandatory.Count > 0,
+                ["content"] = content
             };
         }
 
@@ -521,6 +542,86 @@ $$"""
     }
 
     /// <summary>
+    /// A request body's schema: the mandatory parameters as strings, then the upload's own fields,
+    /// which replace a mandatory parameter of the same name.
+    /// </summary>
+    private static Dictionary<string, object> BodySchema(List<string> nonPathMandatory, Dictionary<string, object> uploadProperties)
+    {
+        var properties = new Dictionary<string, object>();
+        foreach (var param in nonPathMandatory)
+            properties[param] = new Dictionary<string, object> { ["type"] = "string" };
+        foreach (var (name, property) in uploadProperties)
+            properties[name] = property;
+
+        var schema = new Dictionary<string, object>
+        {
+            ["type"] = "object",
+            ["properties"] = properties
+        };
+        if (nonPathMandatory.Count > 0)
+            schema["required"] = nonPathMandatory;
+        return schema;
+    }
+
+    /// <summary>
+    /// A multipart upload: the files field holds the entries as a JSON string, and each new file is
+    /// a part of its own, matched to its entry by its file name.
+    /// </summary>
+    private static Dictionary<string, object> MultipartUploadProperties(UploadFields upload, List<string> nonPathMandatory)
+    {
+        var example = JsonSerializer.Serialize(new[] { new Dictionary<string, string> { [upload.NameField] = "report.pdf" } });
+        // The engine doesn't read a part's field name, so the parts get one no other field uses.
+        var partsName = new[] { "files", "file", "file_parts" }.First(name =>
+            !name.Equals(upload.FilesField, StringComparison.OrdinalIgnoreCase)
+            && !nonPathMandatory.Contains(name, StringComparer.OrdinalIgnoreCase));
+        return new Dictionary<string, object>
+        {
+            [upload.FilesField] = new Dictionary<string, object>
+            {
+                ["type"] = "string",
+                ["description"] = $"A JSON array of the file entries, such as {example}. A new file's entry has a part whose "
+                    + $"file name equals its `{upload.NameField}`; an entry without a part stands for a file already stored."
+            },
+            [partsName] = new Dictionary<string, object>
+            {
+                ["type"] = "array",
+                ["items"] = new Dictionary<string, object> { ["type"] = "string", ["format"] = "binary" },
+                ["description"] = "The new files, one part each. A part's field name isn't read: its file name matches it to its entry."
+            }
+        };
+    }
+
+    /// <summary>A JSON upload: each new file's entry carries its content in base64.</summary>
+    private static Dictionary<string, object> JsonUploadProperties(UploadFields upload) => new()
+    {
+        [upload.FilesField] = new Dictionary<string, object>
+        {
+            ["type"] = "array",
+            ["description"] = $"The file entries. A new file's entry carries its content in `{upload.ContentField}`; "
+                + "an entry without it stands for a file already stored.",
+            ["items"] = new Dictionary<string, object>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object>
+                {
+                    [upload.NameField] = new Dictionary<string, object>
+                    {
+                        ["type"] = "string",
+                        ["description"] = "The file's name, with its extension"
+                    },
+                    [upload.ContentField] = new Dictionary<string, object>
+                    {
+                        ["type"] = "string",
+                        ["format"] = "byte",
+                        ["description"] = "The file's content in base64"
+                    }
+                },
+                ["required"] = new List<object> { upload.NameField }
+            }
+        }
+    };
+
+    /// <summary>
     /// The 429 a rate-limited operation returns: the Retry-After header (the full window, "at least
     /// this long") and the same { success, message, retry_after_seconds } body the middleware writes.
     /// </summary>
@@ -566,10 +667,11 @@ $$"""
     private static Dictionary<string, object>? BuildResponseContent(
         string? responseStructure,
         string? responseSchemaStr,
-        bool hasCountQuery)
+        bool hasCountQuery,
+        string? rootNode)
     {
-        // File download — binary stream
-        if (responseStructure == "file")
+        // File download — binary stream. A count query answers its envelope instead.
+        if (responseStructure == "file" && !hasCountQuery)
         {
             return new Dictionary<string, object>
             {
@@ -608,6 +710,20 @@ $$"""
             // Default generic schema
             var itemSchema = new Dictionary<string, object> { ["type"] = "object" };
             schema = WrapSchemaForStructure(itemSchema, responseStructure, hasCountQuery);
+        }
+
+        // The answer under root_node. Without `array` or a count query, a result of no row is
+        // the wrapper with null inside.
+        if (rootNode != null)
+        {
+            if (responseStructure != "array" && !hasCountQuery && schema is Dictionary<string, object> answer)
+                answer["nullable"] = true;
+            schema = new Dictionary<string, object>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object> { [rootNode] = schema },
+                ["required"] = new List<object> { rootNode }
+            };
         }
 
         return new Dictionary<string, object>

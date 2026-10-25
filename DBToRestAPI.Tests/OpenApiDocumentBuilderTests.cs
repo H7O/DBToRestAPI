@@ -902,4 +902,215 @@ public class OpenApiDocumentBuilderTests
         });
         Assert.False(ParseDoc(none).GetProperty("paths").GetProperty("/test").GetProperty("get").GetProperty("responses").TryGetProperty("429", out _));
     }
+
+    private static JsonElement SuccessSchema(JsonElement doc, string path, string verb = "get", string mediaType = "application/json")
+        => doc.GetProperty("paths").GetProperty(path).GetProperty(verb).GetProperty("responses")
+            .GetProperty("200").GetProperty("content").GetProperty(mediaType).GetProperty("schema");
+
+    private static List<string> Required(JsonElement schema)
+        => schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()!).ToList();
+
+    [Fact]
+    public void RootNode_WrapsEachShape_AsTheControllerDoes()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:list:route"] = "list",
+            ["queries:list:verb"] = "GET",
+            ["queries:list:response_structure"] = "array",
+            ["queries:list:root_node"] = "items",
+            ["queries:list:query"] = "SELECT 1",
+            ["queries:one:route"] = "one",
+            ["queries:one:verb"] = "GET",
+            ["queries:one:root_node"] = "item",
+            ["queries:one:query"] = "SELECT 1",
+            ["queries:page:route"] = "page",
+            ["queries:page:verb"] = "GET",
+            ["queries:page:root_node"] = "result",
+            ["queries:page:count_query"] = "SELECT 1",
+            ["queries:page:query"] = "SELECT 1",
+            ["queries:download:route"] = "download",
+            ["queries:download:verb"] = "GET",
+            ["queries:download:response_structure"] = "file",
+            ["queries:download:root_node"] = "file",
+            ["queries:download:query"] = "SELECT 1"
+        });
+        var doc = ParseDoc(builder);
+
+        var list = SuccessSchema(doc, "/list");
+        Assert.Equal(["items"], Required(list));
+        var items = list.GetProperty("properties").GetProperty("items");
+        Assert.Equal("array", items.GetProperty("type").GetString());
+        Assert.False(items.TryGetProperty("nullable", out _));
+
+        // One row is the row, several an array, none null: {"item": null}.
+        var item = SuccessSchema(doc, "/one").GetProperty("properties").GetProperty("item");
+        Assert.Equal(2, item.GetProperty("anyOf").GetArrayLength());
+        Assert.True(item.GetProperty("nullable").GetBoolean());
+
+        var result = SuccessSchema(doc, "/page").GetProperty("properties").GetProperty("result");
+        Assert.Equal(["success", "count", "data"], Required(result));
+
+        // A file isn't wrapped.
+        var download = doc.GetProperty("paths").GetProperty("/download").GetProperty("get")
+            .GetProperty("responses").GetProperty("200").GetProperty("content");
+        Assert.True(download.TryGetProperty("application/octet-stream", out _));
+    }
+
+    [Fact]
+    public void RootNode_Global_AppliesToARouteWithoutItsOwn()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["root_node"] = "data",
+            ["queries:list:route"] = "list",
+            ["queries:list:verb"] = "GET",
+            ["queries:list:response_structure"] = "array",
+            ["queries:list:query"] = "SELECT 1",
+            ["queries:own:route"] = "own",
+            ["queries:own:verb"] = "GET",
+            ["queries:own:response_structure"] = "array",
+            ["queries:own:root_node"] = "rows",
+            ["queries:own:query"] = "SELECT 1"
+        });
+        var doc = ParseDoc(builder);
+
+        Assert.Equal(["data"], Required(SuccessSchema(doc, "/list")));
+        Assert.Equal(["rows"], Required(SuccessSchema(doc, "/own")));
+    }
+
+    [Fact]
+    public void RootNode_CustomSchema_IsInsideTheWrapper()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:list:route"] = "list",
+            ["queries:list:verb"] = "GET",
+            ["queries:list:response_structure"] = "array",
+            ["queries:list:root_node"] = "items",
+            ["queries:list:query"] = "SELECT 1",
+            ["queries:list:openapi:response_schema"] = """{"type":"object","properties":{"id":{"type":"integer"}}}"""
+        });
+
+        var items = SuccessSchema(ParseDoc(builder), "/list").GetProperty("properties").GetProperty("items");
+        Assert.Equal("integer", items.GetProperty("items").GetProperty("properties").GetProperty("id").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void FileRouteWithACountQuery_DocumentsTheEnvelope_NotADownload()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:files:route"] = "files",
+            ["queries:files:verb"] = "GET",
+            ["queries:files:response_structure"] = "file",
+            ["queries:files:count_query"] = "SELECT 1",
+            ["queries:files:query"] = "SELECT 1"
+        });
+
+        var content = ParseDoc(builder).GetProperty("paths").GetProperty("/files").GetProperty("get")
+            .GetProperty("responses").GetProperty("200").GetProperty("content");
+        Assert.False(content.TryGetProperty("application/octet-stream", out _));
+        Assert.Equal(["success", "count", "data"], Required(content.GetProperty("application/json").GetProperty("schema")));
+    }
+
+    [Fact]
+    public void BlankCountQuery_IsNoCountQuery()
+    {
+        // The controller ignores a count query of nothing but white space.
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:list:route"] = "list",
+            ["queries:list:verb"] = "GET",
+            ["queries:list:response_structure"] = "array",
+            ["queries:list:count_query"] = " ",
+            ["queries:list:query"] = "SELECT 1"
+        });
+
+        var doc = ParseDoc(builder);
+        Assert.Equal("array", SuccessSchema(doc, "/list").GetProperty("type").GetString());
+        Assert.DoesNotContain("pagination", doc.GetProperty("paths").GetProperty("/list").GetProperty("get")
+            .TryGetProperty("description", out var text) ? text.GetString() ?? "" : "");
+    }
+
+    [Fact]
+    public void UploadRoute_TakesAMultipartFormOrJson_WithTheConfiguredFieldNames()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            // The content field from the global settings, the files field from the route.
+            ["file_management:base64_content_field_in_payload"] = "content_base64",
+            ["queries:upload:route"] = "documents",
+            ["queries:upload:verb"] = "GET,POST",
+            ["queries:upload:mandatory_parameters"] = "title",
+            ["queries:upload:file_management:files_json_field_or_form_field_name"] = "attachments",
+            ["queries:upload:query"] = "SELECT 1"
+        });
+        var path = ParseDoc(builder).GetProperty("paths").GetProperty("/documents");
+
+        var body = path.GetProperty("post").GetProperty("requestBody");
+        Assert.True(body.GetProperty("required").GetBoolean());
+
+        var multipart = body.GetProperty("content").GetProperty("multipart/form-data").GetProperty("schema");
+        Assert.Equal(["title"], Required(multipart));
+        var form = multipart.GetProperty("properties");
+        Assert.Equal("string", form.GetProperty("title").GetProperty("type").GetString());
+        Assert.Equal("string", form.GetProperty("attachments").GetProperty("type").GetString());
+        Assert.Contains("""[{"name":"report.pdf"}]""", form.GetProperty("attachments").GetProperty("description").GetString());
+        Assert.Equal("binary", form.GetProperty("files").GetProperty("items").GetProperty("format").GetString());
+
+        var json = body.GetProperty("content").GetProperty("application/json").GetProperty("schema");
+        Assert.Equal(["title"], Required(json));
+        var entry = json.GetProperty("properties").GetProperty("attachments").GetProperty("items");
+        Assert.Equal(["name"], Required(entry));
+        Assert.Equal("byte", entry.GetProperty("properties").GetProperty("content_base64").GetProperty("format").GetString());
+
+        // A GET has no body.
+        Assert.False(path.GetProperty("get").TryGetProperty("requestBody", out _));
+    }
+
+    [Fact]
+    public void UploadRoute_FromTheGlobalFilesField_WithoutMandatoryParameters()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["file_management:files_json_field_or_form_field_name"] = "files",
+            ["queries:upload:route"] = "documents",
+            ["queries:upload:verb"] = "POST",
+            ["queries:upload:query"] = "SELECT 1"
+        });
+
+        var body = ParseDoc(builder).GetProperty("paths").GetProperty("/documents").GetProperty("post").GetProperty("requestBody");
+        Assert.False(body.GetProperty("required").GetBoolean());
+        var multipart = body.GetProperty("content").GetProperty("multipart/form-data").GetProperty("schema");
+        Assert.False(multipart.TryGetProperty("required", out _));
+        // The files field is `files`, so the parts get another name.
+        Assert.Equal("string", multipart.GetProperty("properties").GetProperty("files").GetProperty("type").GetString());
+        Assert.Equal("array", multipart.GetProperty("properties").GetProperty("file").GetProperty("type").GetString());
+        // The engine's default content field.
+        var entry = body.GetProperty("content").GetProperty("application/json").GetProperty("schema")
+            .GetProperty("properties").GetProperty("files").GetProperty("items");
+        Assert.True(entry.GetProperty("properties").TryGetProperty("base64_content", out _));
+    }
+
+    [Fact]
+    public void PostWithoutMandatoryParametersOrUploads_HasNoBody()
+    {
+        var builder = CreateBuilder(new Dictionary<string, string?>
+        {
+            ["openapi:enabled"] = "true",
+            ["queries:ping:route"] = "ping",
+            ["queries:ping:verb"] = "POST",
+            ["queries:ping:query"] = "SELECT 1"
+        });
+
+        Assert.False(ParseDoc(builder).GetProperty("paths").GetProperty("/ping").GetProperty("post").TryGetProperty("requestBody", out _));
+    }
 }

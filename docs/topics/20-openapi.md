@@ -74,13 +74,15 @@ The following are inferred automatically from your existing endpoint tags — no
 | `<success_status_code>201</success_status_code>` | Response status code (default: `200`) |
 | No `<response_structure>` | Response schema: one object or an array of them (`anyOf`) |
 | `<response_structure>array</response_structure>` | Response schema: array of objects |
-| `<response_structure>file</response_structure>` | Binary download (`application/octet-stream`) |
+| `<response_structure>file</response_structure>` | Binary download (`application/octet-stream`), unless the route has a `<count_query>`, which answers its envelope instead |
 | `<api_keys_collections>vendors</api_keys_collections>` | API key security scheme (`x-api-key` header) |
 | `<authorize>` | Bearer JWT security scheme |
 | `<host>` | Noted in operation description |
 | `<cache>` | "Response is cached" in description, except on a download route, which is never cached |
 | `<rate_limit>` | `429` response with the `Retry-After` header and the `{ success, message, retry_after_seconds }` body; the effective limit noted in the description (see [Rate Limiting](18-rate-limiting.md)) |
-| `<count_query>` | Response wrapped in `{ success, count, data }` pagination envelope |
+| `<count_query>` | Response wrapped in `{ success, count, data }` pagination envelope, on a `file` route too |
+| `<root_node>items</root_node>`, on the route or in `settings.xml` | Response wrapped in `{ "items": ... }`. Without `array` or a `<count_query>`, the value inside may be `null`: a query that returns no row answers `{"items": null}`. A download isn't wrapped |
+| `<files_json_field_or_form_field_name>`, in the route's `<file_management>` or in `file_management.xml` | Request body of POST, PUT and PATCH as `multipart/form-data` (that field holds the file entries as a JSON string, and each new file is a part of its own) or `application/json` (the entries hold each new file's content in base64), with the entry field names `filename_field_in_payload` and `base64_content_field_in_payload` set ([uploads](09-file-uploads.md#request-formats)) |
 
 Set `<response_structure>array</response_structure>` on list routes. Without it, the schema says one object or an array of them, which a generated client sees as a union type.
 
@@ -127,7 +129,7 @@ For richer specs, add an `<openapi>` child node to any endpoint:
 | `<summary>` | Short operation label | XML node name (e.g., `create_order` → `create order`) |
 | `<description>` | Longer explanation | Auto-generated from route hints |
 | `<tags>` | Comma-separated grouping tags | First route segment (e.g., `orders`) |
-| `<response_schema>` | JSON Schema of one row. It is wrapped as the route answers: an array of it with `array`, one of it or an array of it (`anyOf`) without the tag, and the `data` items with a `count_query`. A `root_node` wrapper isn't shown (known issue) | Generic object, wrapped the same way |
+| `<response_schema>` | JSON Schema of one row. It is wrapped as the route answers: an array of it with `array`, one of it or an array of it (`anyOf`) without the tag, and the `data` items with a `count_query`, inside the `root_node` wrapper when there is one | Generic object, wrapped the same way |
 
 ## Global Settings
 
@@ -156,7 +158,7 @@ Parameters are placed according to standard REST conventions:
 |-----------|-----------|
 | Appears in route as `{{param}}` | `in: path` |
 | GET/DELETE, non-path parameter | `in: query` |
-| POST/PUT/PATCH, non-path parameters | `requestBody` (JSON) |
+| POST/PUT/PATCH, non-path parameters | `requestBody` (JSON, and a multipart form on an upload route) |
 
 ## Error Responses
 

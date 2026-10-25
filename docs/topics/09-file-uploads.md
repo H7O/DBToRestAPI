@@ -471,12 +471,6 @@ IF NOT EXISTS (
 - Don't spread `relative_file_path_structure` over several lines.
 - Don't echo `backend_temp_file_path` to clients: it is a server path.
 
-## Known issues
-
-Tracked in [TODO.md](https://github.com/H7O/DBToRestAPI/blob/master/TODO.md):
-
-- The OpenAPI document has no request schema for upload endpoints.
-
 ## Related
 
 - [Errors, status codes and rollback](../reference/errors.md)
