@@ -104,8 +104,8 @@ internal static partial class DatabaseErrors
                 // -2: the command timeout. 1222: SET LOCK_TIMEOUT expired.
                 case SqlException sql when sql.Errors.Cast<SqlError>().Any(e => e.Number is -2 or 1222):
                     return true;
-                // SQLITE_BUSY or SQLITE_LOCKED: Microsoft.Data.Sqlite retries both until the command
-                // timeout expires, while another connection holds the lock.
+                // SQLITE_BUSY or SQLITE_LOCKED: SQLite waits for the lock, and Microsoft.Data.Sqlite
+                // retries, until the command timeout expires, while another connection holds it.
                 case SqliteException { SqliteErrorCode: 5 or 6 }:
                     return true;
                 // 57014 query_canceled: PostgreSQL's statement_timeout, DB2's interrupt. 55P03

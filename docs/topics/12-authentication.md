@@ -397,10 +397,11 @@ curl -X GET "https://api.example.com/protected" \
 
 ## CORS Integration
 
-An `<authorize>` section on a route, or at the root of a file as in the shipped `auth_providers.xml`,
-turns `Access-Control-Allow-Credentials: true` on for every route. The default allowed headers are
-then a fixed list without the provider hint header, so a page on another origin that sends
-`X-Auth-Provider` needs it in the route's `<cors><allowed_headers>`. See [CORS](11-cors.md#rules).
+A route's own `<authorize>` turns `Access-Control-Allow-Credentials: true` on for that route. The
+`<authorize>` at the root of `auth_providers.xml` doesn't: it protects no route. With credentials on,
+the default allowed headers are a fixed list plus the route's provider hint header (`X-Auth-Provider`
+unless `<provider_hint_header>` names another), so a page on another origin can send it without
+`<cors><allowed_headers>`. See [CORS](11-cors.md#rules).
 
 ## Security Best Practices
 

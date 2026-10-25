@@ -47,7 +47,7 @@ Three rules hold for every tag:
 | `json_var` attribute on `<query>` | Endpoint | `json` | Names `{pq{...}}`'s JSON array of the previous query's rows. Ignored on the first query. |
 | `db_command_timeout` attribute on `<query>` | Endpoint | the endpoint's `<db_command_timeout>` | Seconds. |
 | `<connection_string_name>` | Endpoint | `default` | No global fallback. |
-| `<db_command_timeout>` | Endpoint, then global | the provider's default (30 s on most) | Seconds ([13](../topics/13-databases.md#per-query-timeout)). |
+| `<db_command_timeout>` | Endpoint, then global | the provider's default (30 s on most) | Seconds. On SQLite, also how long a query waits for a lock ([13](../topics/13-databases.md#per-query-timeout)). |
 | `<count_query>` | Endpoint | none | Runs after the last query, on its connection and timeout. The answer becomes `{"success":true,"count":N,"data":[...]}`, and `<response_structure>` is ignored. Attributes on it are not read. |
 | `<buffer_rows>` | Endpoint, then global | 2 rows read ahead | A whole number, 0 or more. Anything else is a `500` ([05](../topics/05-response-formats.md#buffer_rows-read-a-result-before-writing-it)). |
 | `<ConnectionStrings>` children | Global | `default` must exist for endpoints without `<connection_string_name>` | One element per connection, the string in CDATA. |
@@ -85,8 +85,8 @@ Each tag goes in `<cors>`: the endpoint's or gateway route's, then the global on
 |---|---|---|
 | `<pattern>` | none: no origin matches | Matched against the origin's host only, ignoring case. Anchor it with `^` and `$`. |
 | `<fallback_origin>` | `*` | Sent when the origin doesn't match, and when there's no `Origin` header. |
-| `<allowed_headers>` | the default list with credentials on, `*` with them off | Replaces the default list. |
-| `<allow_credentials>` | `true` when an `<authorize>` exists on the route or at the root, else `false` | `true` or `false`. Anything else counts as not set. |
+| `<allowed_headers>` | the default list and the route's provider hint header with credentials on, `*` with them off | Replaces the default list. |
+| `<allow_credentials>` | `true` on a route with its own `<authorize>`, else `false` | `true` or `false`. Anything else counts as not set. |
 | `<max_age>` | `86400` | Seconds. A value that isn't a whole number of 0 or more counts as not set. |
 | `<exposed_headers>` | `Content-Disposition, Retry-After` | The response headers a page may read, besides those every browser shows. Replaces the default list. |
 

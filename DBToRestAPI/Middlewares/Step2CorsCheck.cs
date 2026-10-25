@@ -126,8 +126,8 @@ public class Step2CorsCheck(
 
         string allowedOrigin = DetermineAllowedOrigin(section, origin);
         string allowedMethods = GetAllowedMethods(section);
-        string? allowedHeaders = GetAllowedHeaders(section);
         string allowCredentials = GetAllowCredentials(section);
+        string allowedHeaders = GetAllowedHeaders(section) ?? DefaultAllowedHeaders([section], allowCredentials);
         long maxAge = GetMaxAge(section);
         bool variesByOrigin = !string.IsNullOrWhiteSpace(GetCorsValue(section, "pattern"));
         string exposedHeaders = GetCorsValue(section, "exposed_headers") is { } exposed && !string.IsNullOrWhiteSpace(exposed)
@@ -147,8 +147,8 @@ public class Step2CorsCheck(
 
         string allowedOrigin = DetermineAllowedOrigin(sections, origin);
         string allowedMethods = GetAllowedMethods(sections);
-        string? allowedHeaders = GetAllowedHeaders(sections);
         string allowCredentials = GetAllowCredentials(sections);
+        string allowedHeaders = GetAllowedHeaders(sections) ?? DefaultAllowedHeaders(sections, allowCredentials);
         long maxAge = GetMaxAge(sections);
         bool variesByOrigin = sections.Any(section => !string.IsNullOrWhiteSpace(GetCorsValue(section, "pattern")));
 
@@ -163,7 +163,7 @@ public class Step2CorsCheck(
         HttpContext context,
         string allowedOrigin,
         string allowedMethods,
-        string? allowedHeaders,
+        string allowedHeaders,
         string allowCredentials,
         long maxAge,
         bool variesByOrigin,
@@ -180,7 +180,7 @@ public class Step2CorsCheck(
         if (allowCredentials.Equals("true"))
             context.Response.Headers["Access-Control-Allow-Credentials"] = allowCredentials;
 
-        context.Response.Headers["Access-Control-Allow-Headers"] = allowedHeaders ?? (allowCredentials == "true" ? _defaultHeaders : "*");
+        context.Response.Headers["Access-Control-Allow-Headers"] = allowedHeaders;
         context.Response.Headers["Access-Control-Max-Age"] = maxAge.ToString();
 
         // The response headers a page on another origin may read, besides the few every browser shows
@@ -358,10 +358,33 @@ public class Step2CorsCheck(
         if (string.IsNullOrWhiteSpace(headers))
         {
             this._logger.LogDebug("CORS: Using default allowed headers");
-            return null; // Will be replaced with _defaultHeaders or "*" in SetCorsResponseHeaders
+            return null; // Will be replaced with DefaultAllowedHeaders
         }
 
         return headers;
+    }
+
+    /// <summary>
+    /// The allowed headers of a route without <c>allowed_headers</c>: <c>*</c> with credentials off. With
+    /// them on, a browser reads <c>*</c> as a header's name, so the default list is sent instead, with the
+    /// provider hint header of each route's own <c>&lt;authorize&gt;</c>, which picks the token's provider
+    /// (as Step4JwtAuthorization reads it: the route's, else the global one, else X-Auth-Provider).
+    /// </summary>
+    private string DefaultAllowedHeaders(IEnumerable<IConfigurationSection> sections, string allowCredentials)
+    {
+        if (allowCredentials != "true")
+            return "*";
+
+        var headers = _defaultHeaders.Split(',', StringSplitOptions.TrimEntries).ToList();
+        foreach (var authorize in sections.Select(s => s.GetSection("authorize")).Where(a => a.Exists()))
+        {
+            var hint = authorize.GetValue<string>("provider_hint_header")
+                ?? _configuration.GetValue<string>("authorize:provider_hint_header")
+                ?? Step4JwtAuthorization.DefaultProviderHintHeader;
+            if (!string.IsNullOrWhiteSpace(hint) && !headers.Contains(hint.Trim(), StringComparer.OrdinalIgnoreCase))
+                headers.Add(hint.Trim());
+        }
+        return string.Join(", ", headers);
     }
 
     /// <summary>
@@ -481,8 +504,12 @@ public class Step2CorsCheck(
 
     /// <summary>
     /// Gets the allow credentials value for a single section.
-    /// Checks cors:allow_credentials config, then falls back to checking authorize section.
+    /// Checks cors:allow_credentials config, then falls back to the route's own authorize section.
     /// </summary>
+    /// <remarks>
+    /// The root &lt;authorize&gt; of auth_providers.xml holds the providers and their defaults, and protects
+    /// no route, so it doesn't turn credentials on either.
+    /// </remarks>
     private string GetAllowCredentials(IConfigurationSection section)
     {
         var allowCredentials = GetCorsValue(section, "allow_credentials");
@@ -493,11 +520,7 @@ public class Step2CorsCheck(
             return allowCredentialsBool.ToString().ToLowerInvariant();
         }
 
-        // Check if there is an `authorize` section in the route or global config
-        if (section.GetSection("authorize").Exists() || _configuration.GetSection("authorize").Exists())
-            return "true";
-
-        return "false";
+        return section.GetSection("authorize").Exists() ? "true" : "false";
     }
 
     /// <summary>

@@ -1,6 +1,6 @@
 ---
 title: CORS
-summary: The Access-Control-* headers the engine sends so that a browser page on another origin can read an endpoint's answer, their defaults, and how an <authorize> section anywhere changes them.
+summary: The Access-Control-* headers the engine sends so that a browser page on another origin can read an endpoint's answer, their defaults, and how a route's <authorize> changes them.
 keywords: [cors, pattern, fallback_origin, max_age, allow_credentials, allowed_headers, exposed_headers, Origin, Access-Control-Allow-Origin, Access-Control-Allow-Credentials, Access-Control-Allow-Headers, Access-Control-Allow-Methods, Access-Control-Max-Age, Access-Control-Expose-Headers, Content-Disposition, Retry-After, OPTIONS, preflight, 204, X-Auth-Provider, Vary]
 ---
 
@@ -15,8 +15,8 @@ CORS headers tell a browser whether a page from another origin may read an endpo
 1. **Anchor the pattern with `^` and `$`.** `<pattern>` is a .NET regular expression matched against the host of the request's `Origin` only, without its scheme or port, ignoring case. Unanchored, `example\.com` also matches `example.com.attacker.net`. A pattern with a scheme or a port in it (`^https://app\.example\.com$`, `^localhost:3000$`) matches nothing.
 2. **Set `<fallback_origin>` to your own origin, or the pattern restricts nothing.** An origin the pattern doesn't match gets `fallback_origin`, and without one `*`, which lets a page on any origin read the answer unless it sends cookies. The shipped `settings.xml` has a pattern and no fallback.
 3. **To allow every origin, leave out both `<pattern>` and `<fallback_origin>`,** or set `<fallback_origin>*</fallback_origin>`.
-4. **Expect credentials to be on.** When an `<authorize>` section exists on the route or at the root of any loaded file, every response says `Access-Control-Allow-Credentials: true`. The shipped `auth_providers.xml` has one at its root, so in the shipped config every route does. `<allow_credentials>false</allow_credentials>` turns it off.
-5. **With credentials on, list in `<allowed_headers>` every request header the page sends that's outside the default list.** The default is then `Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key`, not `*`. A page that sends `X-Auth-Provider`, the header that picks the token's provider on a route with several ([12](12-authentication.md#how-a-provider-is-selected)), or a header of its own fails the preflight, and the browser never sends the request. `<allowed_headers>` replaces the default list, so repeat the defaults the page needs.
+4. **A route with its own `<authorize>` has credentials on.** Its responses say `Access-Control-Allow-Credentials: true`. `<allow_credentials>false</allow_credentials>` turns it off, and `true` turns it on for a route without `<authorize>`. The `<authorize>` at the root of `auth_providers.xml` lists the providers and protects no route, so it turns credentials on for none.
+5. **With credentials on, list in `<allowed_headers>` every request header the page sends that's outside the default list.** The default is then `Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key` and the route's provider hint header, the header that picks the token's provider on a route with several ([12](12-authentication.md#how-a-provider-is-selected)): `X-Auth-Provider`, unless `<provider_hint_header>` names another. It isn't `*`, which a browser reads as a header's name when credentials are on. A page that sends a header of its own fails the preflight, and the browser never sends the request. `<allowed_headers>` replaces the default list, so repeat the defaults the page needs.
 6. **A page that sends cookies (`credentials: 'include'`) needs a pattern that matches its origin.** For such a request the browser accepts only its own origin in `Access-Control-Allow-Origin`, never `*` or a fallback for another site.
 7. **Edit the `<cors>` block that `settings.xml` already has.** A second `<cors>` beside it is numbered by the configuration reader and stops matching ([AGENTS.md](../../AGENTS.md) rule 12).
 
@@ -68,7 +68,6 @@ A page at `https://app.example.com` calls the engine at `https://api.example.com
     <provider>google,azure_b2c</provider>
   </authorize>
   <cors>
-    <allowed_headers>Authorization, Content-Type, X-Auth-Provider</allowed_headers>
     <max_age>600</max_age>
   </cors>
   <query><![CDATA[
@@ -90,11 +89,11 @@ const res = await fetch('https://api.example.com/my/orders', {
 
 | Request | Answer |
 |---|---|
-| The browser's preflight from `https://app.example.com`, asking for `authorization,x-auth-provider` | `204` with `Access-Control-Allow-Origin: https://app.example.com`, `Access-Control-Allow-Credentials: true`, `Access-Control-Allow-Headers: Authorization, Content-Type, X-Auth-Provider`, `Access-Control-Allow-Methods: GET, OPTIONS`, `Access-Control-Max-Age: 600` |
+| The browser's preflight from `https://app.example.com`, asking for `authorization,x-auth-provider` | `204` with `Access-Control-Allow-Origin: https://app.example.com`, `Access-Control-Allow-Credentials: true`, `Access-Control-Allow-Headers: Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key, X-Auth-Provider`, `Access-Control-Allow-Methods: GET, OPTIONS`, `Access-Control-Max-Age: 600` |
 | The `GET` that follows | `200` with the orders, the same headers, and `Access-Control-Expose-Headers: Content-Disposition, Retry-After` |
 | The same page served from `https://other.example.org` | The preflight gets `Access-Control-Allow-Origin: https://app.example.com`, so the browser doesn't send the `GET` |
 | `curl` without an `Origin` header | `200` with the orders. `Access-Control-Allow-Origin` is the fallback, and curl ignores it |
-| The route without its `<allowed_headers>` | The preflight lists the default headers, without `X-Auth-Provider`: the browser reports a CORS error and doesn't send the `GET`. The engine logs nothing |
+| The page also sends a header of its own, such as `X-Request-Id` | The preflight's list leaves it out: the browser reports a CORS error and doesn't send the `GET`. The engine logs nothing. List it in `<allowed_headers>`, with the defaults the page sends |
 
 To check the headers without a browser:
 
@@ -113,8 +112,8 @@ Each one goes in `<cors>` on a route or at the root of `settings.xml`. The route
 |---|---|---|
 | `pattern` | none: no origin matches | .NET regular expression matched against the origin's host, ignoring case, with a one-second limit. An invalid pattern is logged at `Error` and matches nothing. |
 | `fallback_origin` | `*` | Sent when the origin doesn't match, and when there's no `Origin` header. A value that doesn't start with `http`, other than `*`, gets `https://` in front. |
-| `allow_credentials` | `true` when an `<authorize>` section exists on the route or at the root, otherwise `false` | `true` or `false`. Anything else counts as not set. |
-| `allowed_headers` | `Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key` with credentials on, `*` with them off | Comma-separated. Replaces the default list. |
+| `allow_credentials` | `true` on a route with its own `<authorize>`, otherwise `false` | `true` or `false`. Anything else counts as not set. |
+| `allowed_headers` | `Authorization, Content-Type, X-Requested-With, Accept, Origin, X-Api-Key` and the provider hint header of the route's `<authorize>` with credentials on, `*` with them off | Comma-separated. Replaces the default list. |
 | `max_age` | `86400` | Seconds a browser may keep a preflight's answer. A value that isn't a whole number of 0 or more counts as not set. |
 | `exposed_headers` | `Content-Disposition, Retry-After` | Comma-separated. The response headers a page may read besides `Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified` and `Pragma`, which every browser shows. Replaces the default list, so keep `Content-Disposition` on a route that serves downloads. Not sent on a preflight. |
 
@@ -158,6 +157,6 @@ Keep `localhost` out of a production pattern. The pattern can't check the scheme
 
 ## Related
 
-- [12 Authentication](12-authentication.md): the provider hint header, and the `<authorize>` sections that turn credentials on.
+- [12 Authentication](12-authentication.md): the provider hint header, and the route's `<authorize>` that turns credentials on.
 - [08 API gateway](08-api-gateway.md): headers from the target.
 - [02 Configuration](02-configuration.md): where `settings.xml` and the other files live.

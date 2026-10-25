@@ -276,6 +276,25 @@ internal class TrackedDbConnection : DbConnection
         return cmd;
     }
 
+    /// <summary>
+    /// Has SQLite wait for a lock as long as the query may run: its command timeout, in seconds, else
+    /// the connection's default (30). Microsoft.Data.Sqlite leaves SQLite's own busy timeout at 0, so a
+    /// statement that finds the database locked fails at once inside the driver, which sleeps 150 ms
+    /// before each retry until the command timeout: with many writers, a collision costs a request
+    /// 150 ms. SQLite's busy handler retries after 1 ms, then a little later each time, up to every
+    /// 100 ms, until the busy timeout, which ends where the command timeout does, so a query still
+    /// fails when it did. 0, no limit, waits as long as it takes, as the driver does.
+    /// </summary>
+    internal void WaitForLocksUpTo(int? commandTimeoutSeconds)
+    {
+        if (_inner is not Microsoft.Data.Sqlite.SqliteConnection { State: System.Data.ConnectionState.Open } sqlite
+            || sqlite.Handle is null)
+            return;
+        var seconds = commandTimeoutSeconds ?? sqlite.DefaultTimeout;
+        var milliseconds = seconds <= 0 ? int.MaxValue : (int)Math.Min(seconds * 1000L, int.MaxValue);
+        SQLitePCL.raw.sqlite3_busy_timeout(sqlite.Handle, milliseconds);
+    }
+
     // Microsoft.Data.Sqlite returns a connection to its pool as it is. A transaction that a query's
     // BEGIN opened and an error left open would keep the database's write lock, and the next request
     // given that connection would run inside it. Npgsql rolls back as the connection closes; SqlClient

@@ -233,7 +233,7 @@ Each has its own page. Their top-level shape:
 </settings>
 ```
 
-An `<authorize>` section at the root, as in `auth_providers.xml`, also turns CORS credentials on for every route ([11](11-cors.md#rules)).
+The `<authorize>` at the root of `auth_providers.xml` holds the providers and their defaults, and protects no route: a route is protected, and gets CORS credentials, by its own `<authorize>` ([12](12-authentication.md), [11](11-cors.md#rules)).
 
 ## Environment variables
 

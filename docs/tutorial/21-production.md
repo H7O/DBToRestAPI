@@ -443,6 +443,19 @@ Measure the resident set before and after — on a 512 MB box the GC mode is usu
 the **`DBToRestAPI-portable`** archive (framework-dependent) is ~60 MB instead of ~130 MB — disk, not
 RAM, but handy on tiny instances.
 
+**3. Full speed sooner after a start (optional).**  Under full load on one CPU, the engine reaches its
+full speed only about a minute after it starts.  The .NET runtime compiles a busy method again,
+optimized, only after a pause in which it compiled nothing new, and a busy server keeps cutting that
+pause short: for the first 20 seconds a lookup by id costs about 2.3 times its steady CPU.  This
+environment variable gets it to full speed in 10 to 20 seconds:
+
+```bash
+DOTNET_TC_CallCountingDelayMs=0    # optimize busy methods without waiting for a pause
+```
+
+It changes what the runtime compiles at start-up, a cost paid once per start, so the engine doesn't
+set it.  Don't turn off `DOTNET_TieredPGO` instead: that makes the steady speed worse.
+
 ---
 
 ## Production Checklist

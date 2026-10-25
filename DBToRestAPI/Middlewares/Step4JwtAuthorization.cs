@@ -35,7 +35,7 @@ namespace DBToRestAPI.Middlewares
         // Default HTTP header an app sends to hint which configured provider issued the token,
         // consulted only for multi-provider endpoints. Overridable per-endpoint via
         // <authorize><provider_hint_header> or globally via authorize:provider_hint_header.
-        private const string DefaultProviderHintHeader = "X-Auth-Provider";
+        internal const string DefaultProviderHintHeader = "X-Auth-Provider";
 
         // The named HttpClient that fetches each provider's discovery document and signing keys.
         internal const string OidcMetadataClient = "oidcMetadata";

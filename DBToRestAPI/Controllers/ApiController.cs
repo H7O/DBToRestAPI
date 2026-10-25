@@ -817,7 +817,7 @@ namespace DBToRestAPI.Controllers
                         // Intermediate query: prepare embedded HTTP calls (if any), execute, materialize, and add result to qParams
                         var queryText = await PrepareEmbeddedHttpCallsParamsIfAny(query.QueryText, qParams, serviceQuerySection, run);
 
-                        await OpenConnectionAsync(connection, run.Cancel);
+                        await OpenConnectionAsync(connection, commandTimeout, run.Cancel);
                         var result = await connection.ExecuteQueryAsync(
                             queryText,
                             qParams,
@@ -973,7 +973,7 @@ namespace DBToRestAPI.Controllers
                         string.Join("; ", qParams.Select((p, i) => $"#{i}: regex='{(p.QueryParamsRegex?.Length > 60 ? p.QueryParamsRegex[..60] + "..." : p.QueryParamsRegex)}' hasData={p.DataModel != null}")));
                 }
 
-                await OpenConnectionAsync(connection, run.Cancel);
+                await OpenConnectionAsync(connection, commandTimeout, run.Cancel);
                 var resultWithNoCount = await connection.ExecuteQueryAsync(query, qParams, commandTimeout: commandTimeout, cToken: run.Cancel);
                 if (resultWithNoCount != null)
                 {
@@ -1060,7 +1060,7 @@ namespace DBToRestAPI.Controllers
             // With count query - prepare embedded HTTP calls (if any)
             countQuery = await PrepareEmbeddedHttpCallsParamsIfAny(countQuery, qParams, serviceQuerySection, run);
 
-            await OpenConnectionAsync(connection, run.Cancel);
+            await OpenConnectionAsync(connection, commandTimeout, run.Cancel);
             var resultCount = await connection.ExecuteQueryAsync(countQuery, qParams, commandTimeout: commandTimeout, cToken: run.Cancel);
             if (resultCount != null)
             {
@@ -1150,20 +1150,23 @@ namespace DBToRestAPI.Controllers
         /// Opens a query's connection, unless it is open, right before the query runs: after its
         /// {http{}} calls, so that a connection isn't held while they run. Opened here rather than
         /// by Com.H.Data.Common, so that a database the engine can't reach is told apart from a
-        /// query that fails, and the caller gets 503.
+        /// query that fails, and the caller gets 503. On SQLite, the query then waits for a lock as long
+        /// as its command timeout lets it run (TrackedDbConnection.WaitForLocksUpTo).
         /// </summary>
-        private static async Task OpenConnectionAsync(DbConnection connection, CancellationToken cancel)
+        private static async Task OpenConnectionAsync(DbConnection connection, int? commandTimeout, CancellationToken cancel)
         {
-            if (connection.State == System.Data.ConnectionState.Open)
-                return;
-            try
+            if (connection.State != System.Data.ConnectionState.Open)
             {
-                await connection.OpenAsync(cancel);
+                try
+                {
+                    await connection.OpenAsync(cancel);
+                }
+                catch (Exception ex) when (!cancel.IsCancellationRequested)
+                {
+                    throw new DatabaseUnavailableException($"The database could not be reached: {ex.Message}", ex);
+                }
             }
-            catch (Exception ex) when (!cancel.IsCancellationRequested)
-            {
-                throw new DatabaseUnavailableException($"The database could not be reached: {ex.Message}", ex);
-            }
+            (connection as TrackedDbConnection)?.WaitForLocksUpTo(commandTimeout);
         }
 
         // The rows read before a streamed result is written, without buffer_rows: two, which tells

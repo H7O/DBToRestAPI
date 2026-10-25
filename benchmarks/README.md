@@ -85,9 +85,11 @@ about 1.2 times the hand-written CPU on SQLite, and about the same on SQL Server
 working set stays near 150 MB under load.
 
 SQLite inserts from 32 connections are left out of the table. SQLite lets one connection write at
-a time, and Microsoft.Data.Sqlite waits 150 ms before it retries a write that found the database
-locked. How often writes collide depends on how the operating system schedules the server's
-threads, so the result varies from run to run: in this run DbToRestAPI answered 1,336 inserts a
-second and the Minimal API 1,581, and in repeated 10-second runs of the 1.7.18 build the rate
-went from 170 to 1,000. From one connection, where nothing collides, an insert runs at 84% of the
+a time. The engine has a write that finds the database locked wait inside SQLite, in steps of 1 to
+100 ms, up to its command timeout; the Minimal API keeps Microsoft.Data.Sqlite's defaults, which
+retry every 150 ms. How often writes collide depends on how the operating system schedules the
+server's threads, so the result varies from run to run: in this run DbToRestAPI answered 1,336
+inserts a second and the Minimal API 1,581. The engine's lock wait is measured in
+[results/2026-10-26-sqlite-lock-wait.md](results/2026-10-26-sqlite-lock-wait.md): from 425 to
+1,265 inserts a second, while the Minimal API went from 684 to 749. From one connection, where nothing collides, an insert runs at 84% of the
 hand-written speed (1,410 / 1,685 a second).

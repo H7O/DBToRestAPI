@@ -9,20 +9,6 @@ names the note that explains the background.
   (`EmbeddedHttpTemplate.ConvertValue` uses `ToString()`), so on a server whose culture writes a
   decimal comma a number is sent as `19,99`, and a date takes that culture's format. Writing it in
   the invariant culture would change the dates that existing configurations send on such servers.
-- **Under full load on one CPU, the engine reaches its full speed only after about a minute.** The
-  runtime compiles a hot method again, optimized, only after a pause in which no new method was
-  compiled, and a busy server keeps cutting that pause short: for the first 20 seconds a lookup by
-  id costs about 2.3 times its steady CPU. Setting `DOTNET_TC_CallCountingDelayMs=0` gets it there in
-  10 to 20 seconds; turning off `TieredPGO` instead makes the steady speed worse. Not set by default:
-  it changes what the runtime compiles at start-up, for a cost paid once per start.
-- **SQLite writes from many connections at once stall for 150 ms when they collide.** SQLite lets
-  one connection write at a time, and Microsoft.Data.Sqlite sleeps 150 ms before it retries a write
-  that found the database locked. In the benchmark on one CPU, 32 connections inserting at once got
-  from 170 to 1,000 inserts a second, varying from run to run, in 1.7.17 as in 1.7.18 (one
-  connection: 1,319). An open reader doesn't hold the lock (checked for 1.7.18), so the collisions
-  likely come from a thread the operating system pauses during a commit. SQLite's own busy handler
-  (`PRAGMA busy_timeout`), which waits in short steps, or WAL mode would likely cut the stalls; both
-  change how a deployment's database behaves, so either needs a decision.
 - **Idea: an opt-in `<allowed_hosts>` for outbound calls** (`{http{ … }http}` and the download
   `http` source). The configuration author chooses the hosts a route calls, and a caller can't
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
@@ -50,8 +36,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
 - **`{http{}}` matching ignores SQL comments**, so AGENTS rule 15 says never to write the marker in
   one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
   `}http}`, and the SQL in between is deleted.
-- **CORS:** when any `<authorize>` section exists, credentials are on for every route and the
-  default allowed headers leave out `X-Auth-Provider`.
 
 - **Idea: a `form` object in `{http{}}` calls**, encoded like `query`, so a form body could hold a
   caller's value: in `body_raw`, or a `body` string with a form type, `&` and `=` in a value add
@@ -72,6 +56,28 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **SQLite writes from many connections at once stalled for 150 ms when they collided.** Fixed in
+  1.7.29. Microsoft.Data.Sqlite leaves SQLite's busy timeout at 0, so a statement that found the
+  database locked failed at once inside the driver, which slept 150 ms before each retry until the
+  command timeout. A COMMIT collides too, with a waiting writer's brief read lock. Each query now
+  sets SQLite's own busy timeout to its command timeout (`db_command_timeout`, else the connection's
+  default, 30 s; 0 still waits as long as it takes), so it waits inside SQLite in steps of 1 to
+  100 ms and still fails, with `504`, when it did. A write that waited for a lock goes on about
+  20 ms after its release, against 150 before (`SqliteLockWaitTests`); the bundled SQLite sleeps in
+  milliseconds on Windows and Linux. WAL mode, which changes a deployment's database files, was
+  left out. The driver ignores cancellation once a statement runs, before as after.
+- **The warm-up setting is documented, not set.** Decided on 2026-10-26. Under full load on one
+  CPU, the engine reaches full speed about a minute after a start, and
+  `DOTNET_TC_CallCountingDelayMs=0` gets it there in 10 to 20 seconds, for a CPU cost once per
+  start. Tutorial 21 (small hosts) gives it as an option; the engine doesn't set it.
+- **CORS turned credentials on for every route when any `<authorize>` existed.** Fixed in 1.7.29.
+  The `<authorize>` at the root of `auth_providers.xml` holds the providers and their defaults and
+  protects no route, yet it made every route answer `Access-Control-Allow-Credentials: true`, whose
+  default allowed headers are a fixed list rather than `*`. So a page on another origin couldn't
+  send `X-Auth-Provider`, or any header outside the list, to any route. Credentials now come from the
+  route's own `<authorize>` (or `<allow_credentials>`), and on such a route the default list holds its
+  provider hint header (`X-Auth-Provider` unless `<provider_hint_header>` names another).
+  `CorsPipelineTests` checks both.
 - **The OpenAPI document described three kinds of route wrong.** Fixed in 1.7.28. An upload route
   had no request schema: a POST, PUT or PATCH to a route with a files field (its own or the global
   one) now has a `multipart/form-data` body (the entries as a JSON string, each new file a part)

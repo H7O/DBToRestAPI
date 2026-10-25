@@ -198,7 +198,9 @@ Read an earlier query's columns with `{pq{name}}`. With `{{name}}`, a `NULL` col
 ]]></query>
 ```
 
-A query's timeout, in seconds, is the first of these that is set: its `db_command_timeout` attribute, its endpoint's `<db_command_timeout>`, the global `<db_command_timeout>` in `settings.xml`. When none is set, the connection string's timeout applies (`Command Timeout=120` on SQL Server), or the provider's default. A global value overrides every connection string's timeout, so the sample `settings.xml` leaves it commented out.
+A query's timeout, in seconds, is the first of these that is set: its `db_command_timeout` attribute, its endpoint's `<db_command_timeout>`, the global `<db_command_timeout>` in `settings.xml`. When none is set, the connection string's timeout applies (`Command Timeout=120` on SQL Server, `Default Timeout=120` on SQLite), or the provider's default, 30 seconds on most. A global value overrides every connection string's timeout, so the sample `settings.xml` leaves it commented out.
+
+On SQLite, the timeout is also how long a query waits for a lock. SQLite lets one connection write at a time, so a write that finds another under way waits for it inside SQLite, trying again after a millisecond, then a little later each time, up to every 100 ms. When the timeout runs out, the request fails with `504` ([errors.md](../reference/errors.md#statuses-you-will-meet)). `0` waits as long as it takes.
 
 ## Use Cases
 
