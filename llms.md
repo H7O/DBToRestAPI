@@ -229,7 +229,7 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- Built-in retry: "retry": {"max_attempts": 3, "delay_ms": 2000, "exponential_backoff": true, "retry_status_codes": [500,502,503,504]}
 -- Caller-supplied values in a URL: "query": {"id": "{{id}}"} (percent-encoded) — never inside the "url" string
 -- Values landing inside JSON strings are escaped automatically; "body": {{doc}} (outside a string) injects one JSON value, anything else becomes a JSON string — only for values you built yourself
--- Values are written as the engine's JSON answers write them, the same on every server: 19.99, 2026-10-26T13:45:00 (ISO 8601), true
+-- Values are written as the engine's JSON answers write them, the same on every server: 19.99, 2026-10-26T13:45:00 (ISO 8601), true, binary as base64
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 

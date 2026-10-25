@@ -248,13 +248,15 @@ internal static class EmbeddedHttpTemplate
     /// The text of a value, as the engine's own JSON answers write it but without quotes: a number
     /// with a decimal point (<c>19.99</c>, never the <c>19,99</c> of a culture with a decimal comma), a
     /// date in ISO 8601 (<c>2026-10-26T13:45:00.123</c>, in the Gregorian calendar), a boolean as
-    /// <c>true</c> or <c>false</c>. Anything else is its text in the invariant culture.
+    /// <c>true</c> or <c>false</c>, binary data (a BLOB or VARBINARY column) in base64. Anything else is
+    /// its text in the invariant culture.
     /// </summary>
     internal static string? ValueText(object? value) => value switch
     {
         null => null,
         string text => text,
         bool flag => flag ? "true" : "false",
+        byte[] bytes => Convert.ToBase64String(bytes),
         // The serializer writes these as quoted ASCII, with no character it would escape.
         DateTime or DateTimeOffset or DateOnly or TimeOnly
             => JsonSerializer.Serialize(value, value.GetType(), CanonicalOptions).Trim('"'),
@@ -349,12 +351,15 @@ internal static class EmbeddedHttpTemplate
     ///   trailing commas) is written back as compact JSON, so the documented "inject a whole
     ///   JSON document" pattern keeps working and nothing but that one value is inserted;
     /// - anything else (several values, trailing text, an empty string, a date) is inserted as
-    ///   a JSON string literal.
+    ///   a JSON string literal;
+    /// - so is binary data, always: its base64 can read as JSON (<c>1234</c>, <c>true</c>).
     /// </remarks>
     public static string ToStructuralJson(object? value)
     {
         if (value is null)
             return "null";
+        if (value is byte[] bytes)
+            return "\"" + Convert.ToBase64String(bytes) + "\"";
 
         var text = ValueText(value) ?? string.Empty;
         return TryCanonicalJson(text, out var json)

@@ -488,6 +488,29 @@ public class EmbeddedHttpTemplateTests
     }
 
     [Fact]
+    public void Fill_BinaryData_IsBase64_AndAlwaysAStringOutsideOne()
+    {
+        // A BLOB or VARBINARY column arrives as a byte[], whose .NET text is "System.Byte[]".
+        var template = """{"url": "https://internal/api?bin={{bin}}", "method": "POST", "body": {"bin": "{{bin}}", "digits": {{digits}}, "empty": {{empty}}}}""";
+        var values = new Dictionary<string, object?>
+        {
+            ["bin"] = new byte[] { 0x01, 0x02, 0xFF },
+            // Base64 that reads as a JSON number.
+            ["digits"] = Convert.FromBase64String("1234"),
+            ["empty"] = Array.Empty<byte>(),
+        };
+
+        var request = JsonRequestParser.Parse(FillLikeController(template, values));
+
+        Assert.Equal("https://internal/api?bin=AQL/", request.Url);
+        var body = Assert.IsType<JsonElement>(request.Body);
+        Assert.Equal("AQL/", body.GetProperty("bin").GetString());
+        Assert.Equal(JsonValueKind.String, body.GetProperty("digits").ValueKind);
+        Assert.Equal("1234", body.GetProperty("digits").GetString());
+        Assert.Equal("", body.GetProperty("empty").GetString());
+    }
+
+    [Fact]
     public void Fill_CustomDelimiterInsideAString_IsEscapedNotQuoted()
     {
         // A route can override the patterns (json_variables_pattern and the others). Classified

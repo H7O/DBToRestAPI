@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 
 namespace DBToRestAPI.Tests;
 
@@ -33,6 +34,13 @@ public class HttpBodyPipelineTests(HttpBodyPipelineTests.BodyEngine engine) : IC
         ["queries:http_null_column:query:0"] = "SELECT NULL AS doc, NULL AS name;",
         ["queries:http_null_column:query:1"] =
             """SELECT {http{ {"url": "https://body.test/null_column", "method": "POST", "body": {"doc": {pq{doc}}, "name": "{pq{name}}"}} }http} AS resp;""",
+
+        // An earlier query's BLOB columns, inside and outside a string. D76DF8 is 1234 in base64.
+        ["queries:http_binary_column:route"] = "http_binary_column",
+        ["queries:http_binary_column:verb"] = "POST",
+        ["queries:http_binary_column:query:0"] = "SELECT x'0102FF' AS bin, x'D76DF8' AS digits;",
+        ["queries:http_binary_column:query:1"] =
+            """SELECT {http{ {"url": "https://body.test/binary_column", "method": "POST", "query": {"bin": "{pq{bin}}"}, "body": {"bin": "{pq{bin}}", "digits": {pq{digits}}}} }http} AS resp;""",
     });
 
     private async Task<FakeHttpServer.Request> CallAsync(string route, string body, string path)
@@ -80,6 +88,17 @@ public class HttpBodyPipelineTests(HttpBodyPipelineTests.BodyEngine engine) : IC
         var sent = await CallAsync("http_null_column", "{}", "/null_column");
 
         Assert.Equal("""{"doc": null, "name": ""}""", sent.Body);
+    }
+
+    [Fact]
+    public async Task AnEarlierQuerysBinaryColumn_IsSentInBase64_AsAString()
+    {
+        var sent = await CallAsync("http_binary_column", "{}", "/binary_column");
+
+        Assert.Equal("AQL/", Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(sent.Uri.Query)["bin"].ToString());
+        var body = JsonDocument.Parse(sent.Body!).RootElement;
+        Assert.Equal("AQL/", body.GetProperty("bin").GetString());
+        Assert.Equal("1234", body.GetProperty("digits").GetString());
     }
 
     [Fact]

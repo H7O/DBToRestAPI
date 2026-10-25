@@ -5,8 +5,10 @@ names the note that explains the background.
 
 ## Open
 
-- **A binary column inside a `{http{}}` string is written as `System.Byte[]`.** Found on
-  2026-10-26. The engine's own JSON answers write it in base64 (`AQL/`).
+- **An array column in a `{http{}}` block is written as its .NET type name.** Found on
+  2026-10-26. A driver that returns an array for one column (Npgsql, for a PostgreSQL `int[]`)
+  gives `System.Int32[]`, where the engine's own JSON answers write `[1,2,3]`. What it should be
+  inside a string needs a decision.
 - **Idea: an opt-in `<allowed_hosts>` for outbound calls** (`{http{ … }http}` and the download
   `http` source). The configuration author chooses the hosts a route calls, and a caller can't
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
@@ -54,6 +56,10 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A binary column in a `{http{}}` block was written as `System.Byte[]`.** Fixed in 1.7.31. A
+  `VARBINARY` or `BLOB` column is a byte array, whose .NET text is its type name. It is now base64,
+  as the engine's own JSON answers write it (`AQL/`), and outside a string always a JSON string,
+  since its base64 can read as JSON (`1234`, `true`).
 - **A number or date inside a JSON string of a `{http{}}` block was written in the server's
   culture.** Fixed in 1.7.30, listed as a breaking change. `EmbeddedHttpTemplate.ConvertValue` used
   `ToString()`, so a server whose culture writes a decimal comma sent `19,99`, a Swedish one `−7`
