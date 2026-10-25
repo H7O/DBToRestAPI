@@ -43,12 +43,18 @@ public class SqliteLockWaitTests(SqliteLockWaitTests.Engine engine) : IClassFixt
         Assert.Equal(milliseconds, JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("timeout").GetInt32());
     }
 
+    /// <summary>A lock released within this time of the write's start: see the test below.</summary>
+    private static readonly TimeSpan QuickRelease = TimeSpan.FromMilliseconds(90);
+
     [Fact]
     public async Task AWriteThatFindsTheDatabaseLocked_GoesOnSoonAfterTheLockIsReleased()
     {
-        // The time from the release of the lock to the end of the waiting write, seven times. Waiting
-        // in SQLite, the write notices within a few milliseconds. The driver's own retries come every
-        // 150 ms, and a SQLite built without usleep would sleep a second at a time.
+        // The time from the release of the lock to the end of the waiting write. Waiting in SQLite,
+        // the write tries again after 1, 2, 5, 10, 15, 20 and 25 ms, so it notices within a few
+        // milliseconds. The driver's own retries come 150 ms apart, and sleep never ends early, so a
+        // lock released within 90 ms of the write's start lets it go on 60 ms after the release at
+        // the soonest; a SQLite built without usleep would sleep a second at a time. A busy machine
+        // can stall any one trial, so the fastest trial released within 90 ms decides.
         var folder = Path.Combine(Path.GetTempPath(), "dbtorest-lockwait-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         var connectionString = $"Data Source={Path.Combine(folder, "lock.db")};Pooling=False";
@@ -60,12 +66,14 @@ public class SqliteLockWaitTests(SqliteLockWaitTests.Engine engine) : IClassFixt
                 Execute(setup, "CREATE TABLE t (x INTEGER);");
             }
 
-            var lags = new List<TimeSpan>();
-            for (var i = 0; i < 7; i++)
-                lags.Add(await LagAfterReleaseAsync(connectionString));
+            var trials = new List<(TimeSpan Hold, TimeSpan Lag)>();
+            for (var i = 0; i < 20 && (i < 7 || !trials.Any(t => t.Hold < QuickRelease)); i++)
+                trials.Add(await LagAfterReleaseAsync(connectionString));
 
-            lags.Sort();
-            Assert.True(lags[3] < TimeSpan.FromMilliseconds(60), "lags: " + string.Join(", ", lags.Select(l => $"{l.TotalMilliseconds:0} ms")));
+            var report = "hold / lag: " + string.Join(", ", trials.Select(t => $"{t.Hold.TotalMilliseconds:0} / {t.Lag.TotalMilliseconds:0} ms"));
+            var quick = trials.Where(t => t.Hold < QuickRelease).Select(t => t.Lag).ToList();
+            Assert.True(quick.Count > 0, "No trial released its lock within 90 ms of the write's start. " + report);
+            Assert.True(quick.Min() < TimeSpan.FromMilliseconds(40), report);
         }
         finally
         {
@@ -74,7 +82,11 @@ public class SqliteLockWaitTests(SqliteLockWaitTests.Engine engine) : IClassFixt
         }
     }
 
-    private static async Task<TimeSpan> LagAfterReleaseAsync(string connectionString)
+    /// <returns>
+    /// How long after the write's start the lock was released, and how long after the release the
+    /// write ended.
+    /// </returns>
+    private static async Task<(TimeSpan Hold, TimeSpan Lag)> LagAfterReleaseAsync(string connectionString)
     {
         // Both are the engine's connections, as two requests' would be. The holder's exclusive lock
         // keeps the waiter from reading too, so the waiter holds nothing its COMMIT would wait for.
@@ -87,22 +99,22 @@ public class SqliteLockWaitTests(SqliteLockWaitTests.Engine engine) : IClassFixt
         waiter.Open();
         waiter.WaitForLocksUpTo(10);
 
-        var writing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writing = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         var write = Task.Run(() =>
         {
             using var command = waiter.CreateCommand();
             command.CommandText = "INSERT INTO t VALUES (1);";
-            writing.SetResult();
+            writing.SetResult(Stopwatch.GetTimestamp());
             command.ExecuteNonQuery();
             return Stopwatch.GetTimestamp();
         });
 
-        await writing.Task;
+        var started = await writing.Task;
         await Task.Delay(30);
         Assert.False(write.IsCompleted, "the write didn't wait for the lock");
         var released = Stopwatch.GetTimestamp();
         Execute(holder, "COMMIT;");
-        return Stopwatch.GetElapsedTime(released, await write);
+        return (Stopwatch.GetElapsedTime(started, released), Stopwatch.GetElapsedTime(released, await write));
     }
 
     private static void Execute(System.Data.Common.DbConnection connection, string sql)
