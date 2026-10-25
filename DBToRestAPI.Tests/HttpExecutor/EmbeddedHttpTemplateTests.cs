@@ -406,9 +406,7 @@ public class EmbeddedHttpTemplateTests
         Assert.Equal("1234567", EmbeddedHttpTemplate.ToStructuralJson(1234567d));
         Assert.Equal("12.5", EmbeddedHttpTemplate.ToStructuralJson(12.5m));
         // A value that is not JSON text, such as a date from a previous query, becomes a string.
-        var date = new DateTime(2026, 10, 6, 14, 30, 0);
-        Assert.Equal(JsonValueKind.String,
-            JsonDocument.Parse(EmbeddedHttpTemplate.ToStructuralJson(date)).RootElement.ValueKind);
+        Assert.Equal("\"2026-10-06T14:30:00\"", EmbeddedHttpTemplate.ToStructuralJson(new DateTime(2026, 10, 6, 14, 30, 0)));
     }
 
     [Fact]
@@ -425,6 +423,68 @@ public class EmbeddedHttpTemplateTests
         {
             System.Globalization.CultureInfo.CurrentCulture = previous;
         }
+    }
+
+    /// <summary>
+    /// Cultures that write a number or a date unlike the invariant culture: a decimal comma (de-DE),
+    /// a U+2212 minus sign (sv-SE), the Buddhist year 2569 (th-TH), Arabic separators and the Hijri
+    /// calendar (ar-SA), a 12-hour clock (en-US). Each value is written as the engine's own JSON
+    /// answers write it, a date in ISO 8601 and a boolean as true.
+    /// </summary>
+    [Theory]
+    [InlineData("en-US")]
+    [InlineData("de-DE")]
+    [InlineData("sv-SE")]
+    [InlineData("th-TH")]
+    [InlineData("ar-SA")]
+    public void Fill_ValuesInsideAndOutsideStrings_AreWrittenTheSameInEveryCulture(string culture)
+    {
+        var template = """
+            {
+              "url": "https://internal/api",
+              "method": "POST",
+              "query": { "amount": "{{amount}}" },
+              "body": { "price": "{{price}}", "delta": "{{delta}}", "at": "{{at}}", "at_ms": "{{at_ms}}", "stamp": "{{stamp}}",
+                        "day": "{{day}}", "flag": "{{flag}}", "at_outside": {{at_outside}} }
+            }
+            """;
+        var at = new DateTime(2026, 10, 26, 13, 45, 0);
+        var values = new Dictionary<string, object?>
+        {
+            ["amount"] = 19.99d,
+            ["price"] = 1234.50m,
+            ["delta"] = -7,
+            ["at"] = at,
+            ["at_ms"] = at.AddMilliseconds(123),
+            ["stamp"] = new DateTimeOffset(at, TimeSpan.FromHours(2)),
+            ["day"] = DateOnly.FromDateTime(at),
+            ["flag"] = true,
+            ["at_outside"] = at,
+        };
+
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        string filled;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo(culture);
+            filled = FillLikeController(template, values);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+
+        var request = JsonRequestParser.Parse(filled);
+        Assert.Equal("19.99", request.Query!["amount"]);
+        var body = Assert.IsType<JsonElement>(request.Body);
+        Assert.Equal("1234.50", body.GetProperty("price").GetString());
+        Assert.Equal("-7", body.GetProperty("delta").GetString());
+        Assert.Equal("2026-10-26T13:45:00", body.GetProperty("at").GetString());
+        Assert.Equal("2026-10-26T13:45:00.123", body.GetProperty("at_ms").GetString());
+        Assert.Equal("2026-10-26T13:45:00+02:00", body.GetProperty("stamp").GetString());
+        Assert.Equal("2026-10-26", body.GetProperty("day").GetString());
+        Assert.Equal("true", body.GetProperty("flag").GetString());
+        Assert.Equal("2026-10-26T13:45:00", body.GetProperty("at_outside").GetString());
     }
 
     [Fact]

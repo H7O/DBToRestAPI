@@ -5,10 +5,8 @@ names the note that explains the background.
 
 ## Open
 
-- **A value inside a JSON string of a `{http{}}` block is written in the server's culture**
-  (`EmbeddedHttpTemplate.ConvertValue` uses `ToString()`), so on a server whose culture writes a
-  decimal comma a number is sent as `19,99`, and a date takes that culture's format. Writing it in
-  the invariant culture would change the dates that existing configurations send on such servers.
+- **A binary column inside a `{http{}}` string is written as `System.Byte[]`.** Found on
+  2026-10-26. The engine's own JSON answers write it in base64 (`AQL/`).
 - **Idea: an opt-in `<allowed_hosts>` for outbound calls** (`{http{ … }http}` and the download
   `http` source). The configuration author chooses the hosts a route calls, and a caller can't
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
@@ -56,6 +54,15 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A number or date inside a JSON string of a `{http{}}` block was written in the server's
+  culture.** Fixed in 1.7.30, listed as a breaking change. `EmbeddedHttpTemplate.ConvertValue` used
+  `ToString()`, so a server whose culture writes a decimal comma sent `19,99`, a Swedish one `−7`
+  with a U+2212 minus sign, a Thai one the year 2569, a Saudi one Arabic separators and a Hijri
+  date, and an en-US one `10/26/2026 1:45:00 PM`. A value is now written as the engine's own JSON
+  answers write it: `19.99`, `-7`, a date in ISO 8601 (`2026-10-26T13:45:00.123`) and a boolean as
+  `true`, inside a string and outside one. Before, a date also lost its fraction of a second, and a
+  boolean inside a string was `True`. Decided on 2026-10-26: the invariant culture first, then ISO
+  8601 dates and lowercase booleans in the same release, so a deployment adjusts once.
 - **SQLite writes from many connections at once stalled for 150 ms when they collided.** Fixed in
   1.7.29. Microsoft.Data.Sqlite leaves SQLite's busy timeout at 0, so a statement that found the
   database locked failed at once inside the driver, which slept 150 ms before each retry until the

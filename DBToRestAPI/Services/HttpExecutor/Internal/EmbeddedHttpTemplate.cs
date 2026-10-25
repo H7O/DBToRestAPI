@@ -236,10 +236,30 @@ internal static class EmbeddedHttpTemplate
     /// The text to substitute for a marker: one JSON value for a marker used only outside
     /// strings, and an escaped value that can't change the structure for every other marker.
     /// </summary>
+    /// <remarks>
+    /// Both start from <see cref="ValueText"/>, so every server sends the same text, whatever its culture.
+    /// </remarks>
     public static string ConvertValue(MarkerContexts contexts, string name, object? value)
         => contexts.IsStructuralOnly(name)
             ? ToStructuralJson(value)
-            : JsonEscapeForAnyPosition(value?.ToString());
+            : JsonEscapeForAnyPosition(ValueText(value));
+
+    /// <summary>
+    /// The text of a value, as the engine's own JSON answers write it but without quotes: a number
+    /// with a decimal point (<c>19.99</c>, never the <c>19,99</c> of a culture with a decimal comma), a
+    /// date in ISO 8601 (<c>2026-10-26T13:45:00.123</c>, in the Gregorian calendar), a boolean as
+    /// <c>true</c> or <c>false</c>. Anything else is its text in the invariant culture.
+    /// </summary>
+    internal static string? ValueText(object? value) => value switch
+    {
+        null => null,
+        string text => text,
+        bool flag => flag ? "true" : "false",
+        // The serializer writes these as quoted ASCII, with no character it would escape.
+        DateTime or DateTimeOffset or DateOnly or TimeOnly
+            => JsonSerializer.Serialize(value, value.GetType(), CanonicalOptions).Trim('"'),
+        _ => Convert.ToString(value, CultureInfo.InvariantCulture),
+    };
 
     /// <summary>
     /// Escapes a value so it cannot terminate the JSON string literal it is substituted into.
@@ -322,9 +342,9 @@ internal static class EmbeddedHttpTemplate
     /// System.Text.Json keeps the LAST duplicate, so the call, with this block's credential
     /// headers, went to the caller's host.
     /// Now:
-    /// - a bool becomes <c>true</c> or <c>false</c> (its .NET text, <c>True</c>, is not JSON);
-    /// - a number uses the invariant culture, so a server whose culture writes <c>1,5</c> still
-    ///   produces a JSON number;
+    /// - a value's text is <see cref="ValueText"/>'s: a bool is <c>true</c> or <c>false</c> (its .NET
+    ///   text, <c>True</c>, is not JSON), and a number uses the invariant culture, so a server whose
+    ///   culture writes <c>1,5</c> still produces a JSON number;
     /// - text that is one JSON value to the block's own parser (which skips comments and allows
     ///   trailing commas) is written back as compact JSON, so the documented "inject a whole
     ///   JSON document" pattern keeps working and nothing but that one value is inserted;
@@ -335,10 +355,8 @@ internal static class EmbeddedHttpTemplate
     {
         if (value is null)
             return "null";
-        if (value is bool b)
-            return b ? "true" : "false";
 
-        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        var text = ValueText(value) ?? string.Empty;
         return TryCanonicalJson(text, out var json)
             ? json
             : "\"" + JsonEscape(text) + "\"";

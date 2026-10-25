@@ -71,7 +71,7 @@ Fetch only what you need:
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Several `<query>` elements run in order, each on its own connection (no shared transaction); `{pq{name}}` reads earlier results (never `{{name}}`), one row passes its columns, any rows pass `{pq{json}}` or `json_var`; a tested cross-database example |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |
-| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | `{http{ ... }http}`: every block is called before the query runs (even in an `IF` or a comment), the request settings (url, method, headers, `query` for caller values, body, `body_raw` for a form, `content_type`, timeout, auth, retry, skip, no_wait), the answer (status_code/headers/data/error, `$.data`), JSON escaping, errors; a complete tested example paying with a form body |
+| Embedded HTTP Calls | [17-embedded-http-calls.md](docs/topics/17-embedded-http-calls.md) | `{http{ ... }http}`: every block is called before the query runs (even in an `IF` or a comment), the request settings (url, method, headers, `query` for caller values, body, `body_raw` for a form, `content_type`, timeout, auth, retry, skip, no_wait), the answer (status_code/headers/data/error, `$.data`), JSON escaping, how numbers and dates are written, errors; a complete tested example paying with a form body |
 | HTTP Call Patterns | [23-http-call-patterns.md](docs/topics/23-http-call-patterns.md) | Enriching rows, validating input with another service, skipping a call, letting an earlier query decide with `"skip": "{pq{...}}"`, several calls at once, using a result only when a condition holds, a KYC check |
 | Rate Limiting | [18-rate-limiting.md](docs/topics/18-rate-limiting.md) | Per-endpoint `<rate_limit>` (max_requests, window_seconds, per=caller/ip/endpoint, enabled, message) with a global default under `<settings>`; 429 + Retry-After; counted per user, API key or client IP; runs after auth and before any database work; client_ip_header for reverse proxies; hot-reload; never a 500 from a config typo |
 | Webhooks | [19-webhooks.md](docs/topics/19-webhooks.md) | Two-endpoint pattern (accept + process), no_wait, validate before accepting, cross-DB validation, progress callbacks, built-in retry |
@@ -229,6 +229,7 @@ DECLARE @result NVARCHAR(MAX) = {http{
 -- Built-in retry: "retry": {"max_attempts": 3, "delay_ms": 2000, "exponential_backoff": true, "retry_status_codes": [500,502,503,504]}
 -- Caller-supplied values in a URL: "query": {"id": "{{id}}"} (percent-encoded) — never inside the "url" string
 -- Values landing inside JSON strings are escaped automatically; "body": {{doc}} (outside a string) injects one JSON value, anything else becomes a JSON string — only for values you built yourself
+-- Values are written as the engine's JSON answers write them, the same on every server: 19.99, 2026-10-26T13:45:00 (ISO 8601), true
 ```
 Vars can be encrypted via `<sections_to_encrypt><section>vars:partner_api_key</section></sections_to_encrypt>`
 

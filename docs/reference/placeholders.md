@@ -49,7 +49,7 @@ A JSON `null` counts as missing, so `{{name}}` moves on to the next source. Type
 | Place | Markers |
 |---|---|
 | `<query>` and `<count_query>` | All of the above |
-| Inside a `{http{ ... }http}` block | Request values, `{auth{...}}`, `{s{...}}`, `{pq{...}}`. They are written into the call's JSON as text, escaped when they sit inside a JSON string. A caller's value goes in `"query"`, never inside `"url"` ([17](../topics/17-embedded-http-calls.md#caller-supplied-values-url-encoding-and-json-escaping)) |
+| Inside a `{http{ ... }http}` block | Request values, `{auth{...}}`, `{s{...}}`, `{pq{...}}`. They are written into the call's JSON as text, the same on every server (`19.99`, `2026-10-26T13:45:00`, `true`), and escaped when they sit inside a JSON string. A caller's value goes in `"query"`, never inside `"url"` ([17](../topics/17-embedded-http-calls.md#caller-supplied-values-url-encoding-and-json-escaping)) |
 | `<route>` | `{{name}}` for each route value: `users/{{id}}/orders` |
 | `relative_file_path_structure` (uploads) | `{date{format}}`, `{{guid}}` and `{file{name}}`, below |
 | Settings files: `api_keys.xml`, `auth_providers.xml`, connection strings | None: a `{s{...}}` there is kept as written |

@@ -204,6 +204,8 @@ A placeholder used both inside and outside a string in one block, or inside a co
 
 **A placeholder that matches nothing, or a `NULL` value,** is an empty string inside a JSON string, in `query` and in `headers` (`"q": "{{city}}"` sends `q=` when the request has no `city`), and JSON `null` outside one (`"body": { "doc": {{doc}} }` sends `{ "doc": null }`).
 
+**A value is written as the engine's own JSON answers write it**, the same on every server, whatever its language settings. A number has a decimal point and a plain minus sign: `19.99`, `-7.25`, and `1234.50` from a `DECIMAL(10, 2)` column. A date is ISO 8601: `2026-10-26T13:45:00`, `2026-10-26T13:45:00.123` with a fraction of a second, and `2026-10-26T13:45:00+02:00` with an offset. A boolean is `true` or `false`. When the API expects another format, build the text in an earlier query and read it with `{pq{name}}`: on SQL Server, `CONVERT(varchar(10), created_at, 23)` gives the date alone, `2026-10-26`, and `DATEDIFF_BIG(SECOND, '1970-01-01', created_at)` gives Unix time.
+
 ## Authentication
 
 | `type` | Fields | Sends |
