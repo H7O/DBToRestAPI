@@ -111,6 +111,12 @@ internal static class RequestValidator
             }
         }
 
+        // Validate form (optional)
+        if (element.TryGetProperty("form", out var formElement) && formElement.ValueKind != JsonValueKind.Object)
+        {
+            errors.Add("Property 'form' must be an object with string values");
+        }
+
         // Validate auth (optional)
         if (element.TryGetProperty("auth", out var authElement) && authElement.ValueKind != JsonValueKind.Null)
         {
@@ -143,6 +149,10 @@ internal static class RequestValidator
         if (hasBody && hasBodyRaw)
         {
             warnings.Add("Both 'body' and 'body_raw' are specified. 'body' will take precedence.");
+        }
+        if (element.TryGetProperty("form", out var formEl) && formEl.ValueKind == JsonValueKind.Object && (hasBody || hasBodyRaw))
+        {
+            errors.Add("Use one of 'form', 'body' and 'body_raw', not several.");
         }
 
         if (errors.Count > 0)

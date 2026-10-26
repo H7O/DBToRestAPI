@@ -114,6 +114,7 @@ The JSON inside `{http{...}http}` supports these properties:
 | `method` | string | No | `GET` | HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS |
 | `headers` | object | No | — | Custom headers. A header whose name or value contains a line break is dropped, so a substituted value cannot inject a second header |
 | `query` | object | No | — | Query-string parameters, percent-encoded and appended to `url` (with `&` if `url` already has a `?`). **Put caller-supplied values here** |
+| `form` | object | No | — | A form body (`application/x-www-form-urlencoded`), each field percent-encoded like `query`'s. Not with `body` or `body_raw` |
 | `body` | object/array | No | — | JSON body, serialized automatically. A marker used *outside* a string here (`"body": {{doc}}`) injects one whole JSON value; anything else is sent as a string |
 | `body_raw` | string | No | — | Raw string body, sent verbatim when `body` is absent. Use `"body_raw": "{{payload}}"` to forward a caller-supplied document safely |
 | `content_type` | string | No | `application/json` | Content-Type header |
@@ -155,7 +156,7 @@ JSON document, use `"body_raw": "{{payload}}"`.
 
 ## POST with JSON Body
 
-The body is sent as `application/json`. For another type, set `"content_type"`, or a `Content-Type` in `"headers"`, which replaces it. A form (`application/x-www-form-urlencoded`) goes in `"body_raw"`, as topic 17 shows in [POST with a form body](../topics/17-embedded-http-calls.md#complete-example-post-with-a-form-body).
+The body is sent as `application/json`. For another type, set `"content_type"`, or a `Content-Type` in `"headers"`, which replaces it. A form (`application/x-www-form-urlencoded`) goes in `"form"`, an object of fields encoded like `query`'s, as topic 17 shows in [POST with a form body](../topics/17-embedded-http-calls.md#complete-example-post-with-a-form-body).
 
 ```sql
 DECLARE @result NVARCHAR(MAX) = {http{

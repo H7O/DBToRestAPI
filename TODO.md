@@ -37,10 +37,6 @@ The items below were found on 2026-10-06 by checking real-world usage patterns a
   one. A complete marker in a comment makes a real call. An unclosed one pairs with the next block's
   `}http}`, and the SQL in between is deleted.
 
-- **Idea: a `form` object in `{http{}}` calls**, encoded like `query`, so a form body could hold a
-  caller's value: in `body_raw`, or a `body` string with a form type, `&` and `=` in a value add
-  fields, so today a form may hold only values the query checked or built.
-
 The items below were found on 2026-10-21 by an inventory of every configuration key the code reads
 (for `docs/reference/tags.md`), each checked in the code or against a running engine.
 
@@ -56,6 +52,12 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **A `form` object in `{http{}}` calls.** Added in 1.7.32. In `body_raw`, or a `body` string with a
+  form type, `&` and `=` in a value add fields, so a form could hold only values the query checked or
+  built. `"form": { "amount": "{{amount}}" }` encodes each field as `query` does and sends
+  `application/x-www-form-urlencoded`, unless `content_type` gives another type. With `body` or
+  `body_raw` beside it, the call fails rather than one of them quietly winning. Topic 17's Stripe
+  example now uses it.
 - **A binary column in a `{http{}}` block was written as `System.Byte[]`.** Fixed in 1.7.31. A
   `VARBINARY` or `BLOB` column is a byte array, whose .NET text is its type name. It is now base64,
   as the engine's own JSON answers write it (`AQL/`), and outside a string always a JSON string,

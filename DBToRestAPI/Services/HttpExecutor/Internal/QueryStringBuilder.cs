@@ -19,11 +19,16 @@ internal static class QueryStringBuilder
             return url;
 
         var separator = url.Contains('?') ? "&" : "?";
-        var queryString = string.Join("&", queryParams.Select(kvp =>
-            $"{HttpUtility.UrlEncode(kvp.Key)}={HttpUtility.UrlEncode(kvp.Value)}"));
-
-        return $"{url}{separator}{queryString}";
+        return $"{url}{separator}{Encode(queryParams)}";
     }
+
+    /// <summary>
+    /// Encodes names and values as <c>name=value&amp;name=value</c>, each percent-encoded, so a value
+    /// can't add or change a field: a query string, or an application/x-www-form-urlencoded body.
+    /// </summary>
+    public static string Encode(Dictionary<string, string> fields)
+        => string.Join("&", fields.Select(kvp =>
+            $"{HttpUtility.UrlEncode(kvp.Key)}={HttpUtility.UrlEncode(kvp.Value)}"));
 
     /// <summary>
     /// Appends a single query parameter to a URL.

@@ -132,6 +132,24 @@ public class RequestMessageBuilderTests
     }
 
     [Fact]
+    public async Task Build_WithForm_EncodesEachFieldAsTheQueryDoes()
+    {
+        var request = new HttpExecutorRequest
+        {
+            Url = "https://example.com/api",
+            Method = "POST",
+            ContentType = "application/x-www-form-urlencoded",
+            Form = new() { ["amount"] = "10", ["note"] = "a&admin=1 é" },
+        };
+
+        var message = RequestMessageBuilder.Build(request);
+
+        // The & and = stay inside the note, so it can't add a field.
+        Assert.Equal("amount=10&note=a%26admin%3d1+%c3%a9", await message.Content!.ReadAsStringAsync());
+        Assert.Equal("application/x-www-form-urlencoded", message.Content.Headers.ContentType!.MediaType);
+    }
+
+    [Fact]
     public void Build_WithJsonElement_SerializesCorrectly()
     {
         // Arrange

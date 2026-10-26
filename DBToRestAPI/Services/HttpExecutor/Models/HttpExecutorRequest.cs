@@ -26,6 +26,12 @@ public class HttpExecutorRequest
     public Dictionary<string, string>? Query { get; init; }
 
     /// <summary>
+    /// Form fields, sent as an application/x-www-form-urlencoded body, each name and value encoded as
+    /// the query's are. Used instead of Body and BodyRaw.
+    /// </summary>
+    public Dictionary<string, string>? Form { get; init; }
+
+    /// <summary>
     /// JSON body object (will be serialized automatically).
     /// </summary>
     public object? Body { get; init; }

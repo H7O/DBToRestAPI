@@ -188,6 +188,43 @@ public class JsonRequestParserTests
         Assert.Null(request.Body);
     }
 
+    [Fact]
+    public void Parse_Form_IsAFormBody_WithItsTypeByDefault()
+    {
+        var request = JsonRequestParser.Parse("""
+            {"url": "https://example.com", "method": "POST", "form": {"amount": "10", "note": "a&b=c"}}
+            """);
+
+        Assert.Equal("application/x-www-form-urlencoded", request.ContentType);
+        Assert.Equal("10", request.Form!["amount"]);
+        Assert.Equal("a&b=c", request.Form["note"]);
+        Assert.Null(request.Body);
+        Assert.Null(request.BodyRaw);
+    }
+
+    [Fact]
+    public void Parse_Form_KeepsTheContentTypeItIsGiven()
+    {
+        var request = JsonRequestParser.Parse("""
+            {"url": "https://example.com", "content_type": "application/vnd.example-form", "form": {}}
+            """);
+
+        Assert.Equal("application/vnd.example-form", request.ContentType);
+        Assert.Empty(request.Form!);
+    }
+
+    [Theory]
+    [InlineData(""" "body": {"a": 1} """)]
+    [InlineData(""" "body": "a=1" """)]
+    [InlineData(""" "body_raw": "a=1" """)]
+    public void Parse_FormBesideABody_Throws(string other)
+    {
+        // Neither may quietly win: the call fails, naming the three.
+        var ex = Assert.Throws<ArgumentException>(() => JsonRequestParser.Parse(
+            """{"url": "https://example.com", "form": {"a": "1"}, """ + other + "}"));
+        Assert.Contains("'form'", ex.Message);
+    }
+
     [Theory]
     [InlineData("get", "GET")]
     [InlineData("GET", "GET")]

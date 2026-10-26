@@ -1,7 +1,7 @@
 ---
 title: HTTP calls from SQL
 summary: Call another API from inside an endpoint's query with a {http{ ... }http} block; the engine makes the call before the query runs and hands the answer to the SQL as a JSON parameter.
-keywords: ["{http{", "}http}", http_variable_pattern, url, method, headers, query, body, body_raw, content_type, application/x-www-form-urlencoded, timeout_seconds, ignore_certificate_errors, follow_redirects, auth, bearer, api_key, key_header, key_query_param, basic, retry, max_attempts, delay_ms, exponential_backoff, retry_status_codes, skip, no_wait, status_code, data, error, "@http_response_1", JSON_VALUE, OPENJSON, 502, 503]
+keywords: ["{http{", "}http}", http_variable_pattern, url, method, headers, query, form, body, body_raw, content_type, application/x-www-form-urlencoded, timeout_seconds, ignore_certificate_errors, follow_redirects, auth, bearer, api_key, key_header, key_query_param, basic, retry, max_attempts, delay_ms, exponential_backoff, retry_status_codes, skip, no_wait, status_code, data, error, "@http_response_1", JSON_VALUE, OPENJSON, 502, 503]
 ---
 
 # HTTP calls from SQL
@@ -16,7 +16,7 @@ A `{http{ ... }http}` block in a query describes an HTTP call in JSON. The engin
 2. **Check `$.status_code` before you read `$.data`.** A failed call doesn't fail the request: a `404` or `500` from the API, or no answer at all (`status_code` `0`), reaches your SQL like a success. Raise the status you want the caller to get ([errors.md](../reference/errors.md#raising-an-error-from-sql)).
 3. **Read the API's answer at `$.data`,** not at the root: `JSON_VALUE(@r, '$.data.id')`.
 4. **Put caller values in `"query"`, never in the `"url"` string.** A value in `query` is percent-encoded; one inside `url` can add parameters with `&` ([Caller-supplied values](#caller-supplied-values-url-encoding-and-json-escaping)).
-5. **Send a form as `"body_raw"` with `"content_type": "application/x-www-form-urlencoded"`, and fill it only with values you checked or built.** The engine has no form encoding: `&` and `=` in a value add or change fields.
+5. **Send a form as `"form"`: `"form": { "amount": "{{amount}}" }`.** Each field is percent-encoded, as in `query`, so `&` and `=` in a value stay in that value. A form written in `body_raw` or a string `body` is sent as written, so a caller's `&` or `=` there adds or changes fields.
 6. **A call is made once unless it has `"retry"`.** Don't retry a call that creates something (a payment, an order) unless the API takes an idempotency key: a retried POST can create it twice.
 7. **Keep the engine's own credentials in `<vars>` (`{s{api_key}}`), never in a header the caller sends:** any caller can send any value. Encrypt them ([21](21-settings-vars.md), [15](15-encryption.md)).
 8. **In a chain, read earlier results with `{pq{name}}`, not `{{name}}`,** inside the block too: `{{name}}` falls back to a request value of the same name when the earlier query gave none ([14](14-query-chaining.md#what-a-query-receives)).
@@ -113,8 +113,7 @@ CREATE TABLE orders (
         "url": "https://api.stripe.com/v1/payment_intents",
         "method": "POST",
         "headers": { "Authorization": "Bearer {s{stripe_secret_key}}" },
-        "content_type": "application/x-www-form-urlencoded",
-        "body_raw": "amount={pq{amount_cents}}&currency=usd&customer={pq{stripe_customer_id}}"
+        "form": { "amount": "{pq{amount_cents}}", "currency": "usd", "customer": "{pq{stripe_customer_id}}" }
       }
     }http};
 
@@ -137,7 +136,7 @@ CREATE TABLE orders (
 </pay_for_order>
 ```
 
-`{pq{amount_cents}}` reads query 1's column only: an `amount_cents` the caller sends doesn't reach it. Two requests for one order can both pass query 1 and both create a PaymentIntent; the `UPDATE ... AND status = 'unpaid'` lets only the first one store its own. The second one's PaymentIntent is never confirmed, so it charges nothing. The call has no `retry`, so a timeout never creates a second PaymentIntent.
+`form` sends the fields as `amount=1500&currency=usd&customer=cus_...`, with the type `application/x-www-form-urlencoded`. `{pq{amount_cents}}` reads query 1's column only: an `amount_cents` the caller sends doesn't reach it. Two requests for one order can both pass query 1 and both create a PaymentIntent; the `UPDATE ... AND status = 'unpaid'` lets only the first one store its own. The second one's PaymentIntent is never confirmed, so it charges nothing. The call has no `retry`, so a timeout never creates a second PaymentIntent.
 
 ### Request
 
@@ -170,9 +169,10 @@ The JSON inside the block:
 | `method` | `GET` | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`. |
 | `headers` | none | An object of headers. A header whose name or value holds a line break is dropped, never sent. A `Content-Type` here replaces the one `content_type` sets. |
 | `query` | none | An object of query-string values, each percent-encoded and appended to `url` (with `&` when `url` already has a `?`). |
+| `form` | none | A form body: an object of fields, each name and value percent-encoded as in `query`. Sent as `application/x-www-form-urlencoded`, unless `content_type` gives another type. With `body` or `body_raw` too, the call isn't made and its `status_code` is `0`. |
 | `body` | none | The JSON body, sent as written. A marker outside a string (`"body": {{doc}}`) inserts one whole JSON value. A string `body` is sent as its text when the body's type isn't JSON, such as a form, and as a JSON string when it is. |
 | `body_raw` | none | A body sent as written, when there is no `body`. `"body_raw": "{{payload}}"` forwards a caller's document as it came. |
-| `content_type` | `application/json` | The body's type, sent with `charset=utf-8`. |
+| `content_type` | `application/json`, or `application/x-www-form-urlencoded` with `form` | The body's type, sent with `charset=utf-8`. |
 | `timeout_seconds` | `30` | `timeout` is accepted too. A timeout gives `status_code` `0`. |
 | `auth` | none | `bearer`, `api_key` or `basic` ([Authentication](#authentication)). |
 | `retry` | none: one attempt | `max_attempts` (`3`), `delay_ms` (`1000`), `exponential_backoff` (`true`), `retry_status_codes` (`[500, 502, 503, 504]`). A network error or a timeout is retried too ([Retry configuration](#retry-configuration)). |

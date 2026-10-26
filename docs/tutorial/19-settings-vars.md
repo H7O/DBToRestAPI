@@ -143,15 +143,15 @@ DECLARE @payment NVARCHAR(MAX) = {http{
     "url": "{s{payment_api_url}}/payment_intents",
     "method": "POST",
     "headers": { "Authorization": "Bearer {s{stripe_secret_key}}" },
-    "content_type": "application/x-www-form-urlencoded",
-    "body_raw": "amount={pq{amount_cents}}&currency=usd&customer={pq{stripe_customer_id}}"
+    "form": { "amount": "{pq{amount_cents}}", "currency": "usd", "customer": "{pq{stripe_customer_id}}" }
   }
 }http};
 ```
 
-The form goes in `body_raw`, with its type in `content_type`. The values in
-the form come from the database, not the request: `&` or `=` in a caller's
-value would add fields. The whole endpoint is in topic 17,
+The form goes in `form`, whose fields are percent-encoded like a query
+string's, and is sent as `application/x-www-form-urlencoded`. The amount and
+the customer come from the database, not the request, so a caller can't choose
+what to pay. The whole endpoint is in topic 17,
 [POST with a form body](../topics/17-embedded-http-calls.md#complete-example-post-with-a-form-body).
 
 The Stripe secret key never appears in `sql.xml` — it lives in `settings.xml`

@@ -56,6 +56,13 @@ internal static class RequestMessageBuilder
 
     private static void SetContent(HttpRequestMessage httpRequest, HttpExecutorRequest request)
     {
+        // A form's fields, encoded as a query's are. The parser lets no body or body_raw beside it.
+        if (request.Form != null)
+        {
+            httpRequest.Content = new StringContent(QueryStringBuilder.Encode(request.Form), Encoding.UTF8, request.ContentType);
+            return;
+        }
+
         // Check if there's a body to send
         if (request.Body == null && string.IsNullOrEmpty(request.BodyRaw))
             return;

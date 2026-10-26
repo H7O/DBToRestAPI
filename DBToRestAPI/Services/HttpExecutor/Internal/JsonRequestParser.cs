@@ -41,7 +41,9 @@ internal static class JsonRequestParser
 
 
         var method = element.GetPropertyOrDefault("method")?.GetString() ?? "GET";
-        var contentType = element.GetPropertyOrDefault("content_type")?.GetString() ?? "application/json";
+        var form = StringValues(element, "form");
+        var contentType = element.GetPropertyOrDefault("content_type")?.GetString()
+            ?? (form is null ? "application/json" : "application/x-www-form-urlencoded");
         var timeoutSeconds = element.GetPropertyOrDefault("timeout_seconds")?.GetInt32()
             ?? element.GetPropertyOrDefault("timeout")?.GetInt32()
             ?? 30;
@@ -60,16 +62,7 @@ internal static class JsonRequestParser
             }
         }
 
-        // Parse query parameters
-        Dictionary<string, string>? query = null;
-        if (element.TryGetProperty("query", out var queryElement) && queryElement.ValueKind == JsonValueKind.Object)
-        {
-            query = [];
-            foreach (var prop in queryElement.EnumerateObject())
-            {
-                query[prop.Name] = prop.Value.GetString() ?? string.Empty;
-            }
-        }
+        var query = StringValues(element, "query");
 
         // Parse body (keep as JsonElement for later serialization)
         object? body = null;
@@ -78,6 +71,10 @@ internal static class JsonRequestParser
         {
             body = bodyElement.Clone();
         }
+
+        // One of the three, so that a form's fields never quietly give way to another body.
+        if (form is not null && (body is not null || bodyRaw is not null))
+            throw new ArgumentException("Use one of 'form', 'body' and 'body_raw', not several.");
 
         // Parse auth
         HttpExecutorAuth? auth = null;
@@ -128,6 +125,7 @@ internal static class JsonRequestParser
             Method = method.ToUpperInvariant(),
             Headers = headers,
             Query = query,
+            Form = form,
             Body = body,
             BodyRaw = bodyRaw,
             ContentType = contentType,
@@ -137,6 +135,23 @@ internal static class JsonRequestParser
             Auth = auth,
             Retry = retry
         };
+    }
+
+    /// <summary>
+    /// An object of string values, such as <c>query</c> or <c>form</c>, or null when there is none.
+    /// A value that isn't a string throws, which fails that one call.
+    /// </summary>
+    private static Dictionary<string, string>? StringValues(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var values) || values.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var result = new Dictionary<string, string>();
+        foreach (var prop in values.EnumerateObject())
+        {
+            result[prop.Name] = prop.Value.GetString() ?? string.Empty;
+        }
+        return result;
     }
 
     /// <summary>

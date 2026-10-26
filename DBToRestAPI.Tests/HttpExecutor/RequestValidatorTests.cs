@@ -353,6 +353,28 @@ public class RequestValidatorTests
     }
 
     [Fact]
+    public void Validate_FormBesideABody_ReturnsError()
+    {
+        var result = RequestValidator.Validate("""
+            {"url": "https://example.com", "form": {"a": "1"}, "body_raw": "a=1"}
+            """);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("'form'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_FormThatIsNotAnObject_ReturnsError()
+    {
+        var result = RequestValidator.Validate("""
+            {"url": "https://example.com", "form": "a=1"}
+            """);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("'form' must be an object", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Validate_EmptyRetryStatusCodes_ReturnsWarning()
     {
         // Arrange

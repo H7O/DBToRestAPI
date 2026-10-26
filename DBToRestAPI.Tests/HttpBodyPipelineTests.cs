@@ -35,6 +35,12 @@ public class HttpBodyPipelineTests(HttpBodyPipelineTests.BodyEngine engine) : IC
         ["queries:http_null_column:query:1"] =
             """SELECT {http{ {"url": "https://body.test/null_column", "method": "POST", "body": {"doc": {pq{doc}}, "name": "{pq{name}}"}} }http} AS resp;""",
 
+        // A form with a caller's values, which may hold & and =.
+        ["queries:http_form_fields:route"] = "http_form_fields",
+        ["queries:http_form_fields:verb"] = "POST",
+        ["queries:http_form_fields:query"] =
+            """SELECT {http{ {"url": "https://body.test/form_fields", "method": "POST", "form": {"amount": "{{amount}}", "note": "{{note}}"}} }http} AS resp;""",
+
         // An earlier query's BLOB columns, inside and outside a string. D76DF8 is 1234 in base64.
         ["queries:http_binary_column:route"] = "http_binary_column",
         ["queries:http_binary_column:verb"] = "POST",
@@ -88,6 +94,18 @@ public class HttpBodyPipelineTests(HttpBodyPipelineTests.BodyEngine engine) : IC
         var sent = await CallAsync("http_null_column", "{}", "/null_column");
 
         Assert.Equal("""{"doc": null, "name": ""}""", sent.Body);
+    }
+
+    [Fact]
+    public async Task AForm_EncodesACallersValues_SoTheyCantAddFields()
+    {
+        var sent = await CallAsync("http_form_fields", """{"amount": "10", "note": "x&amount=1 \"q\""}""", "/form_fields");
+
+        Assert.StartsWith("application/x-www-form-urlencoded", sent.Headers["Content-Type"]);
+        var fields = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(sent.Body);
+        Assert.Equal(2, fields.Count);
+        Assert.Equal("10", fields["amount"].ToString());
+        Assert.Equal("x&amount=1 \"q\"", fields["note"].ToString());
     }
 
     [Fact]
