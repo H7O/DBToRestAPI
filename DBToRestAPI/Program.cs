@@ -58,7 +58,9 @@ builder.Services.AddSingleton<DbConnectionFactory>();
 builder.Services.AddScoped<TempFilesTracker>();
 
 
-builder.Services.AddHybridCache();
+// HybridCache reads its own size limit once, when it is created, so the engine applies each route's
+// max_entry_size_in_bytes itself, from the current configuration (see CacheService.DefaultMaxEntrySize).
+builder.Services.AddHybridCache(CacheService.ConfigureHybridCache);
 
 builder.Services.AddHttpContextAccessor();
 
@@ -85,6 +87,9 @@ builder.Services.AddSingleton<ApiKeysService>();
 builder.Services.AddSingleton<IQueryConfigurationParser, QueryConfigurationParser>();
 
 builder.Services.AddSingleton<OpenApiDocumentBuilder>();
+
+// response_prefix / response_suffix of every route, read once per (re)load; built at start-up so a bad value stops the app
+builder.Services.AddSingleton<ResponseFramingIndex>();
 
 
 
@@ -189,6 +194,8 @@ if (!string.IsNullOrEmpty(httpsCertPath))
 builder.Services.Configure<KestrelServerOptions>(options =>
 {
     options.Limits.MaxRequestBodySize = maxFileSize;
+    // No `Server: Kestrel` header: no client reads it, and it tells a scanner which server to probe.
+    options.AddServerHeader = false;
 });
 
 builder.Services.Configure<FormOptions>(options =>
@@ -219,6 +226,7 @@ app.MapControllers();
 
 app.UseMiddleware<OpenApiMiddleware>();              // 0. OpenAPI spec (short-circuit, no pipeline overhead)
 app.UseMiddleware<Step1ServiceTypeChecks>();        // 1. Route resolution & service type determination
+app.UseMiddleware<Step1bResponseFraming>();        // 1b. response_prefix / response_suffix (only a flag read when no route uses them)
 app.UseMiddleware<Step2CorsCheck>();                // 2. CORS headers (must be before auth for preflight)
 app.UseMiddleware<Step3ApiKeysCheck>();             // 3. Local API key validation
 app.UseMiddleware<Step4JwtAuthorization>();         // 4. JWT/OAuth 2.0 validation

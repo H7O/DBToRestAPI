@@ -59,9 +59,9 @@ Fetch only what you need:
 | Configuration | [02-configuration.md](docs/topics/02-configuration.md) | Where the files live, how they load, merge and reload (and what needs a restart), settings.xml, sql.xml, connection strings, environment variables, log levels |
 | CRUD Operations | [03-crud-operations.md](docs/topics/03-crud-operations.md) | Create, Read, Update, Delete patterns |
 | Parameters | [04-parameters.md](docs/topics/04-parameters.md) | {{param}}, value types (JSON numbers, empty query-string values), which body types are read (JSON, forms; any other is 415), which source wins, one-source markers ({r{}}, {qs{}}, {j{}}, {f{}}, {h{}}), names with any characters, route params, mandatory params |
-| Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON, buffer_rows |
+| Response Formats | [05-response-formats.md](docs/topics/05-response-formats.md) | response_structure, count_query, nested JSON, buffer_rows, response_prefix/response_suffix (bytes such as a byte order mark around the answer) |
 | API Keys | [06-api-keys.md](docs/topics/06-api-keys.md) | Endpoint protection, key collections |
-| Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration |
+| Caching | [07-caching.md](docs/topics/07-caching.md) | Memory cache, invalidators, duration, answer size limit |
 | API Gateway | [08-api-gateway.md](docs/topics/08-api-gateway.md) | Proxy routes, wildcards, external APIs, answers streamed as they arrive, a target that fails (502, 504) |
 | File Uploads | [09-file-uploads.md](docs/topics/09-file-uploads.md) | Files plus form fields in one request (multipart or JSON base64), local/SFTP stores, validation and limits, what the query receives (is_new_upload), automatic rollback, partial updates (keep/remove/add), complete form example |
 | File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | response_structure file, `<store>`, the columns the query returns (relative_path, file_name, mime_type, base64_content, http), owner-only downloads, Content-Disposition, 404 cases |

@@ -988,9 +988,8 @@ namespace DBToRestAPI.Controllers
                     {
                         if (!string.IsNullOrWhiteSpace(rootNodeName))
                         {
-                            var wrappedResult = new ExpandoObject();
-                            wrappedResult.TryAdd(rootNodeName, resultWithNoCount?.AsEnumerable().ToArray());
-                            return StatusCode(customSuccessStatusCode, wrappedResult);
+                            return StatusCode(customSuccessStatusCode,
+                                WrapInRootNode(rootNodeName, resultWithNoCount?.AsEnumerable().ToArray()));
                         }
                         return StatusCode(customSuccessStatusCode, resultWithNoCount.AsEnumerable().ToArray());
                     }
@@ -1002,9 +1001,7 @@ namespace DBToRestAPI.Controllers
                     var chamberedArray = await resultWithNoCount.ToChamberedEnumerableAsync(chamberSize, run.Cancel);
                     if (!string.IsNullOrWhiteSpace(rootNodeName))
                     {
-                        var wrappedResult = new ExpandoObject();
-                        wrappedResult.TryAdd(rootNodeName, chamberedArray);
-                        return StatusCode(customSuccessStatusCode, wrappedResult);
+                        return StatusCode(customSuccessStatusCode, WrapInRootNode(rootNodeName, chamberedArray));
                     }
                     return StatusCode(customSuccessStatusCode, chamberedArray);
                 }
@@ -1026,9 +1023,7 @@ namespace DBToRestAPI.Controllers
                         await resultWithNoCount.CloseReaderAsync();
                         if (!string.IsNullOrWhiteSpace(rootNodeName))
                         {
-                            var wrappedResult = new ExpandoObject();
-                            wrappedResult.TryAdd(rootNodeName, (object?)singleResult);
-                            return StatusCode(customSuccessStatusCode, wrappedResult);
+                            return StatusCode(customSuccessStatusCode, WrapInRootNode(rootNodeName, (object?)singleResult));
                         }
                         return StatusCode(customSuccessStatusCode, singleResult);
                     }
@@ -1036,12 +1031,10 @@ namespace DBToRestAPI.Controllers
                     {
                         if (!string.IsNullOrWhiteSpace(rootNodeName))
                         {
-                            var wrappedResult = new ExpandoObject();
-                            wrappedResult.TryAdd(rootNodeName,
+                            return StatusCode(customSuccessStatusCode, WrapInRootNode(rootNodeName,
                                 disableDeferredExecution ?
                                 chamberedResult.AsEnumerable().ToArray() :
-                                chamberedResult);
-                            return StatusCode(customSuccessStatusCode, wrappedResult);
+                                chamberedResult));
                         }
                         return StatusCode(customSuccessStatusCode,
                             disableDeferredExecution ?
@@ -1100,10 +1093,8 @@ namespace DBToRestAPI.Controllers
             {
                 if (!string.IsNullOrWhiteSpace(rootNodeName))
                 {
-                    var wrappedResult = new ExpandoObject();
-                    wrappedResult.TryAdd(rootNodeName,
-                        new { success = true, count = rowCount, data = result.AsEnumerable().ToArray() });
-                    return StatusCode(customSuccessStatusCode, wrappedResult);
+                    return StatusCode(customSuccessStatusCode, WrapInRootNode(rootNodeName,
+                        new { success = true, count = rowCount, data = result.AsEnumerable().ToArray() }));
                 }
                 return StatusCode(customSuccessStatusCode,
                     new { success = true, count = rowCount, data = result.AsEnumerable().ToArray() });
@@ -1115,15 +1106,27 @@ namespace DBToRestAPI.Controllers
 
             if (!string.IsNullOrWhiteSpace(rootNodeName))
             {
-                var wrappedResult = new ExpandoObject();
-                wrappedResult.TryAdd(rootNodeName,
-                    new { success = true, count = rowCount, data = chamberedData });
-                return StatusCode(customSuccessStatusCode, wrappedResult);
+                return StatusCode(customSuccessStatusCode, WrapInRootNode(rootNodeName,
+                    new { success = true, count = rowCount, data = chamberedData }));
             }
 
             return StatusCode(customSuccessStatusCode,
                 new { success = true, count = rowCount, data = chamberedData });
         }
+
+        /// <summary>
+        /// The object a route's <c>root_node</c> wraps its answer in: <c>{"&lt;root_node&gt;": answer}</c>.
+        /// </summary>
+        /// <remarks>
+        /// A dictionary, not an <see cref="ExpandoObject"/>. The answer may be a streamed result,
+        /// which only the serializer's own resumable path can write, and
+        /// <see cref="ExpandoJsonConverter"/> writes an ExpandoObject's values synchronously: an
+        /// ExpandoObject holding a streamed result failed with NotSupportedException and answered
+        /// 500. The serializer writes a dictionary as it wrote the ExpandoObject before that
+        /// converter, so the JSON is unchanged.
+        /// </remarks>
+        internal static Dictionary<string, object?> WrapInRootNode(string rootNodeName, object? answer)
+            => new() { [rootNodeName] = answer };
 
         /// <summary>
         /// The response structure a route uses: its own <c>response_structure</c> in lower case, or

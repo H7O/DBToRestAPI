@@ -6,7 +6,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Hybrid;
 using System.Buffers;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using DBToRestAPI.Services;
 using DBToRestAPI.Settings;
@@ -18,12 +20,40 @@ namespace DBToRestAPI.Cache
     public class CacheService(
         IEncryptedConfiguration configuration,
         IServiceProvider provider,
-        HybridCache cache
+        HybridCache cache,
+        ILogger<CacheService>? logger = null
         )
     {
         private readonly IEncryptedConfiguration _configuration = configuration;
         private readonly IServiceProvider _provider = provider;
         private readonly HybridCache _cache = cache;
+        private readonly ILogger<CacheService>? _logger = logger;
+
+        /// <summary>
+        /// The largest answer a route's cache stores when neither the route nor settings.xml sets
+        /// <c>cache:memory:max_entry_size_in_bytes</c>: 1 MiB, HybridCache's own default, which was the
+        /// limit before the setting.
+        /// </summary>
+        /// <remarks>
+        /// The limit is read for each cache fill, as <c>duration_in_milliseconds</c> is: the route's,
+        /// else the global one, so a change takes effect without a restart. HybridCache has a limit of
+        /// its own, but reads it once, when it is created, so <see cref="ConfigureHybridCache"/> sets
+        /// that one out of the way. An answer over the limit goes to every caller waiting on the fill
+        /// and is not stored (<see cref="StoreOrHandOut"/>). An entry stored under a higher limit stays
+        /// until it expires.
+        /// </remarks>
+        internal const long DefaultMaxEntrySize = 1024 * 1024;
+
+        /// <summary>
+        /// HybridCache's options as the engine sets them: its own size limit at its largest, so that
+        /// the route's <c>max_entry_size_in_bytes</c> is the one that applies (see
+        /// <see cref="DefaultMaxEntrySize"/>). Over its own limit, HybridCache logs an error on every
+        /// fill, which names neither the route nor the setting. HybridCache grows its buffer as it
+        /// writes an entry, so the larger limit costs nothing. What <see cref="GetAsync"/> stores (an OIDC provider's
+        /// metadata and keys) has no limit then: it comes from the providers the configuration names.
+        /// </summary>
+        internal static void ConfigureHybridCache(HybridCacheOptions options)
+            => options.MaximumPayloadBytes = int.MaxValue;
 
         /// <summary>
         /// Retrieves an item from the cache or generates it using the specified data factory function.
@@ -82,10 +112,17 @@ namespace DBToRestAPI.Cache
                     {
                         ranOwnFactory = true;
                         // Buffered mode, for caching
-                        return await dataFactory(true, cancel) ?? throw new ResponseNotCachedException();
+                        return StoreOrHandOut(
+                            await dataFactory(true, cancel) ?? throw new ResponseNotCachedException(),
+                            cacheInfo, serviceSection);
                     },
                     options: options,
                     cancellationToken: cancellationToken);
+            }
+            catch (AnswerTooLargeException tooLarge)
+            {
+                // Too large to store: every caller waiting on the fill gets the one response.
+                return (T)tooLarge.Answer;
             }
             catch (ResponseNotCachedException) when (ranOwnFactory)
             {
@@ -115,6 +152,59 @@ namespace DBToRestAPI.Cache
         private sealed class ResponseNotCachedException : Exception
         {
         }
+
+        /// <summary>
+        /// Thrown out of a cache fill whose answer is over the route's <c>max_entry_size_in_bytes</c>
+        /// (<see cref="StoreOrHandOut"/>), so that HybridCache stores nothing for it. It carries the
+        /// answer: HybridCache hands the fill's exception to every caller waiting on it, so each of
+        /// them gets the one answer, as they would a stored one.
+        /// </summary>
+        private sealed class AnswerTooLargeException(object answer) : Exception
+        {
+            public object Answer { get; } = answer;
+        }
+
+        /// <summary>
+        /// A cache fill's answer, to be stored, unless it is over the entry's
+        /// <see cref="CacheInfo.MaxEntrySize"/>: then it leaves the fill in an
+        /// <see cref="AnswerTooLargeException"/>, and the route, the size and the limit are logged,
+        /// once for the fill.
+        /// </summary>
+        private T StoreOrHandOut<T>(T answer, CacheInfo cacheInfo, IConfigurationSection serviceSection)
+        {
+            if (SizeOf(answer) is not { } size || size <= cacheInfo.MaxEntrySize)
+                return answer;
+            _logger?.LogWarning(
+                "{Time}: The answer of {Route} is {Size} bytes, over its cache limit of {Limit} bytes, so it was not cached. "
+                + "The limit is cache:memory:max_entry_size_in_bytes, on the route or in settings.xml.",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), serviceSection.Path, size, cacheInfo.MaxEntrySize);
+            throw new AnswerTooLargeException(answer!);
+        }
+
+        /// <summary>
+        /// The size of an answer as <c>max_entry_size_in_bytes</c> counts it: the JSON of a query's
+        /// answer, the body of a gateway's response. Null for anything else, which is stored whatever
+        /// its size.
+        /// </summary>
+        private static long? SizeOf(object? answer) => answer switch
+        {
+            CachableQueryResult { Data.ValueKind: JsonValueKind.Undefined } => 0,
+            CachableQueryResult result => JsonMarshal.GetRawUtf8Value(result.Data).Length,
+            CachableHttpResponseContainer response => response.Content?.LongLength ?? 0,
+            _ => null,
+        };
+
+        /// <summary>
+        /// The route's <c>max_entry_size_in_bytes</c> under <c>cache:memory</c>, else the global one,
+        /// else <see cref="DefaultMaxEntrySize"/>. A value under 1 counts as not set.
+        /// </summary>
+        /// <exception cref="InvalidSettingException">A value isn't a whole number.</exception>
+        private long MaxEntrySize(IConfigurationSection memorySection)
+            => Positive(memorySection.GetSetting<long>("max_entry_size_in_bytes"))
+               ?? Positive(this._configuration.GetSetting<long>("cache:memory:max_entry_size_in_bytes"))
+               ?? DefaultMaxEntrySize;
+
+        private static long? Positive(long? value) => value > 0 ? value : null;
 
 
         public async Task<T> GetAsync<T>(
@@ -179,13 +269,20 @@ namespace DBToRestAPI.Cache
                 Expiration = cacheInfo.Duration,
                 LocalCacheExpiration = cacheInfo.Duration,
             };
-            return await this._cache.GetOrCreateAsync<T>(
-                cacheInfo.Key, // Unique key to the cache entry
+            try
+            {
+                return await this._cache.GetOrCreateAsync<T>(
+                    cacheInfo.Key, // Unique key to the cache entry
 
-                async cancel => await dataFactory(true, cancel),
-                // ^ Data factory to generate the item (in direct fashion for caching) if not found in cache
-                options: options,
-                cancellationToken: cancellationToken);
+                    async cancel => StoreOrHandOut(await dataFactory(true, cancel), cacheInfo, serviceSection),
+                    // ^ Data factory to generate the item (in direct fashion for caching) if not found in cache
+                    options: options,
+                    cancellationToken: cancellationToken);
+            }
+            catch (AnswerTooLargeException tooLarge)
+            {
+                return (T)tooLarge.Answer;
+            }
         }
 
 
@@ -230,17 +327,26 @@ namespace DBToRestAPI.Cache
             };
 
             // Cache a serializable CachableQueryResult instead of IActionResult
-            var cachedResult = await this._cache.GetOrCreateAsync<CachableQueryResult>(
-                cacheInfo.Key,
-                async cancel =>
-                {
-                    // Execute the data factory in materialized (non-deferred) mode
-                    var actionResult = await dataFactory(true, cancel);
-                    // Convert IActionResult to a serializable container
-                    return CachableQueryResult.FromActionResult(actionResult);
-                },
-                options: options,
-                cancellationToken: cancellationToken);
+            CachableQueryResult cachedResult;
+            try
+            {
+                cachedResult = await this._cache.GetOrCreateAsync<CachableQueryResult>(
+                    cacheInfo.Key,
+                    async cancel =>
+                    {
+                        // Execute the data factory in materialized (non-deferred) mode
+                        var actionResult = await dataFactory(true, cancel);
+                        // Convert IActionResult to a serializable container
+                        return StoreOrHandOut(CachableQueryResult.FromActionResult(actionResult), cacheInfo, serviceSection);
+                    },
+                    options: options,
+                    cancellationToken: cancellationToken);
+            }
+            catch (AnswerTooLargeException tooLarge)
+            {
+                // Too large to store: every caller waiting on the fill gets the one answer.
+                cachedResult = (CachableQueryResult)tooLarge.Answer;
+            }
 
             // Convert the cached container back to an IActionResult
             return cachedResult.ToActionResult();
@@ -507,7 +613,8 @@ namespace DBToRestAPI.Cache
             return new CacheInfo()
             {
                 Duration = TimeSpan.FromMilliseconds(duration),
-                Key = cacheKey
+                Key = cacheKey,
+                MaxEntrySize = MaxEntrySize(memorySection)
             };
         }
 
@@ -607,7 +714,8 @@ namespace DBToRestAPI.Cache
             return new CacheInfo()
             {
                 Duration = TimeSpan.FromMilliseconds(duration),
-                Key = cacheKey
+                Key = cacheKey,
+                MaxEntrySize = MaxEntrySize(memorySection)
             };
         }
 

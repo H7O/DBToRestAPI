@@ -45,9 +45,54 @@ Invalidate cache when specific parameters change:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `duration_in_milliseconds` | Required | Cache lifetime |
+| `max_entry_size_in_bytes` | 1048576 (1 MiB) | The largest answer the route stores. See [Answer Size Limit](#answer-size-limit). |
 | `invalidators` | None | Names of the inputs that change the answer, separated by commas, or by `\|` when a name contains a comma. A name that contains a space, a comma or `;` stays whole only when one of the route's queries (or its `count_query`) uses it in a marker, such as `{{sort by}}` (or a marker with the route's own delimiters). Otherwise it is split on them, so a list separated by spaces or `;` still names every input. An API gateway route runs no query, so its names are always split that way. |
 
 > Invalidator values are hashed (64-bit xxHash3) before they enter the cache key, so a value of any length — a bearer token, say — is safe to nominate, and two requests that differ only in a long value never share an entry. A `max_per_value_cache_size` setting is ignored.
+
+## Answer Size Limit
+
+A route stores an answer only up to 1 MiB unless you raise the limit. A larger answer still goes to its caller, but it isn't stored, so the next request runs the query again. Each time, the engine logs a `Warning` that names the route, the answer's size and the limit:
+
+```
+2026-11-01 09:30:00.123: The answer of queries:sales_report is 1310720 bytes, over its cache limit of 1048576 bytes, so it was not cached. The limit is cache:memory:max_entry_size_in_bytes, on the route or in settings.xml.
+```
+
+Raise the limit for every cached route in `settings.xml`:
+
+```xml
+<!-- settings.xml -->
+<settings>
+  <cache>
+    <memory>
+      <max_entry_size_in_bytes>4194304</max_entry_size_in_bytes>
+    </memory>
+  </cache>
+</settings>
+```
+
+Or for one route, in its own `<memory>` block. The route's value wins over the global one:
+
+```xml
+<settings>
+  <queries>
+    <sales_report>
+      <route>reports/sales</route>
+      <cache>
+        <memory>
+          <duration_in_milliseconds>600000</duration_in_milliseconds>
+          <max_entry_size_in_bytes>8388608</max_entry_size_in_bytes>
+        </memory>
+      </cache>
+      <query><![CDATA[EXEC dbo.sales_report;]]></query>
+    </sales_report>
+  </queries>
+</settings>
+```
+
+The engine reads the limit each time it runs a route's query for the cache, so a change takes effect without a restart. An answer stored under a higher limit stays until its duration ends, even after you lower the limit. A value under 1 counts as not set. A value that isn't a whole number, such as `4MB`, makes the route answer `500` with a message that names the setting.
+
+What counts is the answer's JSON for a query route, and the response body for an API gateway route. The limit applies to each stored answer, not to the cache as a whole, and nothing caps the total. Each combination of the `<invalidators>` values gets its own entry, so the memory a route can take is its limit times the number of combinations callers send within the duration.
 
 ## Example: User-Specific Cache
 
@@ -152,6 +197,8 @@ For an API gateway route, the key is the route, the verb, the requested path, an
 A request with the same key that arrives while the first one's query runs waits for that query instead of running its own, and gets its result. The query keeps running for the callers still waiting when the caller who started it disconnects, and stops only when all of them have gone. A caller who disconnects is logged as one `Information` line naming the route. Its command timeout (`db_command_timeout`) still applies, as does a gateway route's `target_route_timeout_seconds`.
 
 On a gateway route, a response that is not stored (an excluded status, or a `Set-Cookie` header) goes only to the caller whose request was forwarded, and each caller who waited for it is forwarded on its own.
+
+An answer over the route's [size limit](#answer-size-limit) is different: it isn't stored either, but every caller who waited for it gets it, on a query route and on a gateway route alike.
 
 ### Subsequent Requests (within duration)
 

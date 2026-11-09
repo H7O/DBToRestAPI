@@ -1469,10 +1469,13 @@ public class ParametersBuilder
             throw new RequestValidationException($"File name `{fileName}` is too long. Maximum length is 150 characters.");
         }
 
-        // validate if file name has path traversal characters
-        if (fileName.Contains(".."))
+        // validate if file name has path traversal characters. A name is one path segment (`/` and `\` are
+        // refused below), and a segment only climbs out of its folder when it is `.` or `..` as a whole, as
+        // FileStorePath reads a stored path. Two dots inside a name (`Q3 2025..pdf`) are ordinary characters.
+        // (A name of dots only is refused by the trim check further down as well.)
+        if (fileName == "." || fileName == "..")
         {
-            throw new RequestValidationException($"File name `{fileName}` contains invalid path traversal sequence `..`");
+            throw new RequestValidationException($"File name `{fileName}` is a path traversal segment: `.` and `..` name a folder, not a file.");
         }
 
         // validate if file name has directory separator characters. Both '/' and '\' are refused on every
@@ -1497,20 +1500,20 @@ public class ParametersBuilder
         var trimmedFileName = fileName.Trim(' ', '.');
         if (trimmedFileName != fileName)
         {
-            throw new RequestValidationException($"File name cannot start or end with spaces or dots.");
+            throw new RequestValidationException($"File name `{fileName}` cannot start or end with spaces or dots.");
         }
 
         // Check for files that are only dots (Windows restriction)
         if (fileName.All(c => c == '.'))
         {
-            throw new RequestValidationException($"File name cannot consist only of dots.");
+            throw new RequestValidationException($"File name `{fileName}` cannot consist only of dots.");
         }
 
 
         // Check for leading hyphen (can cause issues with command-line tools)
         if (fileName.StartsWith("-"))
         {
-            throw new RequestValidationException($"File name cannot start with a hyphen.");
+            throw new RequestValidationException($"File name `{fileName}` cannot start with a hyphen.");
         }
 
         // Optional: Check for multiple extensions (uncomment if needed)

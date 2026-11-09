@@ -6,8 +6,10 @@ namespace DBToRestAPI.Services;
 
 /// <summary>
 /// Writes an <see cref="ExpandoObject"/> exactly as System.Text.Json writes it on its own, in less
-/// time: each object of a JSON column (<c>{type{json{name}}}</c>), and the object a route's
-/// <c>root_node</c> wraps its answer in. A query's rows are Com.H.Data.Common's DbQueryRows, which
+/// time: each object of a JSON column (<c>{type{json{name}}}</c>). It writes every value
+/// synchronously, so it can't write an ExpandoObject that holds a streamed result
+/// (<see cref="IAsyncEnumerable{T}"/>): the object a route's <c>root_node</c> wraps its answer in
+/// is a dictionary for that reason (ApiController.WrapInRootNode). A query's rows are Com.H.Data.Common's DbQueryRows, which
 /// that library writes the same way with a converter of its own. On its own, the serializer writes
 /// an ExpandoObject as a dictionary of <see cref="object"/>: it looks up each value's converter from
 /// the value's type, and takes its slower resumable path while a response is streamed. This

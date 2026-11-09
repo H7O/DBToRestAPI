@@ -1,7 +1,7 @@
 ---
 title: Response formats
 summary: The shape of a successful response (one object, an array, a count wrapper or a file), chosen with response_structure, plus nested JSON, status codes, empty results, and buffer_rows, which reads a result before writing it.
-keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, buffer_rows, "204", "{type{json{...}}}", FOR JSON, DATE, DATETIME2, DATETIMEOFFSET, "T00:00:00", UNIQUEIDENTIFIER, VARBINARY, base64]
+keywords: [response_structure, array, file, single, auto, count_query, root_node, success_status_code, buffer_rows, response_prefix, response_suffix, byte order mark, BOM, "204", "{type{json{...}}}", FOR JSON, DATE, DATETIME2, DATETIMEOFFSET, "T00:00:00", UNIQUEIDENTIFIER, VARBINARY, base64]
 ---
 
 # Response Formats
@@ -238,6 +238,38 @@ Return one of these from your query:
 ```
 
 A `204` never has a body. A row that a `204` route's query returns is dropped without a log line, so leave such a query without `OUTPUT` or `RETURNING`. A query that returns no row answers `204` anyway when the success code is the default `200`.
+
+## Bytes Before and After the Answer: `response_prefix` and `response_suffix`
+
+Some clients were written against another service's exact output and expect bytes around the JSON: a UTF-8 byte order mark (`EF BB BF`) that the client strips without checking that it is there, or a `)]}'` line before the JSON. `response_prefix` sends bytes before a route's answer body, and `response_suffix` after it:
+
+```xml
+<legacy_feed>
+  <route>feed/announcements</route>
+  <verb>GET</verb>
+  <response_structure>array</response_structure>
+  <!-- a UTF-8 byte order mark, for a client that expects one -->
+  <response_prefix encoding="hex">EF BB BF</response_prefix>
+  <query><![CDATA[SELECT id, title FROM announcements ORDER BY id;]]></query>
+</legacy_feed>
+```
+
+The answer is then `EF BB BF` followed by `[{"id":1,"title":"..."}]`. It is no longer plain JSON: a parser that doesn't skip a byte order mark refuses it, so set the tags only on routes whose clients expect the bytes.
+
+| `encoding` attribute | The tag holds |
+|---|---|
+| `text` (the default) | Text, sent as UTF-8. A character reference works: `&#xFEFF;` is the byte order mark. |
+| `hex` | Byte pairs, such as `EF BB BF`. Spaces and line breaks between them are ignored. |
+| `base64` | The bytes in base64. |
+
+A tag that holds only whitespace is read as empty, even written as a character reference such as `&#10;`. For a line break or a space, use `hex`: `<response_suffix encoding="hex">0A</response_suffix>`.
+
+- **For every route, or one.** Directly under `<settings>`, the tags apply to every query route and gateway route. A route's own tag replaces the global one, and the prefix and suffix are replaced separately. An empty tag on a route (`<response_prefix></response_prefix>`) turns the global one off for that route.
+- **Every body the route sends gets them:** its results, its errors (a status raised from SQL, a `400`, `401` or `429` the engine answers), files and gateway answers. An answer without a body (`HEAD`, `204`, `304`) gets neither. Neither does an answer to a request that matches no route, or a static file.
+- **The whole answer, uncompressed.** On a route with either tag, the engine removes the request's `Range`, `If-Range` and `Accept-Encoding` headers, so a gateway target sends the whole answer without compressing it. If a target still answers with a part (`206`) or compressed (a `Content-Encoding`), that answer is sent unchanged, since added bytes would corrupt it. A `Content-Length` is increased to match.
+- **Streaming and caching work as without them.** The prefix goes out just before the first byte of the body, and the suffix after the last, so nothing is buffered. The cache stores the plain answer. When a streamed answer fails part way and the connection is cut, the suffix isn't sent.
+- **No cost when unused.** The tags are read at start-up and again when the configuration changes. When no route has them, a request costs one check.
+- **A value that can't be decoded** (bad hex or base64, or another `encoding`) stops the engine at start-up, with the route and the value in the message. After a change to a running engine, that route answers `500` with `{"success":false,"message":"This endpoint's response_prefix / response_suffix setting is invalid."}`, and an `Error` log line names the route and the value, until it is fixed. Other routes are not affected.
 
 ## Empty Results
 

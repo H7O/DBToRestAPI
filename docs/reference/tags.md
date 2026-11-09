@@ -1,7 +1,7 @@
 ---
 title: Configuration tags
 summary: Every tag the engine reads, where it goes, its default, and which value wins when it is set in more than one place. A tag that isn't on this page is ignored without a log line.
-keywords: [tags, settings, route, verb, host, query, count_query, connection_string_name, json_var, db_command_timeout, buffer_rows, response_structure, success_status_code, root_node, mandatory_parameters, cache, invalidators, cors, api_keys_collections, authorize, provider, rate_limit, routes, url, excluded_headers, applied_headers, file_management, stores, store, openapi, static_files, vars, settings_encryption, additional_configurations, max_payload_size_in_bytes, debug_mode_header_value, generic_error_message, default]
+keywords: [tags, settings, route, verb, host, query, count_query, connection_string_name, json_var, db_command_timeout, buffer_rows, response_structure, success_status_code, root_node, response_prefix, response_suffix, mandatory_parameters, cache, invalidators, cors, api_keys_collections, authorize, provider, rate_limit, routes, url, excluded_headers, applied_headers, file_management, stores, store, openapi, static_files, vars, settings_encryption, additional_configurations, max_payload_size_in_bytes, debug_mode_header_value, generic_error_message, default]
 ---
 
 # Configuration tags
@@ -60,6 +60,8 @@ Three rules hold for every tag:
 | `<response_structure>` | Endpoint only | the row count decides | `array` or `file`. `single` and `auto` are read as the tag left out; any other value is a `500`. A global one is not read ([05](../topics/05-response-formats.md)). |
 | `<success_status_code>` | Endpoint, then global | `200` | A query that returns no row with the default answers `204`. A `204` never has a body. |
 | `<root_node>` | Endpoint, then global | none | Wraps the answer in `{"<root_node>": ...}`. |
+| `<response_prefix>` | Endpoint or gateway route, then global | none | Bytes sent before every answer body, such as a UTF-8 byte order mark. Its `encoding` attribute is `text` (the default, UTF-8), `hex` or `base64`. An empty tag on a route turns the global one off. A value that can't be decoded stops the start, or answers `500` after a reload ([05](../topics/05-response-formats.md#bytes-before-and-after-the-answer-response_prefix-and-response_suffix)). |
+| `<response_suffix>` | Endpoint or gateway route, then global | none | Bytes sent after every answer body. As `<response_prefix>`, and replaced separately from it. |
 | `<mandatory_parameters>` | Endpoint, gateway route | none | Names that must exist in some source, else `400`. Comma-separated, or `|`-separated when a name holds a comma. Case-sensitive ([04](../topics/04-parameters.md#mandatory-parameters)). |
 
 ## Placeholder patterns
@@ -74,6 +76,7 @@ Only `GET` and `HEAD` requests use the cache, and a download is never cached ([0
 |---|---|---|---|
 | `<cache><memory>` | Endpoint, gateway route | not cached | The route must have this block. |
 | `<duration_in_milliseconds>` | in the route's `<cache><memory>`, then the global one | not cached | Below 1 means not cached. A global duration alone caches nothing. |
+| `<max_entry_size_in_bytes>` | in the route's `<cache><memory>`, then the global one | 1048576 (1 MiB) | The largest answer stored: a query route's JSON, a gateway route's body. A larger one is answered but not stored, with a `Warning` log line. Below 1 means not set. Read on each fill, so a change needs no restart. |
 | `<invalidators>` | in the route's `<cache><memory>` | none | The inputs that change the answer, each read from every source (query string, body, headers, route, token claims, `<vars>`): each value gets its own entry. |
 | `<exclude_status_codes_from_cache>` | in a gateway route's `<cache><memory>` | none | Statuses not cached, separated by commas or spaces. |
 

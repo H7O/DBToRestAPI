@@ -35,6 +35,7 @@ internal static class ConfigGrammar
         @cache
           memory
             duration_in_milliseconds
+            max_entry_size_in_bytes
             invalidators
             exclude_status_codes_from_cache
         @token_checks
@@ -55,6 +56,11 @@ internal static class ConfigGrammar
           provider
           provider_hint_header
           @token_checks
+        @framing
+          response_prefix
+            encoding
+          response_suffix
+            encoding
         @patterns
           json_variables_pattern
           query_string_variables_pattern
@@ -99,6 +105,7 @@ internal static class ConfigGrammar
           response_structure
           success_status_code
           root_node
+          @framing
           route_variable_pattern
           @patterns
           @route_protection
@@ -122,6 +129,7 @@ internal static class ConfigGrammar
               value
           ignore_target_route_certificate_errors
           target_route_timeout_seconds
+          @framing
           @route_protection
         settings
           queries
@@ -186,6 +194,7 @@ internal static class ConfigGrammar
           generic_error_message
           success_status_code
           root_node
+          @framing
           db_command_timeout
           buffer_rows
           route_variable_pattern

@@ -5,6 +5,11 @@ names the note that explains the background.
 
 ## Open
 
+- **A cache hit on a large answer deserializes it every time.** Found on 2026-11-01: a hit on a
+  1.16 MB answer took 34 to 46 ms. `CachableQueryResult` is a mutable class, so HybridCache keeps it
+  serialized and reads it back on each hit. Marking it `sealed` and `[ImmutableObject(true)]` would
+  let HybridCache keep the object itself. Nothing changes it after `FromActionResult`, but that
+  needs a test before the change.
 - **An array column in a `{http{}}` block is written as its .NET type name.** Found on
   2026-10-26. A driver that returns an array for one column (Npgsql, for a PostgreSQL `int[]`)
   gives `System.Int32[]`, where the engine's own JSON answers write `[1,2,3]`. What it should be
@@ -52,6 +57,29 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **`root_node` around a streamed answer answered `500`.** Fixed in 1.7.33. `ExpandoJsonConverter`
+  writes an ExpandoObject's values synchronously, so the ExpandoObject the answer was wrapped in
+  couldn't hold a streamed result (`array`, several rows without `response_structure`, a count
+  query's data, all without `cache`). The wrapper is now a dictionary, which the serializer writes
+  as before (`RootNodePipelineTests`). Found by a deployment that upgraded.
+- **A cached route's answer size limit, `max_entry_size_in_bytes`.** Added in 1.7.33. HybridCache's
+  own 1 MiB limit applied to every route and couldn't be changed without a restart, and over it each
+  fill logged an error naming neither the route nor a setting. The limit is now
+  `<cache><memory><max_entry_size_in_bytes>`, on the route or in `settings.xml`, default 1 MiB,
+  read on each fill. An answer over it goes to every caller waiting on the fill and isn't stored,
+  with a `Warning` naming the route, the size and the limit (`CacheEntrySizeTests`).
+- **An uploaded file's name couldn't contain two dots in a row (`Q3 2025..pdf`).** Fixed in 1.7.33.
+  A name is one path segment, since `/` and `\` are refused, and a segment leaves its folder only
+  when it is `.` or `..` as a whole, so only those two are refused for that. Each file name message
+  now names the file (`FileNameTwoDotsTests`).
+- **Bytes before and after an answer: `response_prefix` and `response_suffix`.** Added in 1.7.33,
+  for clients written against another service's exact output, such as one that strips a UTF-8 byte
+  order mark without checking. Text, hex or base64, global or per route, around every body a route
+  sends. A framed route asks a gateway target for the whole, uncompressed answer, and passes a
+  partial or compressed one through unchanged. One flag read per request when no route uses them
+  (`ResponseFramingIndexTests`, `ResponseFramingBodyTests`, `ResponseFramingPipelineTests`).
+- **No `Server: Kestrel` header.** Changed in 1.7.33. No client reads it, and it tells a scanner
+  which server to probe (`ServerHeaderTests`).
 - **A `form` object in `{http{}}` calls.** Added in 1.7.32. In `body_raw`, or a `body` string with a
   form type, `&` and `=` in a value add fields, so a form could hold only values the query checked or
   built. `"form": { "amount": "{{amount}}" }` encodes each field as `query` does and sends

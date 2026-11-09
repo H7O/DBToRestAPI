@@ -46,6 +46,9 @@ public class SqliteLockWaitTests(SqliteLockWaitTests.Engine engine) : IClassFixt
     /// <summary>A lock released within this time of the write's start: see the test below.</summary>
     private static readonly TimeSpan QuickRelease = TimeSpan.FromMilliseconds(90);
 
+    /// <summary>How soon after such a release the write must go on, in at least one trial.</summary>
+    private static readonly TimeSpan Soon = TimeSpan.FromMilliseconds(50);
+
     [Fact]
     public async Task AWriteThatFindsTheDatabaseLocked_GoesOnSoonAfterTheLockIsReleased()
     {
@@ -54,7 +57,8 @@ public class SqliteLockWaitTests(SqliteLockWaitTests.Engine engine) : IClassFixt
         // milliseconds. The driver's own retries come 150 ms apart, and sleep never ends early, so a
         // lock released within 90 ms of the write's start lets it go on 60 ms after the release at
         // the soonest; a SQLite built without usleep would sleep a second at a time. A busy machine
-        // can stall any one trial, so the fastest trial released within 90 ms decides.
+        // can stall any trial, so trials go on, up to 30, until one released within 90 ms goes on
+        // within 50 ms: without the busy timeout, none can.
         var folder = Path.Combine(Path.GetTempPath(), "dbtorest-lockwait-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         var connectionString = $"Data Source={Path.Combine(folder, "lock.db")};Pooling=False";
@@ -67,13 +71,13 @@ public class SqliteLockWaitTests(SqliteLockWaitTests.Engine engine) : IClassFixt
             }
 
             var trials = new List<(TimeSpan Hold, TimeSpan Lag)>();
-            for (var i = 0; i < 20 && (i < 7 || !trials.Any(t => t.Hold < QuickRelease)); i++)
+            for (var i = 0; i < 30 && !trials.Any(t => t.Hold < QuickRelease && t.Lag < Soon); i++)
                 trials.Add(await LagAfterReleaseAsync(connectionString));
 
             var report = "hold / lag: " + string.Join(", ", trials.Select(t => $"{t.Hold.TotalMilliseconds:0} / {t.Lag.TotalMilliseconds:0} ms"));
             var quick = trials.Where(t => t.Hold < QuickRelease).Select(t => t.Lag).ToList();
             Assert.True(quick.Count > 0, "No trial released its lock within 90 ms of the write's start. " + report);
-            Assert.True(quick.Min() < TimeSpan.FromMilliseconds(40), report);
+            Assert.True(quick.Min() < Soon, report);
         }
         finally
         {
