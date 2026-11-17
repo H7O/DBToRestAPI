@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
 using Microsoft.AspNetCore.StaticFiles;
-using Microsoft.Identity.Client;
 using System.Buffers;
 using System.Reflection.Metadata;
 using System.Runtime.InteropServices;

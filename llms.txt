@@ -67,7 +67,7 @@ Fetch only what you need:
 | File Downloads | [10-file-downloads.md](docs/topics/10-file-downloads.md) | response_structure file, `<store>`, the columns the query returns (relative_path, file_name, mime_type, base64_content, http), owner-only downloads, Content-Disposition, 404 cases |
 | CORS | [11-cors.md](docs/topics/11-cors.md) | Which pages may read an endpoint: pattern (host only, anchored) and fallback_origin, credentials (on for a route with its own `<authorize>`), allowed_headers (the provider hint header is in the default), exposed_headers (Content-Disposition, Retry-After), preflight |
 | Authentication | [12-authentication.md](docs/topics/12-authentication.md) | OIDC/JWT, Azure B2C, Google, Auth0, multiple providers per endpoint, testing protected routes locally with DevOidc (tokens without a real sign-in) |
-| Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections |
+| Multi-Database | [13-databases.md](docs/topics/13-databases.md) | Provider config, per-endpoint connections, SQL Server sign-in with Entra ID |
 | Query Chaining | [14-query-chaining.md](docs/topics/14-query-chaining.md) | Several `<query>` elements run in order, each on its own connection (no shared transaction); `{pq{name}}` reads earlier results (never `{{name}}`), one row passes its columns, any rows pass `{pq{json}}` or `json_var`; a tested cross-database example |
 | Encryption | [15-encryption.md](docs/topics/15-encryption.md) | Settings encryption, DPAPI, cross-platform |
 | TLS Certificates | [16-tls-certificates.md](docs/topics/16-tls-certificates.md) | HTTPS setup, mkcert, Kestrel TLS config |

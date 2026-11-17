@@ -55,6 +55,29 @@ Set `provider` on every connection string. Without it, the engine guesses from k
 </ConnectionStrings>
 ```
 
+## SQL Server: Sign In with Entra ID
+
+A SQL Server connection string can sign in with Microsoft Entra ID instead of a password or a Windows account. That is how the engine reaches Azure SQL Database with a managed identity, so that no secret is stored. Add `Authentication=` with one of these four values:
+
+| `Authentication=` | The engine signs in as | Also in the connection string |
+|---|---|---|
+| `Active Directory Managed Identity` | The managed identity of the Azure resource the engine runs on | Nothing for the system-assigned identity; `User Id=<client id>` for a user-assigned one |
+| `Active Directory Service Principal` | An app registration | `User Id=<application (client) id>;Password=<client secret>` |
+| `Active Directory Workload Identity` | The workload identity of a Kubernetes pod | Nothing: the driver reads the environment variables `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_FEDERATED_TOKEN_FILE`. `User Id=<client id>` replaces `AZURE_CLIENT_ID` |
+| `Active Directory Default` | The first identity it finds: the environment variables of a service principal, a workload identity, a managed identity, then the developer's own sign-in (Visual Studio, the Azure CLI, Azure PowerShell) | Nothing; `User Id=<client id>` picks a user-assigned managed identity |
+
+```xml
+<ConnectionStrings>
+  <default provider="Microsoft.Data.SqlClient"><![CDATA[Server=myserver.database.windows.net;Database=app;Authentication=Active Directory Managed Identity;]]></default>
+</ConnectionStrings>
+```
+
+- **Create the identity's user in the database first.** Signed in as the server's Entra ID administrator, run `CREATE USER [identity name] FROM EXTERNAL PROVIDER;` in the database, and grant that user what the endpoints need (`ALTER ROLE db_datareader ADD MEMBER [identity name];`). The name is the Azure resource's name for a system-assigned identity, the identity's own name for a user-assigned one, and the app registration's name for a service principal. Without that user, the database refuses the sign-in.
+- **A sign-in that fails answers `503`** with the generic message, like any database the engine can't connect to ([errors.md](../reference/errors.md#statuses-you-will-meet)). The log has the reason.
+- **A managed identity exists only on Azure.** On a developer's machine, `Active Directory Managed Identity` waits for an identity that isn't there until the connection timeout runs out (`Connect Timeout`, 15 seconds unless the string sets it), then fails. For a connection string that must work in both places, use `Active Directory Default`.
+- **Set `provider`,** as on every connection string: without it, a string with `Data Source=` and `User Id=` can go to the Oracle driver ([provider detection](#provider-detection)).
+- **The other values are not supported:** `Active Directory Interactive`, `Active Directory Integrated`, `Active Directory Password` and `Active Directory Device Code Flow`. Each needs a person at the machine or the Windows account broker, which the engine doesn't ship.
+
 ## Per-Endpoint Database
 
 Use `connection_string_name` to target different databases:

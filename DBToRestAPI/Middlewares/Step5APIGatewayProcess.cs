@@ -1,6 +1,4 @@
-﻿using Azure;
-using Azure.Core;
-using Com.H.Data;
+﻿using Com.H.Data;
 using DBToRestAPI.Cache;
 using DBToRestAPI.Services;
 using DBToRestAPI.Settings;

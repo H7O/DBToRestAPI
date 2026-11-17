@@ -4,10 +4,10 @@
   <TargetFramework>net11.0</TargetFramework>
   <Nullable>enable</Nullable>
   <ImplicitUsings>enable</ImplicitUsings>
-  <Version>1.8.0</Version>
-  <AssemblyVersion>1.8.0.0</AssemblyVersion>
-  <FileVersion>1.8.0.0</FileVersion>
-  <InformationalVersion>1.8.0</InformationalVersion>
+  <Version>1.8.1</Version>
+  <AssemblyVersion>1.8.1.0</AssemblyVersion>
+  <FileVersion>1.8.1.0</FileVersion>
+  <InformationalVersion>1.8.1</InformationalVersion>
 </PropertyGroup>
 
 <!--
@@ -37,15 +37,21 @@
 
 
   <ItemGroup>
-    <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Com.H" Version="11.0.0" />
     <PackageReference Include="Com.H.Data.Common" Version="11.0.0" />
     <PackageReference Include="Com.H.Net.Ssh" Version="11.0.0" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.2" />
+    <!-- SQL Server sign-in with Entra ID: Authentication=Active Directory Managed Identity, Service
+         Principal, Workload Identity or Default in a connection string. The driver looks for this
+         package by name when a connection asks for such a sign-in, and loads nothing of it otherwise.
+         Keep its version equal to the driver's.
+         ExcludeAssets="native" leaves out the native library of the Windows account broker that comes
+         with it (36 MB for Linux x64, where nothing calls it). On Windows, only the sign-ins that go
+         through that broker need it (Interactive, Integrated, Password, Device Code Flow), and the
+         engine doesn't support those. -->
+    <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="7.1.2" ExcludeAssets="native" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
     <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="11.0.0" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="11.0.1" />
     <PackageReference Include="System.IO.Hashing" Version="11.0.0" />
     <!-- JWT validation and OpenID Connect discovery, called directly by Step4JwtAuthorization -->
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.23.0" />

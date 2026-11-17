@@ -14,12 +14,13 @@ names the note that explains the background.
   2026-10-26. A driver that returns an array for one column (Npgsql, for a PostgreSQL `int[]`)
   gives `System.Int32[]`, where the engine's own JSON answers write `[1,2,3]`. What it should be
   inside a string needs a decision.
-- **Three packages are referenced, and no code seems to use them.** Found on 2026-11-17, while
-  moving to .NET 11. `Microsoft.AspNetCore.OpenApi` and `Swashbuckle.AspNetCore`:
-  `OpenApiDocumentBuilder` writes the document itself, and the Swagger page loads its script from a
-  CDN. `Azure.Identity`: its only trace is a `using Azure.Core;` in `Step5APIGatewayProcess`.
-  Removing them would take Microsoft.OpenApi, Swashbuckle's and the Azure and MSAL assemblies out
-  of every build. Build and run the suite without them first.
+- **SQL Server sign-in with Entra ID hasn't run against Azure SQL.** Restored in 1.8.1 (see Done)
+  and checked as far as a machine without an Azure SQL database allows: the driver finds a provider
+  for each sign-in, the four `Authentication=` values of
+  [topic 13](docs/topics/13-databases.md#sql-server-sign-in-with-entra-id) reach it, and a service
+  principal with made-up values gets its refusal from Microsoft's sign-in service. No test connects
+  to a database that asks for an Entra ID token, so the last step, the database accepting the
+  token, is unmeasured, and so is the `503` that topic 13 gives for a sign-in that fails.
 - **MySqlConnector 3.0.0 hasn't run against a MySQL server.** Taken in 1.8.0, as every direct
   reference is taken at its latest version. No test here connects to MySQL, with 2.x or with 3.0.
   [Its notes](https://mysqlconnector.net/overview/version-history/) list what may change for a
@@ -69,6 +70,24 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **SQL Server sign-in with Entra ID had stopped working.** Fixed in 1.8.1. A connection string
+  with `Authentication=Active Directory ...` (a managed identity, a service principal) worked until
+  1.2.5 took version 7 of Microsoft.Data.SqlClient. That version moved the sign-in out of the driver
+  into the package `Microsoft.Data.SqlClient.Extensions.Azure`, which the driver looks for by name.
+  The engine didn't reference it, nothing failed at build time, an ordinary connection kept working,
+  and no test signed in with Entra ID. The engine references the package now, without the native
+  library of the Windows account broker that comes with it (36 MB for Linux x64, 60 MB in the
+  portable build): only the sign-ins that go through that broker call it, and a server can't use
+  those. What is left adds 2.6 MB, and an ordinary connection loads none of it.
+  `SqlServerEntraIdTests` fails when the package is missing or the library comes back, and
+  [topic 13](docs/topics/13-databases.md#sql-server-sign-in-with-entra-id) names the four values the
+  engine supports.
+- **Three package references that did nothing.** Removed in 1.8.1: `Microsoft.AspNetCore.OpenApi`,
+  `Swashbuckle.AspNetCore` and `Azure.Identity`, with the four `using` lines that were their only
+  trace. The engine writes its OpenAPI document itself and the Swagger page loads its script from a
+  CDN, so `/openapi.json` and `/swagger` answer as before. The SQL Server driver never looked for
+  `Azure.Identity`: the package of the entry above brings its own. A published build is two files
+  and 1 to 2 MB smaller than 1.8.0's, with that package in it.
 - **The engine runs on .NET 11.** Changed in 1.8.0. The target framework is `net11.0`, and the
   packages that follow the framework are at 11.0.0 (the three `Com.H` packages and Microsoft's),
   with MySqlConnector 3.0.0, Microsoft.Data.SqlClient 7.1.2 and Oracle.ManagedDataAccess.Core
