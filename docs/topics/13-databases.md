@@ -57,7 +57,7 @@ Set `provider` on every connection string. Without it, the engine guesses from k
 
 ## SQL Server: Sign In with Entra ID
 
-A SQL Server connection string can sign in with Microsoft Entra ID instead of a password or a Windows account. That is how the engine reaches Azure SQL Database with a managed identity, so that no secret is stored. Add `Authentication=` with one of these four values:
+A SQL Server connection string can sign in with Microsoft Entra ID instead of a password or a Windows account. That is how the engine reaches Azure SQL Database with a managed identity, so that no secret is stored. Add `Authentication=` with one of the driver's values. These four need no person, so they are the ones a server uses:
 
 | `Authentication=` | The engine signs in as | Also in the connection string |
 |---|---|---|
@@ -76,7 +76,7 @@ A SQL Server connection string can sign in with Microsoft Entra ID instead of a 
 - **A sign-in that fails answers `503`** with the generic message, like any database the engine can't connect to ([errors.md](../reference/errors.md#statuses-you-will-meet)). The log has the reason.
 - **A managed identity exists only on Azure.** On a developer's machine, `Active Directory Managed Identity` waits for an identity that isn't there until the connection timeout runs out (`Connect Timeout`, 15 seconds unless the string sets it), then fails. For a connection string that must work in both places, use `Active Directory Default`.
 - **Set `provider`,** as on every connection string: without it, a string with `Data Source=` and `User Id=` can go to the Oracle driver ([provider detection](#provider-detection)).
-- **The other values are not supported:** `Active Directory Interactive`, `Active Directory Integrated`, `Active Directory Password` and `Active Directory Device Code Flow`. Each needs a person at the machine or the Windows account broker, which the engine doesn't ship.
+- **The driver's other four values sign in a Windows account or a person,** and the engine ships what they need too. `Active Directory Integrated` signs in as the account the engine runs under, on a machine joined to a domain that is federated with Entra ID. `Active Directory Password` takes an Entra ID user in `User Id` and `Password`, and the driver marks it obsolete. `Active Directory Interactive` opens a sign-in window, and `Active Directory Device Code Flow` writes a code to the engine's console for a person to enter on another device: a route can't answer either, so don't use them for an endpoint's connection.
 
 ## Per-Endpoint Database
 

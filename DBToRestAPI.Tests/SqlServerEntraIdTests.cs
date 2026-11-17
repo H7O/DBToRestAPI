@@ -12,14 +12,17 @@ namespace DBToRestAPI.Tests;
 /// </summary>
 public class SqlServerEntraIdTests
 {
+    /// <summary>Every Entra ID sign-in the driver offers, by its name in the driver.</summary>
+    public static IEnumerable<object[]> EntraIdSignIns() =>
+        Enum.GetNames<SqlAuthenticationMethod>()
+            .Where(name => name.StartsWith("ActiveDirectory", StringComparison.Ordinal))
+            .Select(name => new object[] { name });
+
     [Theory]
-    [InlineData(SqlAuthenticationMethod.ActiveDirectoryManagedIdentity)]
-    [InlineData(SqlAuthenticationMethod.ActiveDirectoryMSI)]
-    [InlineData(SqlAuthenticationMethod.ActiveDirectoryServicePrincipal)]
-    [InlineData(SqlAuthenticationMethod.ActiveDirectoryWorkloadIdentity)]
-    [InlineData(SqlAuthenticationMethod.ActiveDirectoryDefault)]
-    public void TheDriverHasAProviderForEachSignInAServerUses(SqlAuthenticationMethod method)
+    [MemberData(nameof(EntraIdSignIns))]
+    public void TheDriverHasAProviderForEverySignIn(string name)
     {
+        var method = Enum.Parse<SqlAuthenticationMethod>(name);
         var provider = SqlAuthenticationProvider.GetProvider(method);
 
         Assert.True(provider != null,
@@ -29,16 +32,21 @@ public class SqlServerEntraIdTests
     }
 
     /// <summary>
-    /// The four values that topic 13 names, as the engine hands them to the driver: the engine
-    /// rewrites a SQL Server connection string before it opens the connection.
+    /// The values that topic 13 names, as the engine hands them to the driver: the engine rewrites
+    /// a SQL Server connection string before it opens the connection.
     /// </summary>
     [Theory]
-    [InlineData("Active Directory Managed Identity", SqlAuthenticationMethod.ActiveDirectoryManagedIdentity)]
-    [InlineData("Active Directory Service Principal", SqlAuthenticationMethod.ActiveDirectoryServicePrincipal)]
-    [InlineData("Active Directory Workload Identity", SqlAuthenticationMethod.ActiveDirectoryWorkloadIdentity)]
-    [InlineData("Active Directory Default", SqlAuthenticationMethod.ActiveDirectoryDefault)]
-    public void TheValuesTheDocsName_ReachTheDriver(string value, SqlAuthenticationMethod method)
+    [InlineData("Active Directory Managed Identity", "ActiveDirectoryManagedIdentity")]
+    [InlineData("Active Directory Service Principal", "ActiveDirectoryServicePrincipal")]
+    [InlineData("Active Directory Workload Identity", "ActiveDirectoryWorkloadIdentity")]
+    [InlineData("Active Directory Default", "ActiveDirectoryDefault")]
+    [InlineData("Active Directory Integrated", "ActiveDirectoryIntegrated")]
+    [InlineData("Active Directory Interactive", "ActiveDirectoryInteractive")]
+    [InlineData("Active Directory Device Code Flow", "ActiveDirectoryDeviceCodeFlow")]
+    [InlineData("Active Directory Password", "ActiveDirectoryPassword")]
+    public void TheValuesTheDocsName_ReachTheDriver(string value, string name)
     {
+        var method = Enum.Parse<SqlAuthenticationMethod>(name);
         const string clientId = "11111111-2222-3333-4444-555555555555";
 
         var handed = DbConnectionFactory.NormalizeConnectionStringPaths("Microsoft.Data.SqlClient",
@@ -51,21 +59,21 @@ public class SqlServerEntraIdTests
     }
 
     /// <summary>
-    /// The package brings the native library of the Windows account broker (36 MB for Linux x64).
-    /// Only the sign-ins that go through that broker call it (Interactive, Integrated, Password,
-    /// Device Code Flow), which the engine doesn't support, so the engine's project leaves it out
-    /// with <c>ExcludeAssets="native"</c>.
+    /// The package brings the native library of the Windows account broker, which the sign-ins that
+    /// go through that broker call (Interactive, Integrated, Password, Device Code Flow). It ships
+    /// with the engine, so that every sign-in the driver offers has what it needs: it costs disk
+    /// only, because nothing else loads it. A reference with <c>ExcludeAssets="native"</c> would
+    /// leave it out without any build error.
     /// </summary>
     [Fact]
-    public void TheAccountBrokersNativeLibraryIsLeftOut()
+    public void TheAccountBrokersNativeLibraryShips()
     {
         var found = Directory
             .EnumerateFiles(AppContext.BaseDirectory, "*msalruntime*", SearchOption.AllDirectories)
-            .Select(path => Path.GetRelativePath(AppContext.BaseDirectory, path))
             .ToList();
 
-        Assert.True(found.Count == 0,
-            "The account broker's native library reached the build: " + string.Join(", ", found)
-            + ". The reference to Microsoft.Data.SqlClient.Extensions.Azure needs ExcludeAssets=\"native\".");
+        Assert.True(found.Count > 0,
+            "The account broker's native library (msalruntime) isn't in the build: the reference to "
+            + "Microsoft.Data.SqlClient.Extensions.Azure must keep its native assets.");
     }
 }
