@@ -17,7 +17,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       - name: Restore dependencies
         run: dotnet restore
@@ -63,7 +63,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       - name: Publish
         run: >
@@ -94,7 +94,7 @@ jobs:
           path: ${{ matrix.artifact }}.*
 
   # Framework-dependent, portable build (no .NET bundled, no RID) — a small download for hosts that
-  # already have the ASP.NET Core 10 runtime installed. Includes all managed providers; runs on any
+  # already have the ASP.NET Core 11 runtime installed. Includes all managed providers; runs on any
   # OS/arch. DB2 native is not bundled here (it is platform-specific); use a self-contained build for
   # out-of-box DB2, or install the IBM Data Server Driver.
   publish-portable:
@@ -106,7 +106,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       - name: Publish (framework-dependent)
         run: >

@@ -21,7 +21,7 @@ The engine reads XML files from its `config/` folder: `settings.xml` first, then
 ## Where the files are
 
 - **In a release:** `config/` next to the executable.
-- **In a clone:** `DBToRestAPI/config/`. `dotnet run` serves the copies in `DBToRestAPI/bin/<Configuration>/net10.0/config/`, and the SQLite demo database at `DBToRestAPI/bin/<Configuration>/net10.0/demo.db`. Every `.xml` file under `config/` is copied, a new one included.
+- **In a clone:** `DBToRestAPI/config/`. `dotnet run` serves the copies in `DBToRestAPI/bin/<Configuration>/net11.0/config/`, and the SQLite demo database at `DBToRestAPI/bin/<Configuration>/net11.0/demo.db`. Every `.xml` file under `config/` is copied, a new one included.
 
 | File | What it holds |
 |------|---------|

@@ -22,7 +22,7 @@ DbToRestAPI turns SQL queries into REST endpoints. You don't write application c
 ## Where configuration lives
 
 - In a release: `config/*.xml` next to the executable. The docs are there too: this file, `llms.txt` and `docs/`.
-- In a clone: `DBToRestAPI/config/*.xml`. **`dotnet run` serves copies**: the config files in `DBToRestAPI/bin/<Configuration>/net10.0/config/`, and the SQLite demo database at `DBToRestAPI/bin/<Configuration>/net10.0/demo.db`. After editing a file under `DBToRestAPI/config/`, stop `dotnet run` and start it again, which copies the changed files. Every `.xml` file under `config/` is copied, a new one included.
+- In a clone: `DBToRestAPI/config/*.xml`. **`dotnet run` serves copies**: the config files in `DBToRestAPI/bin/<Configuration>/net11.0/config/`, and the SQLite demo database at `DBToRestAPI/bin/<Configuration>/net11.0/demo.db`. After editing a file under `DBToRestAPI/config/`, stop `dotnet run` and start it again, which copies the changed files. Every `.xml` file under `config/` is copied, a new one included.
 - `sql.xml`: endpoints, each one an element under `<settings><queries>`.
 - `settings.xml`: connection strings and global settings. A connection's `provider` attribute decides the SQL dialect you must write. Set it on every connection: without it, the engine guesses from keywords in the string, and a string with only `Data Source`, `User Id` and `Password` goes to the Oracle driver ([13](docs/topics/13-databases.md#provider-detection)).
 - `file_management.xml`: file stores and upload defaults. `api_keys.xml`: key collections. `auth_providers.xml`: OIDC providers. `api_gateway.xml`: proxy routes.
@@ -62,7 +62,7 @@ Each rule prevents a mistake that fails silently or looks like it works. These r
 
 1. Start the engine: `dotnet run --project DBToRestAPI` from a clone, or the executable from a release. It prints its URL (port 5000 unless `settings.xml` sets another).
 2. Read the start-up log for hosting problems, such as a skipped HTTPS endpoint. It says nothing about endpoint mistakes: an unknown tag, a tag in the wrong place, a value the engine doesn't accept, a missing store or files field all log nothing at start-up, and an unknown store name is logged only when an upload reaches it.
-3. So call the endpoint for success and for each failure you designed. Compare the status and the JSON body with what the docs promise. For a route with `<cache>`, also check that it is cached ([07](docs/topics/07-caching.md#basic-configuration)).
+3. So call the endpoint for success and for each failure you designed. Compare the status and the JSON body with what the docs promise. For a route with `<authorize>`, get tokens from a local test provider, not from a real sign-in ([12](docs/topics/12-authentication.md#testing-protected-routes-locally)). For a route with `<cache>`, also check that it is cached ([07](docs/topics/07-caching.md#basic-configuration)).
 
 ## Documentation layout
 

@@ -1,5 +1,5 @@
 # --- Build stage ---
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 
 # Copy solution and project file first for layer caching
@@ -17,7 +17,7 @@ RUN dotnet publish DBToRestAPI/DBToRestAPI.csproj \
     --output /app
 
 # --- Runtime stage ---
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:11.0
 WORKDIR /app
 
 # Create non-root user

@@ -11,7 +11,7 @@ throughput, latency, CPU per request and memory:
 
 ## Run it
 
-You need the .NET 10 SDK and PowerShell 7.2 or later (`pwsh`). SQL Server is optional: give an
+You need the .NET 11 SDK and PowerShell 7.2 or later (`pwsh`). SQL Server is optional: give an
 instance that accepts Windows authentication, and the script creates a `DbToRestApiBench` database
 there.
 

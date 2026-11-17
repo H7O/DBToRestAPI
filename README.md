@@ -300,7 +300,7 @@ For a detailed analysis of why DbToRestAPI is well-suited for AI-assisted develo
 This section is for contributors, developers extending the codebase, or anyone needing a custom Docker image.
 
 **Prerequisites:**
-* .NET 10.0 SDK or later — [download](https://dotnet.microsoft.com/download)
+* .NET 11.0 SDK or later — [download](https://dotnet.microsoft.com/download)
 * Git
 
 **Build and run:**

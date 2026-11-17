@@ -14,6 +14,18 @@ names the note that explains the background.
   2026-10-26. A driver that returns an array for one column (Npgsql, for a PostgreSQL `int[]`)
   gives `System.Int32[]`, where the engine's own JSON answers write `[1,2,3]`. What it should be
   inside a string needs a decision.
+- **Three packages are referenced, and no code seems to use them.** Found on 2026-11-17, while
+  moving to .NET 11. `Microsoft.AspNetCore.OpenApi` and `Swashbuckle.AspNetCore`:
+  `OpenApiDocumentBuilder` writes the document itself, and the Swagger page loads its script from a
+  CDN. `Azure.Identity`: its only trace is a `using Azure.Core;` in `Step5APIGatewayProcess`.
+  Removing them would take Microsoft.OpenApi, Swashbuckle's and the Azure and MSAL assemblies out
+  of every build. Build and run the suite without them first.
+- **MySqlConnector 3.0.0 hasn't run against a MySQL server.** Taken in 1.8.0, as every direct
+  reference is taken at its latest version. No test here connects to MySQL, with 2.x or with 3.0.
+  [Its notes](https://mysqlconnector.net/overview/version-history/) list what may change for a
+  deployment: with `GuidFormat=Binary16`, a `VARBINARY(16)` column is no longer read as a GUID, and
+  a `TransactionScope` XA transaction without an isolation level is `SERIALIZABLE`. The error
+  numbers the engine maps (`-1`, `1205`, `3024`, a raised `MYSQL_ERRNO`) are not in those notes.
 - **Idea: an opt-in `<allowed_hosts>` for outbound calls** (`{http{ … }http}` and the download
   `http` source). The configuration author chooses the hosts a route calls, and a caller can't
   change them ([SECURITY_HARDENING_1.6.md](SECURITY_HARDENING_1.6.md), section 1). A list of hosts
@@ -57,6 +69,23 @@ The items below were found on 2026-10-21 by an inventory of every configuration 
 
 ## Done
 
+- **The engine runs on .NET 11.** Changed in 1.8.0. The target framework is `net11.0`, and the
+  packages that follow the framework are at 11.0.0 (the three `Com.H` packages and Microsoft's),
+  with MySqlConnector 3.0.0, Microsoft.Data.SqlClient 7.1.2 and Oracle.ManagedDataAccess.Core
+  23.26.401. Two references that only overrode a transitive version are gone, because the version
+  each forced now arrives by itself: `SQLitePCLRaw.bundle_e_sqlite3` (Microsoft.Data.Sqlite 11.0.0
+  depends on 3.0.5) and `System.Security.Cryptography.Pkcs` (part of the ASP.NET Core 11
+  framework). No package has an advisory, transitive ones included. An archive that bundles the
+  runtime needs nothing new. The portable archive, a build from source and a framework-dependent
+  deployment behind IIS need .NET 11, which needs an x64 processor with SSE4.2 (x86-64-v2). The
+  suite gives the same counts as on .NET 10, on Windows and on Linux, and nothing in the engine's
+  code changed.
+- **A local test provider for `<authorize>` routes.** Documented in 1.8.0.
+  [Topic 12](docs/topics/12-authentication.md#testing-protected-routes-locally) shows how to load
+  [DevOidc](https://github.com/H7O/DevOidc) as a provider on a developer's machine only, so that a
+  script or an agent gets tokens without a real sign-in, and what a route answers to an expired
+  token, another audience, a missing role and a DevOidc that isn't running. Each answer in its
+  table was measured.
 - **`root_node` around a streamed answer answered `500`.** Fixed in 1.7.33. `ExpandoJsonConverter`
   writes an ExpandoObject's values synchronously, so the ExpandoObject the answer was wrapped in
   couldn't hold a streamed result (`array`, several rows without `response_structure`, a count

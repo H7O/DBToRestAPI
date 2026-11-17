@@ -345,6 +345,85 @@ Temporarily disable (for testing):
 
 Or simply remove the `<authorize>` section.
 
+To test a route with its protection on, see [Testing Protected Routes Locally](#testing-protected-routes-locally).
+
+## Testing Protected Routes Locally
+
+A hosted provider needs a person, a password and a browser before one signed-in call can be made, so a test script or an AI agent can't call an `<authorize>` route by itself. [DevOidc](https://github.com/H7O/DevOidc) is an OpenID Connect provider for local testing only: it signs anyone in as anyone, with no password, and one HTTP call returns a signed token. The engine validates that token as it validates any provider's: signature, issuer, audience and lifetime.
+
+> **Load DevOidc's provider on a developer's machine only.** Whoever can reach a DevOidc can be any user. It answers its own computer only, and each computer's DevOidc signs with its own key.
+
+### Step 1: Start DevOidc
+
+Start it with a file that registers a client and the test users: its [README](https://github.com/H7O/DevOidc#readme) has the format and the command. It answers on `https://localhost:5443` with the ASP.NET Core development certificate, which the computer must trust (`dotnet dev-certs https --trust`, once).
+
+### Step 2: Give It a Provider File of Its Own
+
+`config/dev_oidc.xml`. `<audience>` is the `client_id` registered in DevOidc's file:
+
+```xml
+<settings>
+  <authorize>
+    <providers>
+      <dev_oidc>
+        <authority>https://localhost:5443</authority>
+        <issuer>https://localhost:5443</issuer>
+        <audience>7f1c2a9e-0000-4000-8000-000000000001</audience>
+        <validate_issuer>true</validate_issuer>
+        <validate_audience>true</validate_audience>
+        <validate_lifetime>true</validate_lifetime>
+      </dev_oidc>
+    </providers>
+  </authorize>
+</settings>
+```
+
+### Step 3: Load That File on the Developer's Machine Only
+
+In that machine's `settings.xml`, add the file to the paths already listed, then restart the engine: a newly listed file is read when the engine starts.
+
+```xml
+<additional_configurations>
+  <!-- the paths already listed stay; add this one -->
+  <path>config/dev_oidc.xml</path>
+</additional_configurations>
+```
+
+### Step 4: Accept Any Loaded Provider on the Routes
+
+```xml
+<authorize>
+  <provider>*</provider>
+</authorize>
+```
+
+The engine picks the provider by the token's issuer ([How a provider is selected](#how-a-provider-is-selected)). The developer's machine has loaded the real provider and `dev_oidc`, so tokens from both work, and `{auth{auth_provider}}` is `dev_oidc` for a DevOidc token. A real environment has loaded the real provider only: a DevOidc token matches no provider there and gets `401`. The endpoint files are the same on every environment. A route that names one provider, such as `<provider>azure_b2c</provider>`, accepts that provider's tokens only.
+
+### Step 5: Ask for a Token and Send It
+
+```bash
+curl -s https://localhost:5443/token -d grant_type=urn:devoidc:user \
+     -d client_id=7f1c2a9e-0000-4000-8000-000000000001 -d email=admin@example.test
+# the answer is JSON: its "id_token" is the token
+curl http://localhost:5000/my_route -H "Authorization: Bearer <id_token>"
+```
+
+Any e-mail works, listed in DevOidc's file or not. `{auth{email}}` is that e-mail. `{auth{name}}`, `{auth{given_name}}` and `{auth{family_name}}` come from DevOidc's file, or are made from the address. `{auth{user_id}}` is derived from the e-mail, so the same e-mail is always the same user.
+
+### What the Route Answers
+
+| The token request | The route answers |
+|---|---|
+| As in step 5 | `200` |
+| With `-d lifetime_seconds=-600`: the token expired ten minutes ago | `401`, `{"success":false,"message":"Token has expired"}` |
+| With `-d lifetime_seconds=-60`: expired, but inside `clock_skew_seconds` (300 by default) | `200` |
+| With `-d aud=another-audience` | `401`, `{"success":false,"message":"Invalid token"}` |
+| With `-d auth_time=1700000000`: signed in at that moment | `200`, and `{auth{auth_time}}` is `1700000000`, for SQL that refuses an old session |
+| Any, on a route with `required_roles` or `required_scopes` | `403`, `{"success":false,"message":"Insufficient permissions"}`: a DevOidc token carries no roles and no scopes |
+| Any, when DevOidc isn't running or its certificate isn't trusted | `500` for a request that carries a token (one without gets its `401` first), and the log names `https://localhost:5443/.well-known/openid-configuration` |
+
+A single-page application signs in through DevOidc's page, which lists the test users: its README has the MSAL.js settings.
+
 ## Error Responses
 
 | Scenario | HTTP Status |
